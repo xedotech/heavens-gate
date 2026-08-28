@@ -8,6 +8,8 @@ This is a polished independent prototype—not a claim that one repository repla
 
 ## Play
 
+Owner-only hosted build: [heavens-gate-aethel.xedos.chatgpt.site](https://heavens-gate-aethel.xedos.chatgpt.site)
+
 Run the development build:
 
 ```bash
