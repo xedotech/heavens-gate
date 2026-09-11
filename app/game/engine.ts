@@ -275,6 +275,7 @@ export class HeavensGateEngine {
   private lightningFlash = 0;
   private reinforcementTimer = 0;
   private reinforcementSeq = 0;
+  private playerSprinting = false;
   private inspectionKey: THREE.PointLight | null = null;
   private skyOrb: THREE.Mesh | null = null;
   private composer: EffectComposer | null = null;
@@ -2688,6 +2689,7 @@ export class HeavensGateEngine {
       && this.dodgeRemaining <= 0
       && this.stamina > 0.5
       && inputLength > 0.05;
+    this.playerSprinting = sprinting;
     this.stamina = updateStamina(this.stamina, delta, sprinting);
     const desired = desiredDirection.multiplyScalar(movementSpeed({ aiming, crouching: this.crouching, sprinting }) * Math.min(1, inputLength));
     if (this.slideRemaining > 0) {
@@ -2994,7 +2996,8 @@ export class HeavensGateEngine {
     lookTarget.y += bob * 0.6 - this.landDip * 0.4;
     this.camera.lookAt(lookTarget);
     const baseFov = clamp(this.settings?.fov ?? 56, 48, 78);
-    const targetFov = this.currentVehicle ? baseFov + 2 + clamp(speed * 0.28, 0, 12) : aiming ? baseFov * 0.875 : baseFov;
+    const sprintKick = !this.currentVehicle && !aiming && (this.playerSprinting ?? false) ? 3.2 : 0;
+    const targetFov = this.currentVehicle ? baseFov + 2 + clamp(speed * 0.28, 0, 12) : aiming ? baseFov * 0.875 : baseFov + sprintKick;
     this.camera.fov = damp(this.camera.fov, targetFov, 4.5, delta);
     this.camera.updateProjectionMatrix();
     if (this.inspectionKey && !this.currentVehicle) {
@@ -3333,6 +3336,7 @@ export class HeavensGateEngine {
       this.emitToast('Choir drone disabled', 'Response network weakened', 'success');
     } else if (actor.kind === 'boss') {
       this.emitSubtitle('Archon', 'If the door opens… you will miss the cage.');
+      this.beginCinematic(actor.group.position.clone());
     }
   }
 
@@ -3393,7 +3397,13 @@ export class HeavensGateEngine {
           }
         });
       }
-      const near = distance2D(drop.group.position.x, drop.group.position.z, position.x, position.z) < 2;
+      const dropDistance = distance2D(drop.group.position.x, drop.group.position.z, position.x, position.z);
+      if (dropDistance < 6 && dropDistance > 0.01) {
+        const pull = (1 - dropDistance / 6) * 9 * delta;
+        drop.group.position.x += ((position.x - drop.group.position.x) / dropDistance) * pull;
+        drop.group.position.z += ((position.z - drop.group.position.z) / dropDistance) * pull;
+      }
+      const near = dropDistance < 2;
       if (near || drop.life <= 0) {
         if (near) {
           if (drop.kind === 'ammo') {
