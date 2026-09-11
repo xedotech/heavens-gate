@@ -270,6 +270,9 @@ export class HeavensGateEngine {
   private objectiveMarker: THREE.Group | null = null;
   private dust: THREE.Points | null = null;
   private sun: THREE.DirectionalLight | null = null;
+  private stormLight: THREE.DirectionalLight | null = null;
+  private lightningTimer = 9;
+  private lightningFlash = 0;
   private inspectionKey: THREE.PointLight | null = null;
   private skyOrb: THREE.Mesh | null = null;
   private composer: EffectComposer | null = null;
@@ -554,6 +557,10 @@ export class HeavensGateEngine {
     const rim = new THREE.DirectionalLight(0x7fa6c8, 2.1);
     rim.position.set(70, 34, -90);
     this.scene.add(rim);
+
+    this.stormLight = new THREE.DirectionalLight(0xbfd4ff, 0);
+    this.stormLight.position.set(-30, 120, -60);
+    this.scene.add(this.stormLight);
 
     this.inspectionKey = new THREE.PointLight(0xffdec7, 0, 8, 2);
     this.inspectionKey.name = 'Aurel camera-side key light';
@@ -3805,6 +3812,26 @@ export class HeavensGateEngine {
         position.array[i] = ((Number(position.array[i]) + delta * 0.45) % 36) + 0.2;
       }
       position.needsUpdate = true;
+    }
+    this.lightningTimer = (this.lightningTimer ?? 9) - delta;
+    if (this.lightningTimer <= 0) {
+      this.lightningTimer = 10 + seeded(Math.floor(time), 360) * 26;
+      this.lightningFlash = 1;
+      const loud = 0.45 + seeded(Math.floor(time), 361) * 0.55;
+      const timeout = setTimeout(() => {
+        this.timeouts.delete(timeout);
+        this.audio.thunder(loud);
+      }, 600 + seeded(Math.floor(time), 363) * 1400);
+      this.timeouts.add(timeout);
+    }
+    if (this.stormLight) {
+      if (this.lightningFlash > 0) {
+        this.lightningFlash = Math.max(0, this.lightningFlash - delta * 3.4);
+        const flicker = this.lightningFlash * (0.5 + seeded(Math.floor(time * 34), 362) * 0.5);
+        this.stormLight.intensity = flicker * 7.5;
+      } else {
+        this.stormLight.intensity = 0;
+      }
     }
     if (this.sun && this.skyOrb) {
       const cycle = ((this.worldHours - 5) / 24) * Math.PI * 2;

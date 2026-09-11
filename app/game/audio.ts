@@ -271,6 +271,13 @@ export class AudioEngine {
     this.tone(55, 0.8, 'sine', 0.14, 0, this.effectsBus, 24);
   }
 
+  thunder(intensity = 1) {
+    const amount = clamp(intensity, 0.2, 1);
+    this.noise(2.2 * amount, 0.045 * amount, 95);
+    this.noise(0.6, 0.028 * amount, 280);
+    this.tone(38, 2.0 * amount, 'sine', 0.1 * amount, 0.05, this.effectsBus, 24);
+  }
+
   setRainBed(active: boolean) {
     if (!this.context || !this.ambientBus) return;
     if (active && !this.rainSource) {

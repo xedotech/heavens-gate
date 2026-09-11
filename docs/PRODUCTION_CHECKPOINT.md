@@ -33,9 +33,27 @@ the work below.
 - Touch controls for coarse-pointer devices: left virtual stick, right-half
   drag look, FIRE/AIM/JUMP/RUN/E/R/SWP/VEIL/PLS buttons, pause shortcut; CSS
   media-gated so desktop rendering is untouched.
+- Architecture follow-up: instanced rooftop dressing (antennas with aviation
+  beacons, HVAC units, water tanks) and instanced street furniture (bollards,
+  planters, holo-kiosks with emissive screens).
+- Weapon access now includes bidirectional mouse-wheel cycling while pointer
+  locked, in addition to X / D-pad down / SWP touch button.
+- Enemy variety: sentinel heavy patrols (scaled-up, 150 hp, amber visor) and
+  stalker fast patrols (4.35 speed, 46 hp, cyan visor) join the warden squad;
+  all humanoid hostiles carry a rifle prop with a faction-glow power cell.
+- HUD damage readout: landed hits accumulate into a floating number beside the
+  reticle that rises and fades; resets after ~0.85 s without hits.
+- Traffic cars now accumulate gunfire damage and become wrecks: dead tail
+  lights, body slump, pulsing smoke column, permanent obstacle state, and an
+  escalation toast; resetCampaign restores traffic to pristine condition.
+- Storm layer: a dedicated directional storm light flickers on a seeded
+  10–36 s cycle and schedules a delayed procedural thunder rumble through the
+  effects bus, matching flash-to-thunder distance feel.
 - Verified after these changes: `tsc --noEmit` clean, 162/162 tests across 19
   files, `eslint` clean, `vinext build` succeeded (known >650 kB chunk warning
-  remains). Engine harness compatibility preserved via defensive access for
+  remains), `vinext start` served HTTP 200 and the character manifest returned
+  200, `validate:release` passed, `validate:characters` reported zero failures.
+  Engine harness compatibility preserved via defensive access for
   Object.create test objects.
 - Not closed by this wave: browser playthrough capture, sustained frame trace,
   any QUALITY_GATES score change, console/native builds, photogrammetry (no
