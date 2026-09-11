@@ -52,6 +52,7 @@ export interface GameSettings {
   quality: Quality;
   volume: number;
   sensitivity: number;
+  fov: number;
   hudScale: number;
   subtitles: boolean;
   reducedMotion: boolean;
@@ -203,6 +204,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   quality: 'high',
   volume: 0.72,
   sensitivity: 0.65,
+  fov: 56,
   hudScale: 1,
   subtitles: true,
   reducedMotion: false,

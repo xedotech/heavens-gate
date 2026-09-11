@@ -40,6 +40,7 @@ export function normalizeSettings(value: unknown): GameSettings {
     quality: choice(source.quality, ['low', 'medium', 'high'], DEFAULT_SETTINGS.quality),
     volume: finite(source.volume, DEFAULT_SETTINGS.volume, 0, 1),
     sensitivity: finite(source.sensitivity, DEFAULT_SETTINGS.sensitivity, 0.2, 1.4),
+    fov: finite(source.fov, DEFAULT_SETTINGS.fov, 48, 78),
     hudScale: finite(source.hudScale, DEFAULT_SETTINGS.hudScale, 0.8, 1.3),
     subtitles: typeof source.subtitles === 'boolean' ? source.subtitles : DEFAULT_SETTINGS.subtitles,
     reducedMotion: typeof source.reducedMotion === 'boolean' ? source.reducedMotion : DEFAULT_SETTINGS.reducedMotion,

@@ -2993,7 +2993,8 @@ export class HeavensGateEngine {
     lookTarget.addScaledVector(forward, (aiming ? 7 : 3.25) + this.cameraPitch * 2);
     lookTarget.y += bob * 0.6 - this.landDip * 0.4;
     this.camera.lookAt(lookTarget);
-    const targetFov = this.currentVehicle ? 58 + clamp(speed * 0.28, 0, 12) : aiming ? 49 : 56;
+    const baseFov = clamp(this.settings?.fov ?? 56, 48, 78);
+    const targetFov = this.currentVehicle ? baseFov + 2 + clamp(speed * 0.28, 0, 12) : aiming ? baseFov * 0.875 : baseFov;
     this.camera.fov = damp(this.camera.fov, targetFov, 4.5, delta);
     this.camera.updateProjectionMatrix();
     if (this.inspectionKey && !this.currentVehicle) {
