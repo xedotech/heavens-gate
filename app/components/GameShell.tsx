@@ -529,6 +529,9 @@ export default function GameShell() {
             style={{ '--reticle-spread': `${Math.min(16, hud.reticleSpread * 4.6)}px` } as CSSProperties}
             aria-hidden="true"
           ><span /><span /><span /><span /></div>
+          {hud.hitDamage !== null && (
+            <div key={hud.hitDamageSeq} className="hit-damage" aria-hidden="true">{hud.hitDamage}</div>
+          )}
 
           <div className="vitals-panel">
             <MiniMap snapshot={map} label={hud.district} />

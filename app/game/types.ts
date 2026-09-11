@@ -104,6 +104,8 @@ export interface HUDState {
   aiming: boolean;
   reticleSpread: number;
   reticleHit: boolean;
+  hitDamage: number | null;
+  hitDamageSeq: number;
   reloading: boolean;
   damageFlash: number;
   damageDirection: number | null;
@@ -236,6 +238,8 @@ export const INITIAL_HUD: HUDState = {
   aiming: false,
   reticleSpread: 0,
   reticleHit: false,
+  hitDamage: null,
+  hitDamageSeq: 0,
   reloading: false,
   damageFlash: 0,
   damageDirection: null,

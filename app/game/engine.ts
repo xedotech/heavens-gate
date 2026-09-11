@@ -314,6 +314,9 @@ export class HeavensGateEngine {
   private veilCooldown = 0;
   private pulseCooldown = 0;
   private reticleHit = 0;
+  private hitDamagePool = 0;
+  private hitDamageTimer = 0;
+  private hitDamageSeq = 0;
   private damageFlash = 0;
   private missionIndex = 0;
   private defeatedWardens = 0;
@@ -1862,6 +1865,24 @@ export class HeavensGateEngine {
       child.userData.actorId = id;
     });
     const rig: CharacterRig = { arms, legs, head: headRig, chest, phase: seeded(variant, 208) * Math.PI * 2, stride: 0 };
+    if (!isCivilian) {
+      const rifleMaterial = new THREE.MeshStandardMaterial({ color: 0x171b1e, roughness: 0.36, metalness: 0.72 });
+      const rifleGlow = new THREE.MeshStandardMaterial({ color: visorColor, emissive: visorColor, emissiveIntensity: 1.6 });
+      const rifle = new THREE.Group();
+      const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.13, 0.62), rifleMaterial);
+      rifle.add(receiver);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 0.4, 8), rifleMaterial);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.02, -0.5);
+      rifle.add(barrel);
+      const cell = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.05, 0.14), rifleGlow);
+      cell.position.set(0.045, 0.01, -0.1);
+      rifle.add(cell);
+      rifle.position.set(0, -0.86, -0.16);
+      rifle.rotation.x = -0.22;
+      arms[1].add(rifle);
+      return { group, materials: [bodyMaterial, skinMaterial, hairMaterial, leatherMaterial, visorMaterial, rifleMaterial, rifleGlow], rig };
+    }
     return { group, materials: [bodyMaterial, skinMaterial, hairMaterial, leatherMaterial, visorMaterial], rig };
   }
 
@@ -1955,6 +1976,17 @@ export class HeavensGateEngine {
 
     [[62, 26], [-58, 4], [102, 95], [-110, 78], [8, -100], [88, -72]].forEach(([x, z], index) => {
       this.createDrone(`choir-drone-${index + 1}`, x, z);
+    });
+
+    [[84, 62], [98, 84], [-86, 66]].forEach(([x, z], index) => {
+      const sentinel = this.addActor(`sentinel-${index + 1}`, 'enemy', x, z, 0x2c2622, 0xe8a34c, 150);
+      sentinel.speed = 2.35;
+      sentinel.group.scale.multiplyScalar(1.14);
+    });
+    [[40, -88], [-30, -104], [110, -30], [-116, -20]].forEach(([x, z], index) => {
+      const stalker = this.addActor(`stalker-${index + 1}`, 'enemy', x, z, 0x223034, 0x5fd8e8, 46);
+      stalker.speed = 4.35;
+      stalker.group.scale.multiplyScalar(0.92);
     });
   }
 
@@ -2147,6 +2179,8 @@ export class HeavensGateEngine {
     });
     this.invulnerability = 0;
     this.reticleHit = 0;
+    this.hitDamagePool = 0;
+    this.hitDamageTimer = 0;
     this.damageFlash = 0;
     this.lastCombat = this.elapsed - 8;
     this.gameOverSent = false;
@@ -2369,6 +2403,7 @@ export class HeavensGateEngine {
     this.veilCooldown = Math.max(0, this.veilCooldown - delta);
     this.pulseCooldown = Math.max(0, this.pulseCooldown - delta);
     this.reticleHit = Math.max(0, this.reticleHit - delta * 5);
+    this.hitDamageTimer = Math.max(0, (this.hitDamageTimer ?? 0) - delta);
     this.damageFlash = Math.max(0, this.damageFlash - delta * 2.4);
     this.damageDirectionTimer = Math.max(0, this.damageDirectionTimer - delta);
     if (this.damageDirectionTimer === 0) this.damageDirection = null;
@@ -3148,6 +3183,12 @@ export class HeavensGateEngine {
 
   private damageActor(actor: Actor, damage: number, critical = false) {
     actor.health -= damage;
+    if (this.hitDamageTimer <= 0) {
+      this.hitDamagePool = 0;
+      this.hitDamageSeq += 1;
+    }
+    this.hitDamagePool += damage;
+    this.hitDamageTimer = 0.85;
     actor.lastDamageAmount = Math.max(actor.lastDamageAmount, damage);
     actor.damagePulse = Math.max(actor.damagePulse, critical ? 0.75 : 0.48);
     actor.materials.forEach((material) => {
@@ -3189,6 +3230,10 @@ export class HeavensGateEngine {
     if (actor.id.startsWith('warden-')) {
       this.defeatedWardens += 1;
       this.emitToast('Warden severed', `${this.defeatedWardens} of 5`, 'success');
+    } else if (actor.id.startsWith('sentinel-')) {
+      this.emitToast('Sentinel broken', 'Heavy patrol neutralized', 'success');
+    } else if (actor.id.startsWith('stalker-')) {
+      this.emitToast('Stalker silenced', 'Fast patrol neutralized', 'success');
     } else if (actor.kind === 'drone') {
       this.emitToast('Choir drone disabled', 'Response network weakened', 'success');
     } else if (actor.kind === 'boss') {
@@ -3623,6 +3668,8 @@ export class HeavensGateEngine {
         recoil: this.weaponRecoil,
       }, this.activeWeaponSpec()) * 180 / Math.PI,
       reticleHit: this.reticleHit > 0,
+      hitDamage: this.hitDamageTimer > 0 ? Math.max(1, Math.round(this.hitDamagePool)) : null,
+      hitDamageSeq: this.hitDamageSeq,
       reloading: this.reloading > 0,
       damageFlash: this.damageFlash,
       damageDirection: this.damageDirection,

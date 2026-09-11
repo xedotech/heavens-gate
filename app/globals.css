@@ -673,6 +673,32 @@ button:disabled {
   transform: translate(-50%, -50%) scale(1.25);
 }
 
+.hit-damage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 40;
+  color: var(--primary-bright);
+  font-size: 0.92rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 8px oklch(0.75 0.18 85 / 60%), 0 1px 2px oklch(0 0 0 / 80%);
+  transform: translate(26px, -30px);
+  animation: hit-damage-rise 850ms var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+@keyframes hit-damage-rise {
+  0% { opacity: 0; transform: translate(26px, -16px) scale(0.8); }
+  12% { opacity: 1; transform: translate(26px, -26px) scale(1.08); }
+  100% { opacity: 0; transform: translate(26px, -52px) scale(0.94); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hit-damage { animation: none; opacity: 0.9; }
+}
+
 .vitals-panel {
   position: absolute;
   bottom: 24px;
@@ -1191,6 +1217,7 @@ kbd {
 .hud .vitals-panel,
 .hud .combat-panel,
 .hud .reticle,
+.hud .hit-damage,
 .hud .tutorial-strip {
   transition: opacity 420ms ease;
 }
@@ -1200,6 +1227,7 @@ kbd {
 .hud-cinematic .vitals-panel,
 .hud-cinematic .combat-panel,
 .hud-cinematic .reticle,
+.hud-cinematic .hit-damage,
 .hud-cinematic .tutorial-strip,
 .hud-cinematic .touch-layer {
   opacity: 0;
