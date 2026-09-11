@@ -380,6 +380,11 @@ export class HeavensGateEngine {
     if (event.button === 2) this.mouseAimHeld = false;
   };
 
+  private readonly onWheel = (event: WheelEvent) => {
+    if (this.mode !== 'playing' || this.paused || this.contextLost || !this.pointerLocked || event.deltaY === 0) return;
+    this.cycleWeapon(event.deltaY > 0 ? 1 : -1);
+  };
+
   private readonly onPointerLockChange = () => {
     const wasLocked = this.pointerLocked;
     this.pointerLocked = document.pointerLockElement === this.canvas;
@@ -445,6 +450,7 @@ export class HeavensGateEngine {
     window.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('pointerdown', this.onPointerDown);
     window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('wheel', this.onWheel, { passive: true });
     window.addEventListener('resize', this.onResize);
     window.addEventListener('blur', this.onBlur);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
@@ -785,6 +791,8 @@ export class HeavensGateEngine {
     this.createNeonStrips(buildingData);
     this.createStreetlamps();
     this.createBillboards(buildingData);
+    this.createRooftopProps(buildingData);
+    this.createStreetProps();
 
     this.createLandmark(new THREE.Vector3(0, 0, -54), 0xd1ad61, 'Crown Basilica');
     this.createLandmark(new THREE.Vector3(90, 0, 76), 0x7fa7b0, 'Meridian Needle');
@@ -961,6 +969,147 @@ export class HeavensGateEngine {
         board.rotation.y = side > 0 ? 0 : Math.PI;
       }
       this.scene.add(board);
+    });
+  }
+
+  private createRooftopProps(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
+    const antennas: Array<{ position: THREE.Vector3; height: number }> = [];
+    const beacons: THREE.Vector3[] = [];
+    const units: Array<{ position: THREE.Vector3; yaw: number; scale: number }> = [];
+    const tanks: Array<{ position: THREE.Vector3; radius: number; height: number }> = [];
+    buildingData.forEach((building, index) => {
+      const roofY = building.scale.y;
+      if (building.scale.y > 15 && seeded(index, 70) > 0.55) {
+        const height = 2.4 + seeded(index, 73) * 3.4;
+        const top = new THREE.Vector3(
+          building.position.x + (seeded(index, 71) - 0.5) * building.scale.x * 0.5,
+          roofY + height,
+          building.position.z + (seeded(index, 72) - 0.5) * building.scale.z * 0.5,
+        );
+        antennas.push({ position: top.clone().setY(roofY + height * 0.5), height });
+        if (seeded(index, 82) > 0.4) beacons.push(top.clone().setY(roofY + height + 0.12));
+      }
+      if (seeded(index, 74) > 0.42) {
+        const count = 1 + Math.floor(seeded(index, 75) * 3);
+        for (let k = 0; k < count; k += 1) {
+          units.push({
+            position: new THREE.Vector3(
+              building.position.x + (seeded(index * 7 + k, 76) - 0.5) * building.scale.x * 0.66,
+              roofY + 0.34,
+              building.position.z + (seeded(index * 7 + k, 77) - 0.5) * building.scale.z * 0.66,
+            ),
+            yaw: seeded(index * 7 + k, 78) * Math.PI,
+            scale: 0.8 + seeded(index * 7 + k, 83) * 0.6,
+          });
+        }
+      }
+      if (building.scale.y > 22 && seeded(index, 79) > 0.76) {
+        tanks.push({
+          position: new THREE.Vector3(building.position.x, roofY + 1.1, building.position.z),
+          radius: 0.85 + seeded(index, 80) * 0.5,
+          height: 1.8 + seeded(index, 81) * 0.9,
+        });
+      }
+    });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1a1e20, roughness: 0.52, metalness: 0.62 });
+    const metal = new THREE.MeshStandardMaterial({ color: 0x39424a, roughness: 0.46, metalness: 0.5 });
+    const rust = new THREE.MeshStandardMaterial({ color: 0x4c3a2c, roughness: 0.7, metalness: 0.34 });
+    const beaconMaterial = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 0.4, 0.3) });
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const upAxis = new THREE.Vector3(0, 1, 0);
+
+    const antennaMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.03, 0.07, 1, 5), dark, Math.max(1, antennas.length));
+    antennas.forEach((antenna, index) => {
+      matrix.compose(antenna.position, new THREE.Quaternion(), new THREE.Vector3(1, antenna.height, 1));
+      antennaMesh.setMatrixAt(index, matrix);
+    });
+    const beaconMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), beaconMaterial, Math.max(1, beacons.length));
+    beacons.forEach((position, index) => {
+      matrix.makeTranslation(position.x, position.y, position.z);
+      beaconMesh.setMatrixAt(index, matrix);
+    });
+    const unitMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.5, 0.68, 1.05), metal, Math.max(1, units.length));
+    units.forEach((unit, index) => {
+      quaternion.setFromAxisAngle(upAxis, unit.yaw);
+      matrix.compose(unit.position, quaternion, new THREE.Vector3(unit.scale, 1, unit.scale));
+      unitMesh.setMatrixAt(index, matrix);
+    });
+    const tankMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 10), rust, Math.max(1, tanks.length));
+    tanks.forEach((tank, index) => {
+      matrix.compose(tank.position, new THREE.Quaternion(), new THREE.Vector3(tank.radius, tank.height, tank.radius));
+      tankMesh.setMatrixAt(index, matrix);
+    });
+    [antennaMesh, beaconMesh, unitMesh, tankMesh].forEach((mesh) => {
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = false;
+      this.scene.add(mesh);
+    });
+  }
+
+  private createStreetProps() {
+    const bollards: THREE.Vector3[] = [];
+    const planters: Array<{ position: THREE.Vector3; yaw: number }> = [];
+    const kiosks: Array<{ position: THREE.Vector3; yaw: number }> = [];
+    for (let line = -120; line <= 120; line += 60) {
+      for (let t = -132; t <= 132; t += 22) {
+        const index = (line + 200) * 40 + (t + 200);
+        if (seeded(index, 90) > 0.52) {
+          const side = seeded(index, 91) > 0.5 ? 5.4 : -5.4;
+          const x = line + side;
+          const z = t;
+          if (!this.collides(x, z, 0.4)) bollards.push(new THREE.Vector3(x, 0.32, z));
+        }
+        if (seeded(index, 92) > 0.78) {
+          const side = seeded(index, 93) > 0.5 ? 6.4 : -6.4;
+          const x = t;
+          const z = line - side;
+          if (!this.collides(x, z, 1)) planters.push({ position: new THREE.Vector3(x, 0.26, z), yaw: seeded(index, 94) > 0.5 ? 0 : Math.PI / 2 });
+        }
+        if (seeded(index, 95) > 0.9) {
+          const side = seeded(index, 96) > 0.5 ? 6.8 : -6.8;
+          const x = t;
+          const z = line + side;
+          if (!this.collides(x, z, 1.2)) kiosks.push({ position: new THREE.Vector3(x, 1.1, z), yaw: side > 0 ? Math.PI : 0 });
+        }
+      }
+    }
+    const bollardMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.42, metalness: 0.68 });
+    const planterMaterial = new THREE.MeshStandardMaterial({ color: 0x22312a, roughness: 0.8, metalness: 0.08 });
+    const kioskBody = new THREE.MeshStandardMaterial({ color: 0x1d2326, roughness: 0.44, metalness: 0.55 });
+    const kioskScreen = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.6, 1.7, 2.1) });
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const upAxis = new THREE.Vector3(0, 1, 0);
+
+    const bollardMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.09, 0.11, 0.64, 6), bollardMaterial, Math.max(1, bollards.length));
+    bollards.forEach((position, index) => {
+      matrix.makeTranslation(position.x, position.y, position.z);
+      bollardMesh.setMatrixAt(index, matrix);
+    });
+    const planterMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.9, 0.52, 0.62), planterMaterial, Math.max(1, planters.length));
+    planters.forEach((planter, index) => {
+      quaternion.setFromAxisAngle(upAxis, planter.yaw);
+      matrix.compose(planter.position, quaternion, new THREE.Vector3(1, 1, 1));
+      planterMesh.setMatrixAt(index, matrix);
+    });
+    const kioskMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.1, 2.2, 0.5), kioskBody, Math.max(1, kiosks.length));
+    const screenMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.86, 1.4), kioskScreen, Math.max(1, kiosks.length));
+    kiosks.forEach((kiosk, index) => {
+      quaternion.setFromAxisAngle(upAxis, kiosk.yaw);
+      matrix.compose(kiosk.position, quaternion, new THREE.Vector3(1, 1, 1));
+      kioskMesh.setMatrixAt(index, matrix);
+      const screenPos = kiosk.position.clone();
+      screenPos.y += 0.1;
+      screenPos.x += Math.sin(kiosk.yaw) * 0.27;
+      screenPos.z += Math.cos(kiosk.yaw) * 0.27;
+      matrix.compose(screenPos, quaternion, new THREE.Vector3(1, 1, 1));
+      screenMesh.setMatrixAt(index, matrix);
+    });
+    [bollardMesh, planterMesh, kioskMesh, screenMesh].forEach((mesh) => {
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = false;
+      this.scene.add(mesh);
     });
   }
 
@@ -1298,10 +1447,10 @@ export class HeavensGateEngine {
     return WEAPONS[this.weaponId] ?? MORROW_SPEC;
   }
 
-  private cycleWeapon() {
+  private cycleWeapon(direction = 1) {
     if (this.currentVehicle || this.paused) return;
     const index = WEAPON_ORDER.indexOf(this.weaponId);
-    const next = WEAPON_ORDER[(index + 1) % WEAPON_ORDER.length];
+    const next = WEAPON_ORDER[(index + direction + WEAPON_ORDER.length) % WEAPON_ORDER.length];
     if (next === this.weaponId) return;
     this.weaponPools[this.weaponId] = { ammo: this.ammo, reserve: this.reserveAmmo };
     this.weaponId = next;
@@ -3763,6 +3912,7 @@ export class HeavensGateEngine {
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('pointerdown', this.onPointerDown);
     window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('blur', this.onBlur);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
