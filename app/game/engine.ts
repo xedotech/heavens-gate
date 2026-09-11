@@ -273,6 +273,8 @@ export class HeavensGateEngine {
   private stormLight: THREE.DirectionalLight | null = null;
   private lightningTimer = 9;
   private lightningFlash = 0;
+  private reinforcementTimer = 0;
+  private reinforcementSeq = 0;
   private inspectionKey: THREE.PointLight | null = null;
   private skyOrb: THREE.Mesh | null = null;
   private composer: EffectComposer | null = null;
@@ -1682,6 +1684,32 @@ export class HeavensGateEngine {
     })) ?? [];
   }
 
+  private updateReinforcements(delta: number) {
+    if (typeof this.reinforcementTimer !== 'number') this.reinforcementTimer = 0;
+    this.reinforcementTimer -= delta;
+    if (this.reinforcementTimer > 0 || this.heatTierValue() < 3 || this.currentVehicle) return;
+    const live = this.actors.filter((actor) => actor.alive && actor.id.startsWith('reinforce-')).length;
+    if (live >= 4) {
+      this.reinforcementTimer = 6;
+      return;
+    }
+    const playerPosition = this.player.position;
+    const stamp = Math.floor(this.elapsed * 10);
+    const angle = seeded(stamp, 400) * Math.PI * 2;
+    const distance = 30 + seeded(stamp, 401) * 22;
+    const x = playerPosition.x + Math.cos(angle) * distance;
+    const z = playerPosition.z + Math.sin(angle) * distance;
+    if (Math.abs(x) > WORLD_SIZE / 2 - 10 || Math.abs(z) > WORLD_SIZE / 2 - 10 || this.collides(x, z, 0.7)) {
+      this.reinforcementTimer = 1.5;
+      return;
+    }
+    this.reinforcementSeq += 1;
+    const hunter = this.addActor(`reinforce-${this.reinforcementSeq}`, 'enemy', x, z, 0x2a2f33, 0xe05a3a, 62);
+    hunter.speed = 3.95;
+    this.reinforcementTimer = 14;
+    this.emitToast('Choir reinforcement', 'A hunter was dispatched to your position', 'danger');
+  }
+
   private wreckTrafficCar(car: TrafficCar) {
     car.wrecked = true;
     car.panic = 0;
@@ -2194,6 +2222,7 @@ export class HeavensGateEngine {
     this.dodgeRemaining = 0;
     this.dodgeCooldown = 0;
     this.heat = 0;
+    this.reinforcementTimer = 0;
     this.missionIndex = clamp(save?.missionIndex ?? 0, 0, MISSIONS.length - 1);
     this.defeatedWardens = save?.defeatedWardens ?? 0;
     this.echoesActivated = new Set(save?.echoesActivated ?? []);
@@ -2471,6 +2500,7 @@ export class HeavensGateEngine {
     else this.updatePlayer(delta);
 
     this.updateActors(delta, time);
+    this.updateReinforcements(delta);
     this.updateTraffic(delta);
     this.updateCorpses(delta);
     this.updateDrops(delta, time);
@@ -2882,13 +2912,13 @@ export class HeavensGateEngine {
       .filter((candidate) => candidate.routeCost < 1);
   }
 
-  private beginCinematic() {
+  private beginCinematic(focus?: THREE.Vector3) {
     if (this.settings.reducedMotion || this.cinematic) return;
     const target = this.missionTarget();
     this.cinematic = {
       start: this.renderTime,
       duration: 3.8,
-      focus: target ? new THREE.Vector3(target.x, 0, target.z) : this.player.position.clone(),
+      focus: focus ?? (target ? new THREE.Vector3(target.x, 0, target.z) : this.player.position.clone()),
     };
   }
 
@@ -3296,6 +3326,8 @@ export class HeavensGateEngine {
       this.emitToast('Sentinel broken', 'Heavy patrol neutralized', 'success');
     } else if (actor.id.startsWith('stalker-')) {
       this.emitToast('Stalker silenced', 'Fast patrol neutralized', 'success');
+    } else if (actor.id.startsWith('reinforce-')) {
+      this.emitToast('Hunter down', 'Reinforcement destroyed', 'success');
     } else if (actor.kind === 'drone') {
       this.emitToast('Choir drone disabled', 'Response network weakened', 'success');
     } else if (actor.kind === 'boss') {
@@ -3604,6 +3636,7 @@ export class HeavensGateEngine {
     actor.materials.push(haloMaterial);
     this.boss = actor;
     this.emitToast('BOSS // FALSE ARCHON', 'Break the halo. Silence the voice.', 'danger');
+    this.beginCinematic(actor.group.position.clone());
   }
 
   private emitMissionBriefing() {
