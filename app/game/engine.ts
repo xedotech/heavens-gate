@@ -1,5 +1,31 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import {
+  createNpcAiState,
+  stepNpcAi,
+  type NpcAiState,
+  type SquadRadioSignal,
+} from './ai';
 import { AudioEngine } from './audio';
+import { GameInputState, gamepadLookDelta, isGameplayBinding } from './input';
+import { normalizeKeyBinding } from './keybinds';
+import { HERO_CHARACTER_SCALE, HeroCharacter, loadHeroCharacter } from './character';
+import {
+  MORROW_SPEC,
+  WEAPONS,
+  WEAPON_ORDER,
+  addShotRecoil,
+  deterministicShotOffset,
+  recoverShotRecoil,
+  shotIntervalSeconds,
+  shotSpreadRadians,
+  transferReload,
+  weaponDamage,
+  type WeaponSpec,
+} from './combat';
 import {
   clamp,
   damp,
@@ -11,6 +37,21 @@ import {
   seeded,
 } from './mechanics';
 import {
+  MOVEMENT_SPEC,
+  canStartDodge,
+  canStartSlide,
+  movementSpeed,
+  slideSpeed,
+  smoothHeading,
+  resolvePlanarCollision,
+  sweepPlanarCollision,
+  updateStamina,
+} from './movement';
+import { FrameTimeSampler } from './performance';
+import { createCheckpoint, normalizeSave } from './persistence';
+import { ScannedGroundMaterial } from './scanned-materials';
+import { visibleInScene, withoutSubtree } from './scene-lifecycle';
+import {
   INITIAL_HUD,
   MISSIONS,
   type CharacterSkin,
@@ -18,10 +59,12 @@ import {
   type GameSettings,
   type HUDState,
   type InteractionPrompt,
+  type KeybindAction,
   type MapSnapshot,
   type SaveState,
   type SubtitleLine,
   type ToastMessage,
+  type WeaponId,
 } from './types';
 
 type ActorKind = 'enemy' | 'civilian' | 'drone' | 'boss';
@@ -40,6 +83,9 @@ interface Actor {
   flee: number;
   materials: THREE.MeshStandardMaterial[];
   rig?: CharacterRig;
+  aiState?: NpcAiState;
+  damagePulse: number;
+  lastDamageAmount: number;
 }
 
 interface CharacterRig {
@@ -59,6 +105,11 @@ interface PlayerSkinMaterials {
   hair: THREE.MeshStandardMaterial;
 }
 
+interface VehicleWheel {
+  pivot: THREE.Group;
+  front: boolean;
+}
+
 interface Vehicle {
   id: string;
   group: THREE.Group;
@@ -67,6 +118,45 @@ interface Vehicle {
   speed: number;
   occupied: boolean;
   bodyMaterial: THREE.MeshStandardMaterial;
+  wheels?: VehicleWheel[];
+  tailMaterial?: THREE.MeshStandardMaterial;
+  beamMaterial?: THREE.MeshBasicMaterial;
+  spot?: THREE.SpotLight;
+}
+
+interface TrafficCar {
+  group: THREE.Group;
+  axis: 'x' | 'z';
+  lane: number;
+  direction: 1 | -1;
+  offset: number;
+  spawnProgress: number;
+  progress: number;
+  cruise: number;
+  speed: number;
+  panic: number;
+  wheels: VehicleWheel[];
+  tailMaterial: THREE.MeshStandardMaterial;
+}
+
+interface MissionCinematic {
+  start: number;
+  duration: number;
+  focus: THREE.Vector3;
+}
+
+interface Corpse {
+  group: THREE.Group;
+  materials: THREE.MeshStandardMaterial[];
+  life: number;
+  total: number;
+  tip: number;
+}
+
+interface DropPickup {
+  group: THREE.Group;
+  kind: 'ammo' | 'resonance';
+  life: number;
 }
 
 interface MemoryEcho {
@@ -79,6 +169,7 @@ interface GateObject {
   group: THREE.Group;
   ring: THREE.Mesh<THREE.TorusGeometry, THREE.MeshStandardMaterial>;
   veil: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
+  shaft?: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
 }
 
 interface TimedEffect {
@@ -136,20 +227,34 @@ export class HeavensGateEngine {
   private disposed = false;
   private mode: 'attract' | 'playing' = 'attract';
   private paused = false;
+  private contextLost = false;
   private pointerLocked = false;
 
   private player = new THREE.Group();
   private playerParts: THREE.Object3D[] = [];
   private playerSkinMaterials: PlayerSkinMaterials | null = null;
+  private heroCharacter: HeroCharacter | null = null;
+  private heroLoadToken = 0;
   private playerVelocity = new THREE.Vector3();
   private playerHeading = 0;
   private cameraYaw = 0.12;
   private cameraPitch = 0.18;
+  private photoMode = false;
+  private readonly inspectionCenter = new THREE.Vector3(0, 2.05, 0);
+  private inspectionHeight = 3.7;
   private grounded = true;
+  private crouching = false;
+  private stamina: number = MOVEMENT_SPEC.staminaMaximum;
+  private slideRemaining = 0;
+  private readonly slideDirection = new THREE.Vector3();
+  private dodgeRemaining = 0;
+  private dodgeCooldown = 0;
+  private readonly dodgeDirection = new THREE.Vector3();
   private walkPhase = 0;
   private footstepTimer = 0;
 
   private actors: Actor[] = [];
+  private radioSignals: SquadRadioSignal[] = [];
   private vehicles: Vehicle[] = [];
   private currentVehicle: Vehicle | null = null;
   private echoes: MemoryEcho[] = [];
@@ -157,20 +262,45 @@ export class HeavensGateEngine {
   private phaseMaterials: THREE.MeshStandardMaterial[] = [];
   private collisionBoxes: THREE.Box3[] = [];
   private rayTargets: THREE.Object3D[] = [];
+  private scannedGround: ScannedGroundMaterial | null = null;
   private effects: TimedEffect[] = [];
   private objectiveMarker: THREE.Group | null = null;
   private dust: THREE.Points | null = null;
   private sun: THREE.DirectionalLight | null = null;
+  private inspectionKey: THREE.PointLight | null = null;
   private skyOrb: THREE.Mesh | null = null;
+  private composer: EffectComposer | null = null;
+  private bloomPass: UnrealBloomPass | null = null;
+  private trafficCars: TrafficCar[] = [];
+  private dynamicObstacles: Array<{ x: number; z: number; radius: number }> = [];
+  private cinematic: MissionCinematic | null = null;
+  private hitStop = 0;
+  private rain: { mesh: THREE.InstancedMesh; drops: Float32Array; count: number } | null = null;
+  private corpses: Corpse[] = [];
+  private drops: DropPickup[] = [];
+  private envMapTexture: THREE.Texture | null = null;
+  private landDip = 0;
+  private damageDirection: number | null = null;
+  private damageDirectionTimer = 0;
+  private touchMove = { x: 0, y: 0 };
+  private touchFire = false;
+  private touchAim = false;
+  private touchHeld = new Set<KeybindAction>();
+  private touchPressed = new Set<KeybindAction>();
+  private readonly rainMatrix = new THREE.Matrix4();
+  private readonly billboardTextures: THREE.CanvasTexture[] = [];
 
-  private keys = new Set<string>();
-  private pressed = new Set<string>();
-  private gamepadAxes = { moveX: 0, moveY: 0, lookX: 0, lookY: 0, shoot: 0 };
-  private lastGamepadButtons: boolean[] = [];
+  private readonly input = new GameInputState();
+  private gamepadAxes = { moveX: 0, moveY: 0, lookX: 0, lookY: 0, aim: 0, shoot: 0 };
   private mouseShootHeld = false;
+  private mouseAimHeld = false;
   private shotCooldown = 0;
+  private weaponRecoil = 0;
+  private shotIndex = 0;
   private reloading = 0;
   private invulnerability = 0;
+  private weaponId: WeaponId = 'morrow';
+  private weaponPools: Partial<Record<WeaponId, { ammo: number; reserve: number }>> = {};
 
   private health = 100;
   private armor = 50;
@@ -199,6 +329,7 @@ export class HeavensGateEngine {
   private fpsTimer = 0;
   private fpsFrames = 0;
   private fps = 60;
+  private readonly frameTimeSampler = new FrameTimeSampler(600);
   private dynamicPixelRatio = 1;
   private lastInteraction = '';
   private subtitleId = 0;
@@ -206,32 +337,38 @@ export class HeavensGateEngine {
   private timeouts = new Set<ReturnType<typeof setTimeout>>();
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    const key = event.key.toLowerCase();
-    if (!event.repeat) this.pressed.add(key);
-    this.keys.add(key);
-    if ([' ', 'tab'].includes(key)) event.preventDefault();
-    if (key === 'escape' && this.mode === 'playing' && !this.paused) {
+    if (this.mode !== 'playing' || this.paused || this.contextLost || event.defaultPrevented || event.isComposing) return;
+    if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')) return;
+    const key = normalizeKeyBinding(event.key);
+    if (key === 'escape' && !event.repeat) {
       event.preventDefault();
-      this.callbacks.onPauseRequested();
+      this.requestPause();
+      return;
     }
+    if (isGameplayBinding(key, this.settings.keybinds)) event.preventDefault();
+    this.input.keyDown(event);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
-    this.keys.delete(event.key.toLowerCase());
+    this.input.keyUp(event);
   };
 
   private readonly onMouseMove = (event: MouseEvent) => {
-    if (!this.pointerLocked || this.mode !== 'playing' || this.paused) return;
+    if (!this.pointerLocked || this.mode !== 'playing' || this.paused || this.contextLost) return;
     const sensitivity = this.settings.sensitivity * 0.0022;
     this.cameraYaw -= event.movementX * sensitivity;
     this.cameraPitch = clamp(this.cameraPitch - event.movementY * sensitivity, -0.24, 0.74);
   };
 
   private readonly onPointerDown = (event: PointerEvent) => {
-    if (event.button !== 0 || this.mode !== 'playing' || this.paused) return;
+    if ((event.button !== 0 && event.button !== 2) || this.mode !== 'playing' || this.paused || this.contextLost || event.target !== this.canvas) return;
     if (!this.pointerLocked) {
       const lockRequest = this.canvas.requestPointerLock?.();
       if (lockRequest) void lockRequest.catch(() => { this.pointerLocked = false; });
+      return;
+    }
+    if (event.button === 2) {
+      this.mouseAimHeld = true;
       return;
     }
     this.mouseShootHeld = true;
@@ -240,16 +377,47 @@ export class HeavensGateEngine {
 
   private readonly onPointerUp = (event: PointerEvent) => {
     if (event.button === 0) this.mouseShootHeld = false;
+    if (event.button === 2) this.mouseAimHeld = false;
   };
 
   private readonly onPointerLockChange = () => {
+    const wasLocked = this.pointerLocked;
     this.pointerLocked = document.pointerLockElement === this.canvas;
+    if (wasLocked && !this.pointerLocked) {
+      this.clearInput();
+      if (!this.photoMode && this.mode === 'playing' && !this.paused) this.requestPause();
+    }
   };
 
   private readonly onResize = () => this.resize();
 
+  private readonly onBlur = () => {
+    this.clearInput();
+    if (this.mode === 'playing' && !this.paused) this.requestPause();
+  };
+
   private readonly onVisibility = () => {
-    if (document.hidden && this.mode === 'playing' && !this.paused) this.callbacks.onPauseRequested();
+    if (document.hidden) this.onBlur();
+  };
+
+  private readonly onContextLost = (event: Event) => {
+    // Browsers can evict a WebGL context under GPU pressure or when a laptop
+    // switches adapters. Prevent the default teardown, suspend simulation
+    // mutations, and let Three.js rebuild its state when restoration arrives.
+    event.preventDefault();
+    this.contextLost = true;
+    this.clearInput();
+    this.emitToast('Graphics device paused', 'The renderer is recovering; your checkpoint is safe.', 'danger');
+  };
+
+  private readonly onContextRestored = () => {
+    this.contextLost = false;
+    this.clearInput();
+    this.renderer.resetState();
+    this.createComposer();
+    this.applyQuality();
+    this.lastFrameTime = performance.now();
+    this.emitToast('Graphics device restored', 'Rendering resumed without resetting the campaign.', 'success');
   };
 
   constructor(canvas: HTMLCanvasElement, callbacks: EngineCallbacks, settings: GameSettings) {
@@ -269,7 +437,7 @@ export class HeavensGateEngine {
 
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.04;
+    this.renderer.toneMappingExposure = 1.16;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     window.addEventListener('keydown', this.onKeyDown);
@@ -278,12 +446,39 @@ export class HeavensGateEngine {
     window.addEventListener('pointerdown', this.onPointerDown);
     window.addEventListener('pointerup', this.onPointerUp);
     window.addEventListener('resize', this.onResize);
+    window.addEventListener('blur', this.onBlur);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     document.addEventListener('visibilitychange', this.onVisibility);
+    canvas.addEventListener('webglcontextlost', this.onContextLost);
+    canvas.addEventListener('webglcontextrestored', this.onContextRestored);
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
     this.resize();
+    this.createComposer();
     this.applyQuality();
+  }
+
+  private createComposer() {
+    try {
+      const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+      const target = new THREE.WebGLRenderTarget(
+        Math.max(1, size.x),
+        Math.max(1, size.y),
+        { type: THREE.HalfFloatType, samples: this.settings.quality === 'high' ? 4 : 2 },
+      );
+      this.composer?.dispose();
+      const composer = new EffectComposer(this.renderer, target);
+      composer.addPass(new RenderPass(this.scene, this.camera));
+      this.bloomPass = new UnrealBloomPass(size, 0.6, 0.5, 0.82);
+      composer.addPass(this.bloomPass);
+      composer.addPass(new OutputPass());
+      this.composer = composer;
+      this.composer.setPixelRatio(this.dynamicPixelRatio);
+      this.composer.setSize(this.canvas.clientWidth || window.innerWidth, this.canvas.clientHeight || window.innerHeight);
+    } catch {
+      this.composer = null;
+      this.bloomPass = null;
+    }
   }
 
   async initialize() {
@@ -296,7 +491,11 @@ export class HeavensGateEngine {
       await this.nextFrame();
       this.callbacks.onLoadProgress(0.52, 'Teaching the streets');
       this.createPlayer();
+      this.callbacks.onLoadProgress(0.58, 'Giving Aurel a face');
+      await this.swapHeroCharacter(this.settings.characterSkin, true);
       this.createVehicles();
+      this.createTraffic();
+      this.createRain();
       this.createActors();
       await this.nextFrame();
       this.callbacks.onLoadProgress(0.76, 'Tuning the gates');
@@ -319,11 +518,14 @@ export class HeavensGateEngine {
   }
 
   private createAtmosphere() {
-    this.scene.background = new THREE.Color(0x070a0d);
-    this.scene.fog = new THREE.FogExp2(0x090d10, 0.0078);
+    this.scene.background = new THREE.Color(0x091016);
+    this.scene.fog = new THREE.FogExp2(0x101920, 0.0064);
 
-    const hemisphere = new THREE.HemisphereLight(0xb9d5ec, 0x1a110a, 1.8);
+    const hemisphere = new THREE.HemisphereLight(0xc6dcf0, 0x24180f, 2.45);
     this.scene.add(hemisphere);
+
+    const ambientBounce = new THREE.AmbientLight(0x6c8497, 0.46);
+    this.scene.add(ambientBounce);
 
     this.sun = new THREE.DirectionalLight(0xffd98a, 3.8);
     this.sun.position.set(-84, 116, 58);
@@ -337,9 +539,13 @@ export class HeavensGateEngine {
     this.sun.shadow.camera.far = 260;
     this.scene.add(this.sun);
 
-    const rim = new THREE.DirectionalLight(0x7fa6c8, 1.35);
+    const rim = new THREE.DirectionalLight(0x7fa6c8, 2.1);
     rim.position.set(70, 34, -90);
     this.scene.add(rim);
+
+    this.inspectionKey = new THREE.PointLight(0xffdec7, 0, 8, 2);
+    this.inspectionKey.name = 'Aurel camera-side key light';
+    this.scene.add(this.inspectionKey);
 
     const orbMaterial = new THREE.MeshBasicMaterial({ color: 0xd8c37b, fog: false });
     this.skyOrb = new THREE.Mesh(new THREE.SphereGeometry(7, 24, 16), orbMaterial);
@@ -376,18 +582,81 @@ export class HeavensGateEngine {
       new THREE.PointsMaterial({ color: 0xb49b64, size: 0.12, transparent: true, opacity: 0.38 }),
     );
     this.scene.add(this.dust);
+    this.createEnvironmentMap();
+  }
+
+  private createEnvironmentMap() {
+    try {
+      const env = new THREE.Scene();
+      const canvas = document.createElement('canvas');
+      canvas.width = 4;
+      canvas.height = 128;
+      const context = canvas.getContext('2d');
+      if (context) {
+        const gradient = context.createLinearGradient(0, 0, 0, 128);
+        gradient.addColorStop(0, '#060b12');
+        gradient.addColorStop(0.45, '#12202c');
+        gradient.addColorStop(0.72, '#4a351d');
+        gradient.addColorStop(0.86, '#1a1209');
+        gradient.addColorStop(1, '#0a0705');
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, 4, 128);
+      }
+      const dome = new THREE.CanvasTexture(canvas);
+      dome.mapping = THREE.EquirectangularReflectionMapping;
+      dome.colorSpace = THREE.SRGBColorSpace;
+      env.background = dome;
+
+      const glowPalette = [0xd8a94e, 0x7fb4d8, 0xc25a40, 0x9fd6a0];
+      for (let i = 0; i < 8; i += 1) {
+        const color = new THREE.Color(glowPalette[i % glowPalette.length]).multiplyScalar(2.6);
+        const card = new THREE.Mesh(
+          new THREE.PlaneGeometry(14 + seeded(i, 40) * 22, 5 + seeded(i, 41) * 9),
+          new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }),
+        );
+        const angle = (i / 8) * Math.PI * 2 + seeded(i, 42) * 0.4;
+        card.position.set(Math.cos(angle) * 40, 4 + seeded(i, 43) * 16, Math.sin(angle) * 40);
+        card.lookAt(0, 6, 0);
+        env.add(card);
+      }
+      const underglow = new THREE.Mesh(
+        new THREE.CircleGeometry(46, 32),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(0x54401e).multiplyScalar(1.6) }),
+      );
+      underglow.rotation.x = -Math.PI / 2;
+      underglow.position.y = -2;
+      env.add(underglow);
+
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.envMapTexture = pmrem.fromScene(env, 0.08).texture;
+      this.scene.environment = this.envMapTexture;
+      this.scene.environmentIntensity = 0.5;
+      pmrem.dispose();
+      dome.dispose();
+      env.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          (child.material as THREE.Material).dispose();
+        }
+      });
+    } catch {
+      // IBL is a visual enhancement; the light rig already carries the scene.
+    }
   }
 
   private createCity() {
-    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x0c1113, roughness: 0.88, metalness: 0.08 });
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE), groundMaterial);
+    this.scannedGround = new ScannedGroundMaterial(WORLD_SIZE, this.renderer.capabilities.getMaxAnisotropy(), () => {
+      this.emitToast('Ground detail unavailable', 'The last working ground material is retained. You can keep playing.', 'info');
+    });
+    this.scannedGround.setQuality(this.settings.quality);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE), this.scannedGround.material);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     ground.userData.blocksShot = true;
     this.scene.add(ground);
     this.rayTargets.push(ground);
 
-    const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x11191c, roughness: 0.72, metalness: 0.16 });
+    const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x11191c, roughness: 0.34, metalness: 0.55 });
     const laneMaterial = new THREE.MeshBasicMaterial({ color: 0x927b46, transparent: true, opacity: 0.5 });
     for (let line = -150; line <= 150; line += 30) {
       const roadX = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE, 8.4), roadMaterial);
@@ -481,20 +750,41 @@ export class HeavensGateEngine {
     this.scene.add(buildings);
     this.rayTargets.push(buildings);
 
-    const windowMaterial = new THREE.MeshBasicMaterial({ color: 0xb89b58, transparent: true, opacity: 0.72 });
-    const windowGeometry = new THREE.BoxGeometry(0.26, 0.13, 0.26);
-    const windowCount = this.settings.quality === 'low' ? 70 : 170;
+    const windowMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const windowGeometry = new THREE.BoxGeometry(0.66, 0.34, 0.1);
+    const windowCount = this.settings.quality === 'low' ? 240 : this.settings.quality === 'medium' ? 620 : 1080;
     const windows = new THREE.InstancedMesh(windowGeometry, windowMaterial, windowCount);
+    const windowColor = new THREE.Color();
+    const faceQuaternion = new THREE.Quaternion();
+    const upAxis = new THREE.Vector3(0, 1, 0);
     for (let i = 0; i < windowCount; i += 1) {
       const building = buildingData[Math.floor(seeded(i, 31) * buildingData.length)];
-      const edgeX = seeded(i, 32) > 0.5;
-      const x = building.position.x + (edgeX ? (seeded(i, 33) > 0.5 ? 1 : -1) * building.scale.x * 0.51 : (seeded(i, 34) - 0.5) * building.scale.x * 0.7);
-      const z = building.position.z + (!edgeX ? (seeded(i, 35) > 0.5 ? 1 : -1) * building.scale.z * 0.51 : (seeded(i, 36) - 0.5) * building.scale.z * 0.7);
-      const y = 2 + seeded(i, 37) * Math.max(2, building.scale.y - 3);
-      matrix.compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
+      const face = Math.floor(seeded(i, 32) * 4);
+      const along = (seeded(i, 33) - 0.5) * 0.78;
+      const y = 1.6 + seeded(i, 34) * Math.max(1.4, building.scale.y - 2.4);
+      const x = face < 2
+        ? building.position.x + (face === 0 ? 1 : -1) * (building.scale.x * 0.5 + 0.06)
+        : building.position.x + along * building.scale.x;
+      const z = face < 2
+        ? building.position.z + along * building.scale.z
+        : building.position.z + (face === 2 ? 1 : -1) * (building.scale.z * 0.5 + 0.06);
+      faceQuaternion.setFromAxisAngle(upAxis, face === 0 ? Math.PI / 2 : face === 1 ? -Math.PI / 2 : face === 2 ? 0 : Math.PI);
+      matrix.compose(new THREE.Vector3(x, y, z), faceQuaternion, new THREE.Vector3(1, 1, 1));
       windows.setMatrixAt(i, matrix);
+      const pick = seeded(i, 35);
+      if (pick < 0.56) windowColor.setRGB(1.15, 0.82, 0.42).multiplyScalar(0.45 + seeded(i, 36) * 0.65);
+      else if (pick < 0.78) windowColor.setRGB(0.48, 0.95, 1.18).multiplyScalar(0.5 + seeded(i, 36) * 0.6);
+      else if (pick < 0.9) windowColor.setRGB(2.6, 1.9, 0.85);
+      else windowColor.setRGB(2.1, 0.65, 1.5);
+      if (seeded(i, 38) < 0.16) windowColor.multiplyScalar(0.1);
+      windows.setColorAt(i, windowColor);
     }
+    windows.instanceMatrix.needsUpdate = true;
+    if (windows.instanceColor) windows.instanceColor.needsUpdate = true;
     this.scene.add(windows);
+    this.createNeonStrips(buildingData);
+    this.createStreetlamps();
+    this.createBillboards(buildingData);
 
     this.createLandmark(new THREE.Vector3(0, 0, -54), 0xd1ad61, 'Crown Basilica');
     this.createLandmark(new THREE.Vector3(90, 0, 76), 0x7fa7b0, 'Meridian Needle');
@@ -507,6 +797,171 @@ export class HeavensGateEngine {
     if (x < -28 && z < -42) return new THREE.Color(0x222a23);
     if (x > 32 && z < -24) return new THREE.Color(0x28231d);
     return new THREE.Color(0x232a2c);
+  }
+
+  private districtNeonColor(x: number, z: number) {
+    if (x < -42 && z > 12) return new THREE.Color(0.55, 2.05, 1.7);
+    if (x > 48 && z > 12) return new THREE.Color(0.5, 1.25, 2.5);
+    if (x < -28 && z < -42) return new THREE.Color(2.5, 1.0, 0.42);
+    if (x > 32 && z < -24) return new THREE.Color(2.2, 0.62, 2.1);
+    return new THREE.Color(2.35, 1.8, 0.72);
+  }
+
+  private createNeonStrips(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
+    const horizontal: Array<{ position: THREE.Vector3; yaw: number; length: number; color: THREE.Color }> = [];
+    const vertical: Array<{ position: THREE.Vector3; height: number; color: THREE.Color }> = [];
+    buildingData.forEach((building, buildingIndex) => {
+      if (seeded(buildingIndex, 41) > 0.58) return;
+      const face = Math.floor(seeded(buildingIndex, 42) * 4);
+      const outward = new THREE.Vector3(face === 0 ? 1 : face === 1 ? -1 : 0, 0, face === 2 ? 1 : face === 3 ? -1 : 0);
+      const surface = face < 2 ? building.scale.x * 0.5 + 0.1 : building.scale.z * 0.5 + 0.1;
+      const faceLength = (face < 2 ? building.scale.z : building.scale.x) * 0.82;
+      const color = this.districtNeonColor(building.position.x, building.position.z);
+      const base = building.position.clone().addScaledVector(outward, surface);
+      if (seeded(buildingIndex, 43) > 0.45) {
+        base.y = 2.4 + seeded(buildingIndex, 44) * Math.max(1.5, building.scale.y - 3.2);
+        horizontal.push({ position: base, yaw: face < 2 ? Math.PI / 2 : 0, length: faceLength, color });
+      } else {
+        base.y = building.scale.y * 0.5;
+        base.addScaledVector(outward, 0.02);
+        const lateral = (seeded(buildingIndex, 45) - 0.5) * 0.5;
+        base.x += face >= 2 ? lateral * building.scale.x : 0;
+        base.z += face < 2 ? lateral * building.scale.z : 0;
+        vertical.push({ position: base, height: building.scale.y * (0.32 + seeded(buildingIndex, 46) * 0.42), color });
+      }
+    });
+    const neonMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const upAxis = new THREE.Vector3(0, 1, 0);
+    const stripsH = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.12, 0.12), neonMaterial, Math.max(1, horizontal.length));
+    horizontal.forEach((strip, index) => {
+      quaternion.setFromAxisAngle(upAxis, strip.yaw);
+      matrix.compose(strip.position, quaternion, new THREE.Vector3(strip.length, 1, 1));
+      stripsH.setMatrixAt(index, matrix);
+      stripsH.setColorAt(index, strip.color);
+    });
+    const stripsV = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 1, 0.12), neonMaterial, Math.max(1, vertical.length));
+    vertical.forEach((strip, index) => {
+      matrix.compose(strip.position, new THREE.Quaternion(), new THREE.Vector3(1, strip.height, 1));
+      stripsV.setMatrixAt(index, matrix);
+      stripsV.setColorAt(index, strip.color);
+    });
+    [stripsH, stripsV].forEach((mesh) => {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      this.scene.add(mesh);
+    });
+  }
+
+  private createStreetlamps() {
+    const positions: Array<{ x: number; z: number; armX: number; armZ: number }> = [];
+    for (let line = -120; line <= 120; line += 60) {
+      for (let t = -132; t <= 132; t += 30) {
+        const side = Math.round(t / 30) % 2 === 0 ? 5.6 : -5.6;
+        positions.push({ x: line + side, z: t, armX: side > 0 ? -0.6 : 0.6, armZ: 0 });
+        positions.push({ x: t, z: line - side, armX: 0, armZ: side > 0 ? 0.6 : -0.6 });
+      }
+    }
+    const lamps = positions.filter((lamp) => !this.collides(lamp.x, lamp.z, 0.5));
+    const dark = new THREE.MeshStandardMaterial({ color: 0x14181a, roughness: 0.5, metalness: 0.6 });
+    const headMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const coneMaterial = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(1.35, 1.06, 0.52),
+      transparent: true,
+      opacity: 0.055,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.11, 5.0, 6), dark, lamps.length);
+    const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.62, 0.12, 0.26), headMaterial, lamps.length);
+    const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(1.5, 4.7, 10, 1, true), coneMaterial, lamps.length);
+    const matrix = new THREE.Matrix4();
+    const headColor = new THREE.Color();
+    lamps.forEach((lamp, index) => {
+      matrix.makeTranslation(lamp.x, 2.5, lamp.z);
+      poles.setMatrixAt(index, matrix);
+      matrix.makeTranslation(lamp.x + lamp.armX, 4.96, lamp.z + lamp.armZ);
+      heads.setMatrixAt(index, matrix);
+      headColor.setRGB(1.9, 1.5, 0.72).multiplyScalar(0.85 + seeded(index, 52) * 0.3);
+      heads.setColorAt(index, headColor);
+      matrix.makeTranslation(lamp.x + lamp.armX, 2.62, lamp.z + lamp.armZ);
+      cones.setMatrixAt(index, matrix);
+    });
+    [poles, heads, cones].forEach((mesh) => {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = false;
+      this.scene.add(mesh);
+    });
+    cones.renderOrder = 5;
+  }
+
+  private billboardTexture(title: string, subtitle: string, accent: string, background: string) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 288;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    context.fillStyle = background;
+    context.fillRect(0, 0, 512, 288);
+    context.fillStyle = 'rgba(255,255,255,0.045)';
+    for (let y = 0; y < 288; y += 4) context.fillRect(0, y, 512, 1);
+    context.strokeStyle = accent;
+    context.lineWidth = 6;
+    context.strokeRect(10, 10, 492, 268);
+    context.fillStyle = accent;
+    context.font = '700 62px Georgia, serif';
+    context.fillText(title, 30, 130);
+    context.font = '400 28px Georgia, serif';
+    context.fillStyle = 'rgba(255,255,255,0.78)';
+    context.fillText(subtitle, 32, 182);
+    for (let i = 0; i < 5; i += 1) context.fillRect(30 + i * 26, 226, 16, 10);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    this.billboardTextures.push(texture);
+    return texture;
+  }
+
+  private createBillboards(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
+    const textures = [
+      this.billboardTexture('CHOIR', 'ONE HEAVEN / ONE OWNER', '#e8c96f', '#101418'),
+      this.billboardTexture('AETHEL', 'MEMORY IS CURRENCY', '#7fd4e8', '#0d1418'),
+      this.billboardTexture('SERAPH', 'ASCENSION MOTORWORKS', '#d88ce8', '#120e16'),
+    ];
+    const tall = buildingData
+      .filter((building) => building.scale.y > 26)
+      .sort((a, b) => b.scale.y - a.scale.y)
+      .slice(0, this.settings.quality === 'low' ? 6 : 14);
+    tall.forEach((building, index) => {
+      const texture = textures[index % textures.length];
+      if (!texture) return;
+      const material = new THREE.MeshBasicMaterial({ map: texture, color: new THREE.Color(1.45, 1.45, 1.45) });
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(7.4, 4.16), material);
+      const roadX = Math.round(building.position.x / 30) * 30;
+      const roadZ = Math.round(building.position.z / 30) * 30;
+      const faceX = Math.abs(roadX - building.position.x) < Math.abs(roadZ - building.position.z);
+      if (faceX) {
+        const side = roadX < building.position.x ? -1 : 1;
+        board.position.set(
+          building.position.x + side * (building.scale.x * 0.5 + 0.12),
+          building.scale.y * (0.52 + seeded(index, 61) * 0.18),
+          building.position.z,
+        );
+        board.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+      } else {
+        const side = roadZ < building.position.z ? -1 : 1;
+        board.position.set(
+          building.position.x,
+          building.scale.y * (0.52 + seeded(index, 61) * 0.18),
+          building.position.z + side * (building.scale.z * 0.5 + 0.12),
+        );
+        board.rotation.y = side > 0 ? 0 : Math.PI;
+      }
+      this.scene.add(board);
+    });
   }
 
   private createLandmark(position: THREE.Vector3, color: number, label: string) {
@@ -672,20 +1127,214 @@ export class HeavensGateEngine {
       this.player.add(coatTail);
     }
 
-    const weapon = new THREE.Group();
-    weapon.name = 'Morrow sidearm';
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.8), armorMaterial);
-    barrel.position.z = -0.28;
-    weapon.add(barrel);
-    const sight = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.04, 0.3), goldMaterial);
-    sight.position.set(0, 0.11, -0.24);
-    weapon.add(sight);
-    weapon.position.set(0.48, 1.7, -0.62);
-    weapon.rotation.x = -0.08;
-    this.player.add(weapon);
-    this.player.userData.weapon = weapon;
+    const weaponMount = new THREE.Group();
+    weaponMount.name = 'Weapon mount';
+    weaponMount.position.set(0.48, 1.7, -0.62);
+    weaponMount.rotation.x = -0.08;
+    this.buildWeaponModels(weaponMount, { coat: coatMaterial, armor: armorMaterial, gold: goldMaterial });
+    this.player.add(weaponMount);
+    this.player.userData.weapon = weaponMount;
+    this.applyWeaponVisibility();
+    this.player.children.forEach((child) => {
+      child.userData.proceduralFallback = child !== weaponMount;
+    });
     this.player.position.set(0, 0, 34);
     this.scene.add(this.player);
+  }
+
+  private async swapHeroCharacter(skin: CharacterSkin, initialLoad = false) {
+    const token = ++this.heroLoadToken;
+    try {
+      const anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+      const character = await loadHeroCharacter(skin, anisotropy, (progress) => {
+        if (initialLoad) this.callbacks.onLoadProgress(0.58 + progress * 0.14, 'Resolving skin, cloth, and memory');
+      });
+      if (this.disposed || token !== this.heroLoadToken) {
+        character.dispose();
+        return;
+      }
+      if (this.heroCharacter) {
+        const weapon = this.player.userData.weapon as THREE.Object3D | undefined;
+        if (weapon) this.restoreFallbackWeaponTransform(weapon);
+        this.player.remove(this.heroCharacter.object);
+        this.heroCharacter.dispose();
+      }
+      this.player.children.forEach((child) => {
+        if (child.userData.proceduralFallback) child.visible = false;
+      });
+      this.heroCharacter = character;
+      character.object.scale.setScalar(HERO_CHARACTER_SCALE);
+      this.player.add(character.object);
+      character.object.updateMatrixWorld(true);
+      this.updateInspectionFraming(character.object);
+      const weapon = this.player.userData.weapon as THREE.Object3D | undefined;
+      if (weapon && !character.attachHeldObject(weapon)) this.restoreFallbackWeaponTransform(weapon);
+      this.emitToast('Character streaming complete', `${character.boneCount} bones · ${character.morphCount} facial/body shapes`, 'success');
+    } catch (error) {
+      if (token !== this.heroLoadToken || this.disposed) return;
+      this.player.children.forEach((child) => {
+        if (child.userData.proceduralFallback) child.visible = true;
+      });
+      const detail = error instanceof Error ? error.message : 'The character asset could not be decoded.';
+      console.warn('Using procedural character fallback:', detail);
+      if (!initialLoad) this.emitToast('Character fallback active', 'The rigged skin could not be loaded; gameplay remains available.', 'danger');
+    }
+  }
+
+  private restoreFallbackWeaponTransform(weapon: THREE.Object3D) {
+    this.player.add(weapon);
+    weapon.position.set(0.48, 1.7, -0.62);
+    weapon.rotation.set(-0.08, 0, 0);
+    weapon.scale.setScalar(1);
+    weapon.updateMatrixWorld(true);
+  }
+
+  private buildWeaponModels(mount: THREE.Group, materials: { coat: THREE.Material; armor: THREE.Material; gold: THREE.Material }) {
+    const { coat, armor, gold } = materials;
+    const cyanAccent = new THREE.MeshStandardMaterial({ color: 0x9fd6ff, emissive: 0x4fb6e8, emissiveIntensity: 1.6, roughness: 0.3, metalness: 0.5 });
+    const emberAccent = new THREE.MeshStandardMaterial({ color: 0xffa35c, emissive: 0xe86a28, emissiveIntensity: 1.7, roughness: 0.3, metalness: 0.5 });
+
+    const morrow = new THREE.Group();
+    morrow.name = 'weapon-morrow';
+    const slide = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.52), armor);
+    slide.position.z = -0.18;
+    slide.castShadow = true;
+    morrow.add(slide);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.5, 12), coat);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.01, -0.24);
+    barrel.castShadow = true;
+    morrow.add(barrel);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.32, 0.17), coat);
+    grip.position.set(0, -0.19, 0.015);
+    grip.rotation.x = -0.22;
+    grip.castShadow = true;
+    morrow.add(grip);
+    const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.035, 12), armor);
+    muzzle.rotation.x = Math.PI / 2;
+    muzzle.position.z = -0.455;
+    morrow.add(muzzle);
+    const sight = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.035, 0.24), gold);
+    sight.position.set(0, 0.098, -0.19);
+    morrow.add(sight);
+    morrow.userData.muzzle = new THREE.Vector3(0, 0.01, -0.5);
+    mount.add(morrow);
+
+    const psalm = new THREE.Group();
+    psalm.name = 'weapon-psalm';
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.19, 0.86), armor);
+    receiver.position.z = -0.24;
+    receiver.castShadow = true;
+    psalm.add(receiver);
+    const railBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.7, 12), coat);
+    railBarrel.rotation.x = Math.PI / 2;
+    railBarrel.position.set(0, 0.03, -0.66);
+    railBarrel.castShadow = true;
+    psalm.add(railBarrel);
+    const psalmMuzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.06, 12), cyanAccent);
+    psalmMuzzle.rotation.x = Math.PI / 2;
+    psalmMuzzle.position.set(0, 0.03, -1.02);
+    psalm.add(psalmMuzzle);
+    const magazine = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.34, 0.19), coat);
+    magazine.position.set(0, -0.24, -0.12);
+    magazine.rotation.x = 0.24;
+    magazine.castShadow = true;
+    psalm.add(magazine);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.22, 0.34), coat);
+    stock.position.set(0, -0.03, 0.32);
+    stock.rotation.x = 0.1;
+    psalm.add(stock);
+    const coilStrip = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.035, 0.5), cyanAccent);
+    coilStrip.position.set(0.078, 0.02, -0.4);
+    psalm.add(coilStrip);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.4), gold);
+    rail.position.set(0, 0.12, -0.36);
+    psalm.add(rail);
+    psalm.userData.muzzle = new THREE.Vector3(0, 0.03, -1.06);
+    mount.add(psalm);
+
+    const vesper = new THREE.Group();
+    vesper.name = 'weapon-vesper';
+    const receiverWide = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.22, 0.68), coat);
+    receiverWide.position.z = -0.16;
+    receiverWide.castShadow = true;
+    vesper.add(receiverWide);
+    for (const side of [-1, 1]) {
+      const bore = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.62, 12), armor);
+      bore.rotation.x = Math.PI / 2;
+      bore.position.set(side * 0.055, 0.04, -0.5);
+      bore.castShadow = true;
+      vesper.add(bore);
+      const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.14, 8), emberAccent);
+      shell.rotation.z = Math.PI / 2;
+      shell.position.set(side * 0.14, -0.02, 0.02);
+      vesper.add(shell);
+    }
+    const pump = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.12, 0.3), armor);
+    pump.position.set(0, -0.13, -0.44);
+    pump.castShadow = true;
+    vesper.add(pump);
+    const vent = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.2), emberAccent);
+    vent.position.set(0, 0.14, -0.3);
+    vesper.add(vent);
+    const vesperGrip = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.3, 0.16), coat);
+    vesperGrip.position.set(0, -0.22, 0.14);
+    vesperGrip.rotation.x = -0.26;
+    vesper.add(vesperGrip);
+    vesper.userData.muzzle = new THREE.Vector3(0, 0.04, -0.83);
+    mount.add(vesper);
+  }
+
+  private applyWeaponVisibility() {
+    const mount = this.player?.userData?.weapon as THREE.Group | undefined;
+    if (!mount) return;
+    const activeName = `weapon-${this.weaponId ?? 'morrow'}`;
+    mount.children.forEach((child) => {
+      child.visible = child.name === activeName;
+    });
+  }
+
+  private activeWeaponSpec(): WeaponSpec {
+    return WEAPONS[this.weaponId] ?? MORROW_SPEC;
+  }
+
+  private cycleWeapon() {
+    if (this.currentVehicle || this.paused) return;
+    const index = WEAPON_ORDER.indexOf(this.weaponId);
+    const next = WEAPON_ORDER[(index + 1) % WEAPON_ORDER.length];
+    if (next === this.weaponId) return;
+    this.weaponPools[this.weaponId] = { ammo: this.ammo, reserve: this.reserveAmmo };
+    this.weaponId = next;
+    const spec = WEAPONS[next];
+    const pool = this.weaponPools[next];
+    this.ammo = pool?.ammo ?? spec.magazineSize;
+    this.reserveAmmo = pool?.reserve ?? spec.startingReserve;
+    this.reloading = 0;
+    this.weaponRecoil = 0;
+    this.shotCooldown = Math.max(this.shotCooldown, spec.swapSeconds);
+    this.applyWeaponVisibility();
+    this.heroCharacter?.playOnce('reload', 0.07);
+    this.audio.swap();
+    this.emitToast(spec.name, spec.hudLabel, 'info');
+  }
+
+  private updateInspectionFraming(object: THREE.Object3D) {
+    this.player.updateWorldMatrix(true, false);
+    object.updateWorldMatrix(true, true);
+    const bounds = new THREE.Box3().setFromObject(object);
+    if (bounds.isEmpty()) return;
+    // Convert the world-space bounds back into the player root. Subtracting a
+    // cached world position is subtly wrong when the imported glTF scene has
+    // its own root transform (and was the source of camera targets drifting
+    // tens of metres away from Aurel in inspection mode).
+    const center = bounds.getCenter(new THREE.Vector3())
+      .applyMatrix4(new THREE.Matrix4().copy(this.player.matrixWorld).invert());
+    const size = bounds.getSize(new THREE.Vector3());
+    // The imported scene can carry a baked lateral offset from its authoring
+    // collection. Inspection should orbit the gameplay capsule, not that
+    // authoring origin, so retain the measured vertical center only.
+    this.inspectionCenter.set(0, clamp(center.y, 1.45, 2.55), 0);
+    this.inspectionHeight = Math.max(2.8, size.y);
   }
 
   private applyPlayerSkin(skin: CharacterSkin) {
@@ -699,11 +1348,12 @@ export class HeavensGateEngine {
     this.playerSkinMaterials.hair.color.setHex(palette.hair);
   }
 
-  private createVehicle(id: string, x: number, z: number, heading: number, color: number) {
+  private buildCarBody(color: number) {
     const group = new THREE.Group();
     const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.22, metalness: 0.76 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x090d0f, roughness: 0.24, metalness: 0.7 });
-    const light = new THREE.MeshStandardMaterial({ color: 0xe5c774, emissive: 0xe5a932, emissiveIntensity: 2.2 });
+    const headlightMaterial = new THREE.MeshStandardMaterial({ color: 0xe5c774, emissive: 0xe5a932, emissiveIntensity: 2.2 });
+    const tailMaterial = new THREE.MeshStandardMaterial({ color: 0x5a1018, emissive: 0xd92632, emissiveIntensity: 0.9 });
     const body = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.72, 7.1), bodyMaterial);
     body.position.y = 0.82;
     body.castShadow = true;
@@ -715,20 +1365,52 @@ export class HeavensGateEngine {
     const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.92, 2.55), dark);
     cabin.position.set(0, 1.47, 0.55);
     group.add(cabin);
+    const wheels: VehicleWheel[] = [];
     for (const side of [-1, 1]) {
       for (const front of [-1, 1]) {
-        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.52, 0.38, 12), dark);
+        const pivot = new THREE.Group();
+        pivot.position.set(side * 1.86, 0.58, front * 2.2);
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.52, 0.38, 14), dark);
         wheel.rotation.z = Math.PI / 2;
-        wheel.position.set(side * 1.86, 0.58, front * 2.2);
-        group.add(wheel);
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.4, 8), bodyMaterial);
+        hub.rotation.z = Math.PI / 2;
+        pivot.add(wheel, hub);
+        group.add(pivot);
+        wheels.push({ pivot, front: front === -1 });
       }
-      const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.22, 0.12), light);
+      const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.22, 0.12), headlightMaterial);
       headlight.position.set(side * 1.12, 0.92, -3.58);
       group.add(headlight);
+      const taillight = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.16, 0.1), tailMaterial);
+      taillight.position.set(side * 1.12, 0.98, 3.58);
+      group.add(taillight);
     }
+    const beamMaterial = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(1.5, 1.2, 0.72),
+      transparent: true,
+      opacity: 0.05,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const beam = new THREE.Mesh(new THREE.ConeGeometry(1.9, 9, 12, 1, true), beamMaterial);
+    beam.rotation.x = Math.PI / 2;
+    beam.position.set(0, 0.95, -8.05);
+    group.add(beam);
+    return { group, bodyMaterial, tailMaterial, beamMaterial, wheels };
+  }
+
+  private createVehicle(id: string, x: number, z: number, heading: number, color: number) {
+    const { group, bodyMaterial, tailMaterial, beamMaterial, wheels } = this.buildCarBody(color);
     group.position.set(x, 0, z);
     group.rotation.y = heading;
     group.userData.vehicleId = id;
+    const spotTarget = new THREE.Object3D();
+    spotTarget.position.set(0, 0.2, -19);
+    const spot = new THREE.SpotLight(0xffe2b0, 0, 48, 0.42, 0.5, 1.1);
+    spot.position.set(0, 1.15, -3.3);
+    spot.target = spotTarget;
+    group.add(spot, spotTarget);
     this.scene.add(group);
     const vehicle: Vehicle = {
       id,
@@ -738,9 +1420,115 @@ export class HeavensGateEngine {
       speed: 0,
       occupied: false,
       bodyMaterial,
+      wheels,
+      tailMaterial,
+      beamMaterial,
+      spot,
     };
     this.vehicles.push(vehicle);
     return vehicle;
+  }
+
+  private createTraffic() {
+    const routes: Array<{ axis: 'x' | 'z'; lane: number; direction: 1 | -1 }> = [
+      { axis: 'x', lane: -30, direction: 1 },
+      { axis: 'x', lane: 60, direction: -1 },
+      { axis: 'x', lane: 120, direction: 1 },
+      { axis: 'z', lane: -60, direction: 1 },
+      { axis: 'z', lane: 30, direction: -1 },
+    ];
+    const colors = [0x4a3b32, 0x33434e, 0x50392f, 0x3c4a38, 0x443c50];
+    routes.forEach((route, index) => {
+      const { group, tailMaterial, wheels } = this.buildCarBody(colors[index % colors.length]);
+      const progress = (seeded(index, 80) - 0.5) * 260;
+      const lateral = route.axis === 'x' ? route.direction * 2.1 : -route.direction * 2.1;
+      if (route.axis === 'x') {
+        group.position.set(progress, 0, route.lane + lateral);
+        group.rotation.y = route.direction > 0 ? -Math.PI / 2 : Math.PI / 2;
+      } else {
+        group.position.set(route.lane + lateral, 0, progress);
+        group.rotation.y = route.direction > 0 ? Math.PI : 0;
+      }
+      group.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.userData.trafficId = index;
+          this.rayTargets.push(child);
+        }
+      });
+      this.scene.add(group);
+      this.trafficCars.push({
+        group,
+        axis: route.axis,
+        lane: route.lane,
+        direction: route.direction,
+        offset: lateral,
+        spawnProgress: progress,
+        progress,
+        cruise: 8.4 + seeded(index, 81) * 3.2,
+        speed: 0,
+        panic: 0,
+        wheels,
+        tailMaterial,
+      });
+    });
+  }
+
+  private updateTraffic(delta: number) {
+    const playerPosition = this.currentVehicle?.group.position ?? this.player?.position ?? new THREE.Vector3();
+    this.trafficCars?.forEach((car) => {
+      const position = car.group.position;
+      const ahead = car.axis === 'x'
+        ? (playerPosition.x - position.x) * car.direction
+        : (playerPosition.z - position.z) * car.direction;
+      const lateral = car.axis === 'x'
+        ? Math.abs(playerPosition.z - position.z)
+        : Math.abs(playerPosition.x - position.x);
+      const blocked = ahead > 0.5 && ahead < 10 && lateral < 3.4;
+      car.panic = Math.max(0, car.panic - delta);
+      const target = blocked ? 0 : car.cruise * (car.panic > 0 ? 1.8 : 1);
+      car.speed = damp(car.speed, target, blocked ? 9 : 2.1, delta);
+      car.progress += car.speed * car.direction * delta;
+      if (car.progress > 150) car.progress -= 300;
+      else if (car.progress < -150) car.progress += 300;
+      if (car.axis === 'x') position.set(car.progress, 0, car.lane + car.offset);
+      else position.set(car.lane + car.offset, 0, car.progress);
+      car.wheels.forEach((wheel) => {
+        wheel.pivot.rotation.x += (car.speed * delta) / 0.52;
+      });
+      const braking = blocked || car.speed < target * 0.55;
+      car.tailMaterial.emissiveIntensity = damp(car.tailMaterial.emissiveIntensity, braking ? 3.4 : 0.95, 9, delta);
+    });
+    this.dynamicObstacles = this.trafficCars?.map((car) => ({
+      x: car.group.position.x,
+      z: car.group.position.z,
+      radius: 2.55,
+    })) ?? [];
+  }
+
+  private createRain() {
+    const count = 850;
+    const geometry = new THREE.BoxGeometry(0.018, 0.62, 0.018);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xa8c2d4,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.InstancedMesh(geometry, material, count);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    const drops = new Float32Array(count * 3);
+    for (let i = 0; i < count; i += 1) {
+      drops[i * 3] = (seeded(i, 200) - 0.5) * 120;
+      drops[i * 3 + 1] = seeded(i, 201) * 38;
+      drops[i * 3 + 2] = (seeded(i, 202) - 0.5) * 120;
+      this.rainMatrix.makeTranslation(drops[i * 3], drops[i * 3 + 1], drops[i * 3 + 2]);
+      mesh.setMatrixAt(i, this.rainMatrix);
+    }
+    mesh.visible = this.settings.quality === 'high';
+    this.scene.add(mesh);
+    this.rain = { mesh, drops, count };
   }
 
   private createVehicles() {
@@ -749,6 +1537,8 @@ export class HeavensGateEngine {
     this.createVehicle('morrow-01', 60, 60, -Math.PI / 2, 0x4c3734);
     this.createVehicle('morrow-02', -90, 90, Math.PI, 0x2e3a31);
     this.createVehicle('choir-01', 116, -28, Math.PI / 2, 0x4b4b4a);
+    this.createVehicle('seraph-03', -56, -20, Math.PI, 0x35566b);
+    this.createVehicle('choir-02', 8, 106, 0, 0x54452e);
   }
 
   private humanoid(id: string, color: number, visorColor: number) {
@@ -947,6 +1737,11 @@ export class HeavensGateEngine {
       flee: 0,
       materials,
       rig,
+      aiState: kind === 'enemy' || kind === 'boss'
+        ? createNpcAiState({ npcId: id, squadId: 'choir-wardens', homePosition: group.position })
+        : undefined,
+      damagePulse: 0,
+      lastDamageAmount: 0,
     };
     this.actors.push(actor);
     return actor;
@@ -983,6 +1778,8 @@ export class HeavensGateEngine {
       wanderAngle: seeded(id.charCodeAt(0), 62) * Math.PI * 2,
       flee: 0,
       materials: [metal, eye],
+      damagePulse: 0,
+      lastDamageAmount: 0,
     };
     this.actors.push(actor);
   }
@@ -991,8 +1788,8 @@ export class HeavensGateEngine {
     const wardens: Array<[number, number]> = [[-10, -48], [10, -48], [-13, -61], [13, -61], [0, -67]];
     wardens.forEach(([x, z], index) => this.addActor(`warden-${index + 1}`, 'enemy', x, z, 0x302c2c, 0xd65b43, 78));
 
-    const civilianColors = [0x35404a, 0x4a4035, 0x3d4738, 0x46384a, 0x4b4a3b];
-    for (let i = 0; i < 20; i += 1) {
+    const civilianColors = [0x35404a, 0x4a4035, 0x3d4738, 0x46384a, 0x4b4a3b, 0x2f3f46, 0x544134, 0x3a3d52];
+    for (let i = 0; i < 34; i += 1) {
       const road = Math.floor(seeded(i, 70) * 9 - 4) * 30;
       const along = (seeded(i, 71) - 0.5) * 250;
       const horizontal = seeded(i, 72) > 0.5;
@@ -1030,10 +1827,23 @@ export class HeavensGateEngine {
     );
     veil.position.z = 0.03;
     group.add(veil);
+    const shaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.1 * scale, 3.4 * scale, 26, 20, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xe8cd8a,
+        transparent: true,
+        opacity: 0.05,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    shaft.position.y = -3;
+    group.add(shaft);
     group.position.copy(position);
     group.rotation.y = rotationY;
     this.scene.add(group);
-    const gate = { group, ring, veil };
+    const gate = { group, ring, veil, shaft };
     this.gates.push(gate);
     return gate;
   }
@@ -1095,17 +1905,29 @@ export class HeavensGateEngine {
     this.dynamicPixelRatio = Math.min(window.devicePixelRatio, baseRatio);
     this.renderer.setPixelRatio(this.dynamicPixelRatio);
     this.renderer.shadowMap.enabled = this.settings.quality !== 'low';
-    this.renderer.toneMappingExposure = this.settings.highContrast ? 1.14 : 1.04;
+    this.renderer.toneMappingExposure = this.settings.highContrast ? 1.28 : 1.16;
+    if (this.bloomPass) {
+      this.bloomPass.strength = this.settings.quality === 'high' ? 0.62 : 0.45;
+      this.bloomPass.radius = 0.55;
+      this.bloomPass.threshold = 0.82;
+    }
+    if (this.rain) this.rain.mesh.visible = this.settings.quality === 'high';
+    this.audio.setRainBed(this.settings.quality === 'high');
+    this.scannedGround?.setQuality(this.settings.quality);
     this.resize();
   }
 
   setSettings(settings: GameSettings) {
     const qualityChanged = settings.quality !== this.settings.quality || settings.highContrast !== this.settings.highContrast;
     const skinChanged = settings.characterSkin !== this.settings.characterSkin;
+    if (settings.keybinds !== this.settings.keybinds) this.clearInput();
     this.settings = settings;
     this.audio.setVolume(settings.volume);
     if (qualityChanged) this.applyQuality();
-    if (skinChanged) this.applyPlayerSkin(settings.characterSkin);
+    if (skinChanged) {
+      this.applyPlayerSkin(settings.characterSkin);
+      void this.swapHeroCharacter(settings.characterSkin);
+    }
   }
 
   getSettings() {
@@ -1117,26 +1939,67 @@ export class HeavensGateEngine {
     await this.audio.unlock();
     this.audio.setVolume(this.settings.volume);
     this.resetCampaign(save ?? null);
+    this.clearInput();
     this.mode = 'playing';
     this.paused = false;
     this.lastFrameTime = performance.now();
     this.emitMissionBriefing();
     this.updateObjectiveMarker();
+    this.beginCinematic();
     this.saveCheckpoint();
     try { await this.canvas.requestPointerLock?.(); } catch { /* Pointer lock is optional for gamepads. */ }
   }
 
   private resetCampaign(save: SaveState | null) {
+    save = normalizeSave(save);
+    this.heroCharacter?.resetAnimation();
+    this.photoMode = false;
+    this.lastSave = save;
     this.health = save?.health ?? 100;
     this.armor = save?.armor ?? 50;
     this.ammo = save?.ammo ?? 18;
     this.reserveAmmo = save?.reserveAmmo ?? 126;
     this.resonance = save?.resonance ?? 100;
+    this.stamina = MOVEMENT_SPEC.staminaMaximum;
+    this.crouching = false;
+    this.slideRemaining = 0;
+    this.dodgeRemaining = 0;
+    this.dodgeCooldown = 0;
     this.heat = 0;
     this.missionIndex = clamp(save?.missionIndex ?? 0, 0, MISSIONS.length - 1);
     this.defeatedWardens = save?.defeatedWardens ?? 0;
     this.echoesActivated = new Set(save?.echoesActivated ?? []);
+    this.radioSignals = [];
     this.elapsed = save?.elapsed ?? 0;
+    this.reloading = 0;
+    this.shotCooldown = 0;
+    this.weaponRecoil = 0;
+    this.shotIndex = 0;
+    this.weaponId = save?.weaponId ?? 'morrow';
+    this.weaponPools = { ...(save?.weaponAmmo ?? {}) };
+    this.weaponPools[this.weaponId] = { ammo: this.ammo, reserve: this.reserveAmmo };
+    this.applyWeaponVisibility();
+    this.cinematic = null;
+    this.hitStop = 0;
+    this.corpses?.forEach((corpse) => {
+      corpse.group.visible = false;
+      corpse.materials.forEach((material) => { material.opacity = 1; material.transparent = false; });
+    });
+    this.corpses = [];
+    this.drops?.forEach((drop) => {
+      this.scene.remove(drop.group);
+      this.disposeObject(drop.group);
+    });
+    this.drops = [];
+    this.trafficCars?.forEach((car) => {
+      car.progress = car.spawnProgress;
+      car.speed = 0;
+      car.panic = 0;
+    });
+    this.invulnerability = 0;
+    this.reticleHit = 0;
+    this.damageFlash = 0;
+    this.lastCombat = this.elapsed - 8;
     this.gameOverSent = false;
     this.choiceRequested = false;
     this.veilActive = false;
@@ -1154,13 +2017,25 @@ export class HeavensGateEngine {
       vehicle.speed = 0;
       vehicle.occupied = false;
       vehicle.group.visible = true;
+      vehicle.group.rotation.x = 0;
+      vehicle.group.rotation.z = 0;
+      if (vehicle.spot) vehicle.spot.intensity = 0;
+      if (vehicle.tailMaterial) vehicle.tailMaterial.emissiveIntensity = 0.9;
     });
     this.actors.forEach((actor) => {
       actor.group.position.copy(actor.spawn);
+      actor.group.rotation.x = 0;
+      actor.group.rotation.z = 0;
+      actor.materials?.forEach((material) => { material.opacity = 1; material.transparent = false; });
       actor.health = actor.maxHealth;
       actor.alive = true;
       actor.group.visible = true;
       actor.flee = 0;
+      actor.damagePulse = 0;
+      actor.lastDamageAmount = 0;
+      actor.aiState = actor.kind === 'enemy' || actor.kind === 'boss'
+        ? createNpcAiState({ npcId: actor.id, squadId: 'choir-wardens', homePosition: actor.spawn })
+        : undefined;
       if (actor.id.startsWith('warden-') && this.missionIndex > 1) {
         actor.alive = false;
         actor.group.visible = false;
@@ -1171,10 +2046,16 @@ export class HeavensGateEngine {
       echo.group.visible = !echo.activated;
     });
     if (this.boss) {
+      this.rayTargets = withoutSubtree(this.rayTargets, this.boss.group);
       this.scene.remove(this.boss.group);
+      this.disposeObject(this.boss.group);
       this.actors = this.actors.filter((actor) => actor !== this.boss);
       this.boss = null;
     }
+    this.gates.forEach((gate) => {
+      gate.ring.material.emissiveIntensity = 2.2;
+      gate.veil.material.opacity = 0.055;
+    });
     this.setVeil(false, true);
     if (this.missionIndex === 5) this.spawnBoss();
     if (save?.ending) this.applyEndingWorld(save.ending);
@@ -1182,7 +2063,7 @@ export class HeavensGateEngine {
 
   pause() {
     this.paused = true;
-    this.mouseShootHeld = false;
+    this.clearInput();
     this.audio.setIntensity(0.05);
     if (document.pointerLockElement) void document.exitPointerLock();
   }
@@ -1190,6 +2071,7 @@ export class HeavensGateEngine {
   async resume() {
     if (this.mode !== 'playing') return;
     await this.audio.unlock();
+    this.clearInput();
     this.paused = false;
     this.lastFrameTime = performance.now();
     try { await this.canvas.requestPointerLock?.(); } catch { /* Pointer lock is optional. */ }
@@ -1201,10 +2083,12 @@ export class HeavensGateEngine {
 
   retryCheckpoint() {
     this.resetCampaign(this.lastSave);
+    this.clearInput();
     this.mode = 'playing';
     this.paused = false;
     this.emitMissionBriefing();
     this.updateObjectiveMarker();
+    this.beginCinematic();
   }
 
   setMuted(muted: boolean) {
@@ -1231,12 +2115,13 @@ export class HeavensGateEngine {
     this.mode = 'playing';
     this.missionIndex = 7;
     await this.resume();
+    this.beginCinematic();
   }
 
   returnToTitle() {
     this.mode = 'attract';
     this.paused = false;
-    this.mouseShootHeld = false;
+    this.clearInput();
     this.audio.setEngine(0, false);
     this.audio.setIntensity(0.08);
     if (document.pointerLockElement) void document.exitPointerLock();
@@ -1270,9 +2155,16 @@ export class HeavensGateEngine {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
     const now = performance.now();
-    const delta = Math.min(Math.max(0, (now - this.lastFrameTime) / 1000), 0.05);
+    const frameMilliseconds = Math.max(0, now - this.lastFrameTime);
+    let delta = Math.min(frameMilliseconds / 1000, 0.05);
+    if (this.hitStop > 0) {
+      this.hitStop -= delta;
+      delta *= 0.22;
+    }
     this.lastFrameTime = now;
     this.renderTime += delta;
+    this.frameTimeSampler.record(frameMilliseconds);
+    if (this.contextLost) return;
     const time = this.renderTime;
     if (!this.initialized) return;
 
@@ -1282,8 +2174,11 @@ export class HeavensGateEngine {
       this.updateGame(delta, time);
     }
     this.updateAmbientAnimation(delta, time);
-    this.renderer.render(this.scene, this.camera);
-    this.updatePerformance(delta);
+    if (!this.contextLost) {
+      if (this.composer && this.settings.quality !== 'low') this.composer.render();
+      else this.renderer.render(this.scene, this.camera);
+      this.updatePerformance(frameMilliseconds / 1000);
+    }
   };
 
   private updateAttract(time: number, delta: number) {
@@ -1301,10 +2196,22 @@ export class HeavensGateEngine {
   private updateGame(delta: number, time: number) {
     this.elapsed += delta;
     this.worldHours += delta * 0.013;
-    this.pollGamepad();
+    this.pollGamepad(delta);
+    if (this.paused) return;
     this.processActions();
+    if (this.paused) return;
+    if (this.cinematic && (
+      this.settings.reducedMotion
+      || this.isActionHeld('moveForward') || this.isActionHeld('moveBackward')
+      || this.isActionHeld('moveLeft') || this.isActionHeld('moveRight')
+      || Math.hypot(this.gamepadAxes.moveX, this.gamepadAxes.moveY) > 0.4
+      || Math.hypot(this.touchMove?.x ?? 0, this.touchMove?.y ?? 0) > 0.4
+      || this.mouseShootHeld || this.gamepadAxes.shoot > 0.55 || this.touchFire
+      || this.wasActionPressed('jump')
+    )) this.cinematic = null;
 
     this.shotCooldown = Math.max(0, this.shotCooldown - delta);
+    this.weaponRecoil = recoverShotRecoil(this.weaponRecoil, delta, this.isAiming(), this.activeWeaponSpec());
     if (this.reloading > 0) {
       this.reloading = Math.max(0, this.reloading - delta);
       if (this.reloading === 0) this.finishReload();
@@ -1314,87 +2221,222 @@ export class HeavensGateEngine {
     this.pulseCooldown = Math.max(0, this.pulseCooldown - delta);
     this.reticleHit = Math.max(0, this.reticleHit - delta * 5);
     this.damageFlash = Math.max(0, this.damageFlash - delta * 2.4);
+    this.damageDirectionTimer = Math.max(0, this.damageDirectionTimer - delta);
+    if (this.damageDirectionTimer === 0) this.damageDirection = null;
 
     if (this.mouseShootHeld && this.shotCooldown <= 0) this.tryShoot();
-    if (this.gamepadAxes.shoot > 0.55 && this.shotCooldown <= 0) this.tryShoot();
+    if ((this.gamepadAxes.shoot > 0.55 || this.touchFire) && this.shotCooldown <= 0) this.tryShoot();
 
     if (this.currentVehicle) this.updateVehicle(delta);
     else this.updatePlayer(delta);
 
     this.updateActors(delta, time);
+    this.updateTraffic(delta);
+    this.updateCorpses(delta);
+    this.updateDrops(delta, time);
     this.updateVeil(delta);
     this.updateEffects(delta);
     this.updateMission();
     this.updateCamera(delta);
     this.updateHeat(delta);
     this.updateHUD(delta);
-    this.pressed.clear();
+    this.input.finishFrame();
+    this.touchPressed.clear();
   }
 
   private processActions() {
-    if (this.pressed.has('r') || this.pressed.has('gamepad-reload')) this.startReload();
-    if (this.pressed.has('q') || this.pressed.has('gamepad-veil')) this.toggleVeil();
-    if (this.pressed.has('f') || this.pressed.has('gamepad-pulse')) this.usePulse();
-    if (this.pressed.has('e') || this.pressed.has('gamepad-interact')) this.interact();
+    if (this.wasActionPressed('inspect') && !this.currentVehicle) {
+      this.photoMode = !this.photoMode;
+      if (this.photoMode && document.pointerLockElement) void document.exitPointerLock();
+      this.emitToast(
+        this.photoMode ? 'Character inspection active' : 'Character inspection closed',
+        this.photoMode ? `The camera will orbit Aurel. Press ${this.bindingLabel('inspect')} / View again to return.` : 'Third-person camera restored.',
+        'success',
+      );
+    }
+    if (this.wasActionPressed('reload')) this.startReload();
+    if (this.wasActionPressed('veil')) this.toggleVeil();
+    if (this.wasActionPressed('pulse')) this.usePulse();
+    if (this.wasActionPressed('weaponSwap')) this.cycleWeapon();
+    if (this.wasActionPressed('interact')) this.interact();
   }
 
-  private pollGamepad() {
-    const gamepad = navigator.getGamepads?.().find((pad) => pad?.connected);
-    if (!gamepad) {
-      this.gamepadAxes = { moveX: 0, moveY: 0, lookX: 0, lookY: 0, shoot: 0 };
+  private isActionHeld(action: KeybindAction) {
+    return this.input.isHeld(action, this.settings.keybinds) || (this.touchHeld?.has(action) ?? false);
+  }
+
+  private wasActionPressed(action: KeybindAction) {
+    return this.input.wasPressed(action, this.settings.keybinds) || (this.touchPressed?.has(action) ?? false);
+  }
+
+  private clearInput() {
+    this.input.reset();
+    this.gamepadAxes = this.input.gamepadAxes;
+    this.mouseShootHeld = false;
+    this.mouseAimHeld = false;
+    this.clearTouchInput();
+  }
+
+  private requestPause() {
+    this.pause();
+    this.callbacks.onPauseRequested();
+  }
+
+  private bindingLabel(action: KeybindAction) {
+    const binding = this.settings.keybinds[action];
+    return binding === ' ' ? 'SPACE' : binding.toUpperCase();
+  }
+
+  private connectedGamepad() {
+    try {
+      return navigator.getGamepads?.().find((pad) => pad?.connected && pad.mapping === 'standard') ?? null;
+    } catch {
+      // Embedders can deny the Gamepad API through Permissions Policy.
+      return null;
+    }
+  }
+
+  private pollGamepad(delta: number) {
+    this.input.sampleGamepad(this.connectedGamepad());
+    this.gamepadAxes = this.input.gamepadAxes;
+    if (this.input.wasPausePressed()) {
+      this.requestPause();
       return;
     }
-    const deadzone = (value: number) => Math.abs(value) < 0.14 ? 0 : value;
-    this.gamepadAxes.moveX = deadzone(gamepad.axes[0] ?? 0);
-    this.gamepadAxes.moveY = deadzone(gamepad.axes[1] ?? 0);
-    this.gamepadAxes.lookX = deadzone(gamepad.axes[2] ?? 0);
-    this.gamepadAxes.lookY = deadzone(gamepad.axes[3] ?? 0);
-    this.gamepadAxes.shoot = gamepad.buttons[7]?.value ?? 0;
+    const look = gamepadLookDelta(this.gamepadAxes, this.settings.sensitivity, delta);
+    this.cameraYaw += look.yaw;
+    this.cameraPitch = clamp(this.cameraPitch + look.pitch, -0.24, 0.74);
+  }
 
-    const mappings: Array<[number, string]> = [
-      [0, 'gamepad-jump'],
-      [2, 'gamepad-reload'],
-      [3, 'gamepad-interact'],
-      [4, 'gamepad-veil'],
-      [5, 'gamepad-pulse'],
-      [9, 'gamepad-pause'],
-    ];
-    mappings.forEach(([buttonIndex, key]) => {
-      const current = Boolean(gamepad.buttons[buttonIndex]?.pressed);
-      if (current && !this.lastGamepadButtons[buttonIndex]) {
-        this.pressed.add(key);
-        if (key === 'gamepad-pause') this.callbacks.onPauseRequested();
-      }
-      this.lastGamepadButtons[buttonIndex] = current;
-    });
-    const lookSpeed = this.settings.sensitivity * 2.1 / 60;
-    this.cameraYaw -= this.gamepadAxes.lookX * lookSpeed;
-    this.cameraPitch = clamp(this.cameraPitch - this.gamepadAxes.lookY * lookSpeed, -0.24, 0.74);
+  private isAiming() {
+    return this.mouseAimHeld || this.gamepadAxes.aim > 0.2 || this.touchAim;
+  }
+
+  setTouchMove(x: number, y: number) {
+    this.touchMove.x = clamp(x, -1, 1);
+    this.touchMove.y = clamp(y, -1, 1);
+  }
+
+  applyTouchLook(deltaX: number, deltaY: number) {
+    if (this.mode !== 'playing' || this.paused) return;
+    const sensitivity = this.settings.sensitivity * 0.0062;
+    this.cameraYaw -= deltaX * sensitivity;
+    this.cameraPitch = clamp(this.cameraPitch - deltaY * sensitivity, -0.24, 0.74);
+  }
+
+  setTouchFire(active: boolean) {
+    if (active && !this.touchFire) this.tryShoot();
+    this.touchFire = active;
+  }
+
+  setTouchAim(active: boolean) {
+    this.touchAim = active;
+  }
+
+  pressTouchAction(action: KeybindAction) {
+    if (!this.touchHeld.has(action)) this.touchPressed.add(action);
+    this.touchHeld.add(action);
+  }
+
+  releaseTouchAction(action: KeybindAction) {
+    this.touchHeld.delete(action);
+  }
+
+  clearTouchInput() {
+    this.touchMove.x = 0;
+    this.touchMove.y = 0;
+    this.touchFire = false;
+    this.touchAim = false;
+    this.touchHeld?.clear();
+    this.touchPressed?.clear();
+  }
+
+  private pulseGamepad(duration: number, strongMagnitude: number, weakMagnitude: number) {
+    const gamepad = this.connectedGamepad();
+    const actuator = gamepad?.vibrationActuator;
+    if (!actuator) return;
+    void actuator.playEffect('dual-rumble', {
+      duration,
+      startDelay: 0,
+      strongMagnitude: clamp(strongMagnitude, 0, 1),
+      weakMagnitude: clamp(weakMagnitude, 0, 1),
+    }).catch(() => { /* Haptics are an optional enhancement. */ });
   }
 
   private updatePlayer(delta: number) {
-    const forwardInput = (this.keys.has('w') ? 1 : 0) - (this.keys.has('s') ? 1 : 0) - this.gamepadAxes.moveY;
-    const sideInput = (this.keys.has('d') ? 1 : 0) - (this.keys.has('a') ? 1 : 0) + this.gamepadAxes.moveX;
+    this.dodgeCooldown = Math.max(0, this.dodgeCooldown - delta);
+    const forwardInput = (this.isActionHeld('moveForward') ? 1 : 0) - (this.isActionHeld('moveBackward') ? 1 : 0) - this.gamepadAxes.moveY - (this.touchMove?.y ?? 0);
+    const sideInput = (this.isActionHeld('moveRight') ? 1 : 0) - (this.isActionHeld('moveLeft') ? 1 : 0) + this.gamepadAxes.moveX + (this.touchMove?.x ?? 0);
     const inputLength = Math.hypot(forwardInput, sideInput);
-    const sprint = this.keys.has('shift') || this.lastGamepadButtons[10];
-    const speed = sprint ? 10.5 : 6.4;
+    const aiming = this.isAiming();
+    const sprintIntent = this.isActionHeld('sprint');
 
     const forward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
-    const desired = new THREE.Vector3();
+    const desiredDirection = new THREE.Vector3();
     if (inputLength > 0.05) {
-      desired.addScaledVector(forward, forwardInput / Math.max(1, inputLength));
-      desired.addScaledVector(right, sideInput / Math.max(1, inputLength));
-      desired.multiplyScalar(speed);
-      this.playerHeading = Math.atan2(desired.x, desired.z);
+      desiredDirection.addScaledVector(forward, forwardInput / Math.max(1, inputLength));
+      desiredDirection.addScaledVector(right, sideInput / Math.max(1, inputLength));
+      desiredDirection.normalize();
+      this.playerHeading = Math.atan2(desiredDirection.x, desiredDirection.z);
     }
-    this.playerVelocity.x = damp(this.playerVelocity.x, desired.x, this.grounded ? 11 : 2.2, delta);
-    this.playerVelocity.z = damp(this.playerVelocity.z, desired.z, this.grounded ? 11 : 2.2, delta);
+    if (aiming) this.playerHeading = Math.atan2(forward.x, forward.z);
 
-    const jumpPressed = this.pressed.has(' ') || this.pressed.has('gamepad-jump');
-    if (jumpPressed && this.grounded) {
+    const crouchPressed = this.wasActionPressed('crouch');
+    const planarSpeed = Math.hypot(this.playerVelocity.x, this.playerVelocity.z);
+    if (crouchPressed && this.slideRemaining <= 0 && this.dodgeRemaining <= 0) {
+      if (sprintIntent && canStartSlide(this.stamina, this.grounded, planarSpeed)) {
+        this.slideRemaining = MOVEMENT_SPEC.slideSeconds;
+        this.stamina -= MOVEMENT_SPEC.slideCost;
+        this.crouching = true;
+        this.slideDirection.copy(this.playerVelocity).setY(0);
+        if (this.slideDirection.lengthSq() < 0.05) this.slideDirection.copy(desiredDirection.lengthSq() ? desiredDirection : forward);
+        this.slideDirection.normalize();
+        this.heroCharacter?.playOnce('slide', 0.06);
+        this.pulseGamepad(90, 0.28, 0.38);
+      } else {
+        this.crouching = !this.crouching;
+      }
+    }
+
+    const dodgePressed = this.wasActionPressed('dodge');
+    if (dodgePressed && canStartDodge(this.stamina, this.grounded, this.dodgeCooldown) && this.slideRemaining <= 0) {
+      this.dodgeRemaining = MOVEMENT_SPEC.dodgeSeconds;
+      this.dodgeCooldown = MOVEMENT_SPEC.dodgeCooldownSeconds;
+      this.stamina -= MOVEMENT_SPEC.dodgeCost;
+      this.crouching = false;
+      this.dodgeDirection.copy(desiredDirection.lengthSq() ? desiredDirection : forward).normalize();
+      this.invulnerability = Math.max(this.invulnerability, 0.2);
+      this.heroCharacter?.playOnce('slide', 0.045);
+      this.pulseGamepad(70, 0.2, 0.34);
+    }
+
+    const sprinting = sprintIntent
+      && !aiming
+      && !this.crouching
+      && this.slideRemaining <= 0
+      && this.dodgeRemaining <= 0
+      && this.stamina > 0.5
+      && inputLength > 0.05;
+    this.stamina = updateStamina(this.stamina, delta, sprinting);
+    const desired = desiredDirection.multiplyScalar(movementSpeed({ aiming, crouching: this.crouching, sprinting }) * Math.min(1, inputLength));
+    if (this.slideRemaining > 0) {
+      desired.copy(this.slideDirection).multiplyScalar(slideSpeed(this.slideRemaining));
+      this.slideRemaining = Math.max(0, this.slideRemaining - delta);
+    } else if (this.dodgeRemaining > 0) {
+      desired.copy(this.dodgeDirection).multiplyScalar(MOVEMENT_SPEC.dodgeSpeed);
+      this.dodgeRemaining = Math.max(0, this.dodgeRemaining - delta);
+    }
+    const groundResponse = this.slideRemaining > 0 || this.dodgeRemaining > 0 ? 24 : 11;
+    this.playerVelocity.x = damp(this.playerVelocity.x, desired.x, this.grounded ? groundResponse : 2.2, delta);
+    this.playerVelocity.z = damp(this.playerVelocity.z, desired.z, this.grounded ? groundResponse : 2.2, delta);
+
+    const jumpPressed = this.wasActionPressed('jump');
+    if (jumpPressed && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0) {
+      this.crouching = false;
       this.playerVelocity.y = 8.4;
       this.grounded = false;
+      this.heroCharacter?.playOnce('jump');
       this.audio.ui(true);
     }
     this.playerVelocity.y -= 21 * delta;
@@ -1403,19 +2445,68 @@ export class HeavensGateEngine {
     this.player.position.addScaledVector(this.playerVelocity, delta);
     if (this.player.position.y <= 0) {
       this.player.position.y = 0;
+      if (!this.grounded) {
+        const impact = clamp(-this.playerVelocity.y, 0, 24);
+        this.landDip = Math.max(this.landDip, impact * 0.011);
+        if (impact > 7) {
+          this.audio.footstep(true);
+          this.pulseGamepad(50, clamp(impact * 0.02, 0.1, 0.4), clamp(impact * 0.014, 0.08, 0.3));
+        }
+      }
       this.playerVelocity.y = 0;
       this.grounded = true;
     }
     this.clampWorld(this.player.position);
-    if (this.collides(this.player.position.x, this.player.position.z, PLAYER_RADIUS)) {
-      this.player.position.x = previous.x;
-      this.player.position.z = previous.z;
-      this.playerVelocity.x *= 0.15;
-      this.playerVelocity.z *= 0.15;
+    const sweptPosition = sweepPlanarCollision(previous, this.player.position,
+      (x, z) => this.collides(x, z, PLAYER_RADIUS));
+    if (sweptPosition.swept) {
+      this.player.position.x = sweptPosition.x;
+      this.player.position.z = sweptPosition.z;
+    }
+    if (sweptPosition.swept || this.collides(this.player.position.x, this.player.position.z, PLAYER_RADIUS)) {
+      const vaultDirection = desired.clone().setY(0);
+      const vaultTarget = previous.clone();
+      let vaulted = false;
+      if (jumpPressed && vaultDirection.lengthSq() > 0.1 && this.stamina >= 8) {
+        vaultDirection.normalize();
+        vaultTarget.addScaledVector(vaultDirection, 2.35);
+        if (!this.collides(vaultTarget.x, vaultTarget.z, PLAYER_RADIUS * 0.78)) {
+          this.player.position.x = vaultTarget.x;
+          this.player.position.z = vaultTarget.z;
+          this.player.position.y = Math.max(this.player.position.y, 0.52);
+          this.playerVelocity.y = Math.max(this.playerVelocity.y, 4.2);
+          this.stamina = Math.max(0, this.stamina - 8);
+          this.grounded = false;
+          vaulted = true;
+        }
+      }
+      if (!vaulted) {
+        const resolved = sweptPosition.swept ? sweptPosition : resolvePlanarCollision(previous, this.player.position,
+          (x, z) => this.collides(x, z, PLAYER_RADIUS));
+        this.player.position.x = resolved.x;
+        this.player.position.z = resolved.z;
+        if (resolved.blockedX) this.playerVelocity.x = 0;
+        if (resolved.blockedZ) this.playerVelocity.z = 0;
+      }
     }
 
-    this.player.rotation.y = damp(this.player.rotation.y, this.playerHeading, 14, delta);
+    this.player.rotation.y = smoothHeading(this.player.rotation.y, this.playerHeading, delta);
     const movement = Math.hypot(this.playerVelocity.x, this.playerVelocity.z);
+    this.heroCharacter?.setMotion(
+      !this.grounded
+        ? 'jump'
+        : this.slideRemaining > 0 || this.dodgeRemaining > 0
+          ? 'slide'
+          : aiming
+            ? 'aim'
+            : this.crouching
+              ? 'crouch'
+              : movement > 8
+                ? 'run'
+                : movement > 0.7
+                  ? 'walk'
+                  : 'idle',
+    );
     this.walkPhase += movement * delta * 1.8;
     this.playerParts.forEach((part) => {
       const side = Number(part.userData.side ?? 1);
@@ -1423,22 +2514,22 @@ export class HeavensGateEngine {
       part.rotation.x = Math.sin(this.walkPhase) * Math.min(0.62, movement * 0.06) * side * limbDirection;
     });
     this.footstepTimer -= delta;
-    if (movement > 1.4 && this.grounded && this.footstepTimer <= 0) {
-      this.audio.footstep(sprint);
-      this.footstepTimer = sprint ? 0.29 : 0.44;
+    if (movement > 1.4 && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0 && this.footstepTimer <= 0) {
+      this.audio.footstep(sprinting);
+      this.footstepTimer = sprinting ? 0.29 : 0.44;
     }
   }
 
   private updateVehicle(delta: number) {
     const vehicle = this.currentVehicle;
     if (!vehicle) return;
-    const throttle = (this.keys.has('w') ? 1 : 0) - (this.keys.has('s') ? 1 : 0) - this.gamepadAxes.moveY;
-    const steering = (this.keys.has('a') ? 1 : 0) - (this.keys.has('d') ? 1 : 0) - this.gamepadAxes.moveX;
-    const boost = this.keys.has('shift') || this.lastGamepadButtons[10];
+    const throttle = clamp((this.isActionHeld('moveForward') ? 1 : 0) - (this.isActionHeld('moveBackward') ? 1 : 0) - this.gamepadAxes.moveY - (this.touchMove?.y ?? 0), -1, 1);
+    const steering = clamp((this.isActionHeld('moveLeft') ? 1 : 0) - (this.isActionHeld('moveRight') ? 1 : 0) - this.gamepadAxes.moveX - (this.touchMove?.x ?? 0), -1, 1);
+    const boost = this.isActionHeld('sprint');
     const maxSpeed = boost ? 48 : 38;
     const targetSpeed = throttle >= 0 ? throttle * maxSpeed : throttle * 18;
     vehicle.speed = damp(vehicle.speed, targetSpeed, throttle ? 2.7 : 1.8, delta);
-    if (this.keys.has(' ')) vehicle.speed = damp(vehicle.speed, 0, 8, delta);
+    if (this.isActionHeld('jump')) vehicle.speed = damp(vehicle.speed, 0, 8, delta);
     const steerStrength = clamp(Math.abs(vehicle.speed) / 9, 0.15, 1);
     vehicle.heading += steering * steerStrength * delta * 1.42 * Math.sign(vehicle.speed || 1);
     const previous = vehicle.group.position.clone();
@@ -1446,14 +2537,30 @@ export class HeavensGateEngine {
     vehicle.group.position.z += -Math.cos(vehicle.heading) * vehicle.speed * delta;
     vehicle.group.rotation.y = vehicle.heading;
     this.clampWorld(vehicle.group.position, 5);
-    if (this.collides(vehicle.group.position.x, vehicle.group.position.z, 2.25)) {
-      vehicle.group.position.copy(previous);
+    const vehicleSweep = sweepPlanarCollision(previous, vehicle.group.position,
+      (x, z) => this.collides(x, z, 2.25), 0.5);
+    if (vehicleSweep.swept) {
+      vehicle.group.position.x = vehicleSweep.x;
+      vehicle.group.position.z = vehicleSweep.z;
       if (Math.abs(vehicle.speed) > 16) {
         this.takePlayerDamage(Math.abs(vehicle.speed) * 0.34);
         this.audio.explosion();
       }
       vehicle.speed *= -0.22;
     }
+    const braking = this.isActionHeld('jump') || (throttle < 0 && vehicle.speed > 4);
+    const steerVisual = steering * clamp(Math.abs(vehicle.speed) / 12, 0, 1);
+    vehicle.wheels?.forEach((wheel) => {
+      wheel.pivot.rotation.y = wheel.front ? -steerVisual * 0.42 : 0;
+      wheel.pivot.rotation.x += (vehicle.speed * delta) / 0.52;
+    });
+    if (vehicle.tailMaterial) {
+      vehicle.tailMaterial.emissiveIntensity = damp(vehicle.tailMaterial.emissiveIntensity, braking ? 3.4 : 0.95, 10, delta);
+    }
+    const targetLean = -steering * clamp(Math.abs(vehicle.speed) / 38, 0, 1) * 0.055;
+    const targetPitch = braking ? -0.035 : clamp(throttle, 0, 1) * (boost ? 0.035 : 0.02);
+    vehicle.group.rotation.z = damp(vehicle.group.rotation.z, targetLean, 6, delta);
+    vehicle.group.rotation.x = damp(vehicle.group.rotation.x, targetPitch, 6, delta);
     this.player.position.copy(vehicle.group.position);
     this.audio.setEngine(vehicle.speed, true);
   }
@@ -1465,39 +2572,179 @@ export class HeavensGateEngine {
   }
 
   private collides(x: number, z: number, radius: number) {
-    return this.collisionBoxes.some((box) =>
+    const blocked = this.collisionBoxes.some((box) =>
       x + radius > box.min.x && x - radius < box.max.x && z + radius > box.min.z && z - radius < box.max.z,
     );
+    if (blocked) return true;
+    const obstacles = this.dynamicObstacles;
+    if (!obstacles) return false;
+    for (const obstacle of obstacles) {
+      const combined = radius + obstacle.radius;
+      const dx = x - obstacle.x;
+      const dz = z - obstacle.z;
+      if (dx * dx + dz * dz < combined * combined) return true;
+    }
+    return false;
+  }
+
+  private hasLineOfSight(from: THREE.Vector3, to: THREE.Vector3) {
+    return this.firstWorldObstruction(from, to) === null;
+  }
+
+  private firstWorldObstruction(from: THREE.Vector3, to: THREE.Vector3, padding = 0) {
+    const delta = to.clone().sub(from);
+    const distance = delta.length();
+    if (distance < 0.000001) return null;
+    const ray = new THREE.Ray(from, delta.divideScalar(distance));
+    const hit = new THREE.Vector3();
+    let nearest: THREE.Vector3 | null = null;
+    let nearestDistanceSq = distance * distance;
+    const expanded = new THREE.Box3();
+    for (const collider of this.collisionBoxes) {
+      const box = padding > 0 ? expanded.copy(collider).expandByScalar(padding) : collider;
+      if (box.containsPoint(from)) return from.clone();
+      if (ray.intersectBox(box, hit)) {
+        const distanceSq = hit.distanceToSquared(from);
+        if (distanceSq <= nearestDistanceSq) {
+          nearestDistanceSq = distanceSq;
+          nearest = hit.clone();
+        }
+      }
+    }
+    return nearest;
+  }
+
+  private constrainCamera(focus: THREE.Vector3) {
+    // Correct after smoothing so the interpolated position cannot remain behind cover.
+    const hit = this.firstWorldObstruction(focus, this.camera.position, 0.25);
+    if (hit) this.camera.position.copy(hit).lerp(focus, 0.001);
+  }
+
+  private npcCoverCandidates(actor: Actor, target: THREE.Vector3) {
+    const away = actor.group.position.clone().sub(target).setY(0);
+    if (away.lengthSq() < 0.001) away.set(0, 0, 1);
+    away.normalize();
+    const side = new THREE.Vector3(-away.z, 0, away.x);
+    const options = [
+      actor.group.position.clone().addScaledVector(side, 5.5),
+      actor.group.position.clone().addScaledVector(side, -5.5),
+      actor.group.position.clone().addScaledVector(away, 4.5),
+    ];
+    return options
+      .map((position, index) => ({
+        id: `${actor.id}-cover-${index}`,
+        position: { x: position.x, y: position.y, z: position.z },
+        distanceMeters: actor.group.position.distanceTo(position),
+        exposure: clamp(position.distanceTo(target) / 42, 0.12, 0.92),
+        routeCost: this.collides(position.x, position.z, 0.75) ? 1 : 0.18,
+        flankQuality: index === 2 ? 0.35 : 0.72,
+      }))
+      .filter((candidate) => candidate.routeCost < 1);
+  }
+
+  private beginCinematic() {
+    if (this.settings.reducedMotion || this.cinematic) return;
+    const target = this.missionTarget();
+    this.cinematic = {
+      start: this.renderTime,
+      duration: 3.8,
+      focus: target ? new THREE.Vector3(target.x, 0, target.z) : this.player.position.clone(),
+    };
   }
 
   private updateCamera(delta: number) {
+    if (this.cinematic) {
+      const t = clamp((this.renderTime - this.cinematic.start) / this.cinematic.duration, 0, 1);
+      if (t >= 1 || this.photoMode) {
+        this.cinematic = null;
+      } else {
+        const ease = 1 - Math.pow(1 - t, 3);
+        const focus = this.cinematic.focus;
+        const playerFocus = this.player.position.clone().add(new THREE.Vector3(0, 1.7, 0));
+        const angle = this.cameraYaw + (1 - ease) * 1.35;
+        const distance = 36 - ease * 26.5;
+        const height = 24 - ease * 18.5;
+        const desiredCamera = new THREE.Vector3(
+          focus.x + Math.sin(angle) * distance,
+          height,
+          focus.z + Math.cos(angle) * distance,
+        );
+        this.camera.position.lerp(desiredCamera, 1 - Math.exp(-3.2 * delta));
+        this.constrainCamera(focus.clone().add(new THREE.Vector3(0, 2, 0)));
+        const lookTarget = focus.clone().lerp(playerFocus, ease);
+        lookTarget.y = Math.max(1.8, lookTarget.y);
+        this.camera.lookAt(lookTarget);
+        this.camera.fov = damp(this.camera.fov, 56, 4.5, delta);
+        this.camera.updateProjectionMatrix();
+        return;
+      }
+    }
     const targetPosition = this.currentVehicle ? this.currentVehicle.group.position : this.player.position;
     const speed = this.currentVehicle ? Math.abs(this.currentVehicle.speed) : Math.hypot(this.playerVelocity.x, this.playerVelocity.z);
-    const distance = this.currentVehicle ? 10.5 + speed * 0.065 : 7.2;
-    const height = this.currentVehicle ? 4.4 : 3.4;
+    const stanceOffset = !this.currentVehicle && (this.crouching || this.slideRemaining > 0) ? -0.42 : 0;
+    if (this.photoMode && !this.currentVehicle) {
+      const angle = this.elapsed * 0.22;
+      const focus = targetPosition.clone().add(this.inspectionCenter).add(new THREE.Vector3(0, stanceOffset, 0));
+      const inspectionFov = 48;
+      const distanceToFit = (this.inspectionHeight * 1.08) / (2 * Math.tan(THREE.MathUtils.degToRad(inspectionFov * 0.5)));
+      const distance = Math.max(4.8, distanceToFit);
+      const desiredCamera = focus.clone().add(new THREE.Vector3(Math.sin(angle) * distance, 0.42, Math.cos(angle) * distance));
+      this.camera.position.lerp(desiredCamera, 1 - Math.exp(-7 * delta));
+      this.constrainCamera(focus);
+      this.camera.lookAt(focus);
+      this.camera.fov = damp(this.camera.fov, inspectionFov, 4.5, delta);
+      this.camera.updateProjectionMatrix();
+      if (this.inspectionKey) {
+        const desiredLight = this.camera.position.clone().lerp(focus, 0.16).add(new THREE.Vector3(0, 0.48, 0));
+        this.inspectionKey.position.lerp(desiredLight, 1 - Math.exp(-10 * delta));
+        this.inspectionKey.intensity = damp(this.inspectionKey.intensity, 48, 7, delta);
+      }
+      return;
+    }
+    const aiming = !this.currentVehicle && this.isAiming();
+    const distance = this.currentVehicle ? 10.5 + speed * 0.065 : aiming ? 3.15 : 4.55;
+    const height = this.currentVehicle ? 4.4 : aiming ? 1.9 : 2.65;
     const forward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
+    const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
     if (this.currentVehicle && Math.abs(this.gamepadAxes.lookX) < 0.1 && !this.pointerLocked) {
       this.cameraYaw = damp(this.cameraYaw, this.currentVehicle.heading, 1.8, delta);
       forward.set(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     }
     const desiredCamera = targetPosition.clone().addScaledVector(forward, -distance);
-    desiredCamera.y += height + this.cameraPitch * 5.5;
+    if (aiming) desiredCamera.addScaledVector(right, 0.78);
+    this.landDip = damp(this.landDip ?? 0, 0, 9.5, delta);
+    const bob = !this.settings?.reducedMotion && !this.currentVehicle && this.grounded && this.slideRemaining <= 0
+      ? Math.sin((this.walkPhase ?? 0) * 2) * 0.026 * clamp(speed / 9, 0, 1)
+      : 0;
+    desiredCamera.y += height + stanceOffset * 0.55 + this.cameraPitch * 5.5 + bob - this.landDip;
     this.camera.position.lerp(desiredCamera, 1 - Math.exp(-9 * delta));
-    const lookTarget = targetPosition.clone().add(new THREE.Vector3(0, this.currentVehicle ? 1.1 : 1.75, 0));
-    lookTarget.addScaledVector(forward, 4 + this.cameraPitch * 2);
+    this.constrainCamera(targetPosition.clone().add(new THREE.Vector3(0, 1.6 + stanceOffset, 0)));
+    const lookTarget = targetPosition.clone().add(new THREE.Vector3(0, this.currentVehicle ? 1.1 : (aiming ? 1.52 : 1.6) + stanceOffset, 0));
+    lookTarget.addScaledVector(forward, (aiming ? 7 : 3.25) + this.cameraPitch * 2);
+    lookTarget.y += bob * 0.6 - this.landDip * 0.4;
     this.camera.lookAt(lookTarget);
-    const targetFov = this.currentVehicle ? 58 + clamp(speed * 0.28, 0, 12) : 58;
+    const targetFov = this.currentVehicle ? 58 + clamp(speed * 0.28, 0, 12) : aiming ? 49 : 56;
     this.camera.fov = damp(this.camera.fov, targetFov, 4.5, delta);
     this.camera.updateProjectionMatrix();
+    if (this.inspectionKey && !this.currentVehicle) {
+      const desiredLight = this.camera.position.clone().lerp(targetPosition, 0.12).add(new THREE.Vector3(0, 0.72, 0));
+      this.inspectionKey.position.lerp(desiredLight, 1 - Math.exp(-8 * delta));
+      this.inspectionKey.intensity = damp(this.inspectionKey.intensity, aiming ? 20 : 12, 5, delta);
+    } else if (this.inspectionKey) {
+      this.inspectionKey.intensity = damp(this.inspectionKey.intensity, 0, 5, delta);
+    }
   }
 
   private updateActors(delta: number, time: number) {
     const playerPosition = this.currentVehicle?.group.position ?? this.player.position;
     const activeCombat = this.missionIndex >= 1 && this.missionIndex <= 5;
+    const frameRadio = [...this.radioSignals];
+    this.radioSignals = [];
     this.actors.forEach((actor, actorIndex) => {
       if (!actor.alive || !actor.group.visible) return;
       const distance = actor.group.position.distanceTo(playerPosition);
       actor.cooldown -= delta;
+      actor.damagePulse = Math.max(0, actor.damagePulse - delta);
 
       if (actor.kind === 'civilian') {
         const threatened = actor.flee > 0 || (this.heat > 12 && distance < 22);
@@ -1534,26 +2781,83 @@ export class HeavensGateEngine {
       }
 
       const hostile = actor.kind === 'boss' || activeCombat || this.heat > 6;
-      if (hostile && distance < (actor.kind === 'boss' ? 90 : 56)) {
-        const direction = playerPosition.clone().sub(actor.group.position).setY(0).normalize();
-        const ideal = actor.kind === 'boss' ? 13 : 10;
-        if (distance > ideal) this.moveActor(actor, direction, actor.speed, delta);
-        else if (distance < ideal * 0.7) this.moveActor(actor, direction, -actor.speed * 0.45, delta);
-        actor.group.rotation.y = Math.atan2(direction.x, direction.z);
-        if (actor.cooldown <= 0 && distance < (actor.kind === 'boss' ? 42 : 31)) {
-          this.enemyFire(actor, actor.kind === 'boss' ? 18 : 10);
-          actor.cooldown = actor.kind === 'boss' ? 0.72 : 1.2 + seeded(actorIndex + Math.floor(time), 91) * 0.9;
-          if (actor.kind === 'boss' && Math.floor(time) % 4 === 0) this.createShockwave(actor.group.position);
+      if (actor.aiState) {
+        const actorPosition = actor.group.position;
+        const toPlayer = playerPosition.clone().sub(actorPosition).setY(0);
+        const playerDirection = toPlayer.clone().normalize();
+        const actorForward = new THREE.Vector3(Math.sin(actor.group.rotation.y), 0, Math.cos(actor.group.rotation.y));
+        const target = hostile && distance < 96 ? {
+          position: { x: playerPosition.x, y: playerPosition.y + 1.4, z: playerPosition.z },
+          distanceMeters: distance,
+          viewAlignment: actorForward.dot(playerDirection),
+          inLineOfSight: this.hasLineOfSight(actorPosition.clone().add(new THREE.Vector3(0, 1.55, 0)), playerPosition.clone().add(new THREE.Vector3(0, 1.4, 0))),
+          visibility: this.veilActive && distance > 8 ? 0.18 : 1,
+          movement: clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 10.5, 0, 1),
+        } : undefined;
+        const sound = hostile && this.elapsed - this.lastCombat < 1.35 ? {
+          position: { x: playerPosition.x, y: playerPosition.y, z: playerPosition.z },
+          distanceMeters: distance,
+          loudness: 0.9,
+        } : undefined;
+        const aiStep = stepNpcAi(actor.aiState, {
+          deltaSeconds: delta,
+          position: { x: actorPosition.x, y: actorPosition.y, z: actorPosition.z },
+          health: actor.health,
+          maxHealth: actor.maxHealth,
+          target,
+          sound,
+          damage: actor.lastDamageAmount > 0 ? {
+            amount: actor.lastDamageAmount,
+            sourcePosition: { x: playerPosition.x, y: playerPosition.y, z: playerPosition.z },
+          } : undefined,
+          underFire: actor.damagePulse > 0,
+          coverCandidates: hostile ? this.npcCoverCandidates(actor, playerPosition) : [],
+          radioSignals: frameRadio,
+        });
+        actor.aiState = aiStep.state;
+        actor.lastDamageAmount = 0;
+        if (aiStep.emittedRadio) frameRadio.push(aiStep.emittedRadio);
+
+        const destination = aiStep.decision.destination
+          ? new THREE.Vector3(aiStep.decision.destination.x, actorPosition.y, aiStep.decision.destination.z)
+          : undefined;
+        const aimTarget = aiStep.decision.aimTarget
+          ? new THREE.Vector3(aiStep.decision.aimTarget.x, actorPosition.y + 1.4, aiStep.decision.aimTarget.z)
+          : playerPosition;
+        if (aiStep.decision.action === 'engage') {
+          const direction = toPlayer.lengthSq() > 0.001 ? playerDirection : new THREE.Vector3(0, 0, 1);
+          const ideal = actor.kind === 'boss' ? 13 : 10;
+          if (distance > ideal) this.moveActor(actor, direction, actor.speed, delta);
+          else if (distance < ideal * 0.7) this.moveActor(actor, direction, -actor.speed * 0.45, delta);
+          actor.group.rotation.y = Math.atan2(direction.x, direction.z);
+          if (actor.cooldown <= 0 && aiStep.perception.targetSeen && distance < (actor.kind === 'boss' ? 42 : 31)) {
+            this.enemyFire(actor, actor.kind === 'boss' ? 18 : 10);
+            actor.cooldown = actor.kind === 'boss' ? 0.72 : 1.2 + seeded(actorIndex + Math.floor(time), 91) * 0.9;
+            if (actor.kind === 'boss' && Math.floor(time) % 4 === 0) this.createShockwave(actor.group.position);
+          }
+        } else if (aiStep.decision.action === 'take-cover' && destination) {
+          const direction = destination.sub(actorPosition).setY(0).normalize();
+          this.moveActor(actor, direction, actor.speed * 1.15, delta);
+          actor.group.rotation.y = Math.atan2(direction.x, direction.z);
+        } else if (aiStep.decision.action === 'react-to-damage') {
+          const direction = actorPosition.clone().sub(aimTarget).setY(0).normalize();
+          this.moveActor(actor, direction, actor.speed * 0.72, delta);
+          actor.group.rotation.y = Math.atan2(-direction.x, -direction.z);
+        } else if ((aiStep.decision.action === 'investigate' || aiStep.decision.action === 'search' || aiStep.decision.action === 'return') && destination) {
+          const direction = destination.sub(actorPosition).setY(0).normalize();
+          this.moveActor(actor, direction, actor.speed * (aiStep.decision.action === 'search' ? 0.78 : 0.58), delta);
+          actor.group.rotation.y = Math.atan2(direction.x, direction.z);
+        } else {
+          actor.wanderAngle += Math.sin(time * 0.2 + actorIndex) * delta * 0.18;
+          const offset = actor.spawn.clone().sub(actor.group.position).setY(0);
+          const direction = offset.length() > 7
+            ? offset.normalize()
+            : new THREE.Vector3(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle));
+          this.moveActor(actor, direction, actor.speed * 0.34, delta);
         }
-      } else {
-        actor.wanderAngle += Math.sin(time * 0.2 + actorIndex) * delta * 0.18;
-        const offset = actor.spawn.clone().sub(actor.group.position).setY(0);
-        const direction = offset.length() > 7
-          ? offset.normalize()
-          : new THREE.Vector3(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle));
-        this.moveActor(actor, direction, actor.speed * 0.34, delta);
       }
     });
+    this.radioSignals = frameRadio.slice(-48);
     this.audio.setIntensity(clamp(this.heat / 100 + (this.missionIndex === 5 ? 0.45 : 0), 0, 1));
   }
 
@@ -1591,26 +2895,41 @@ export class HeavensGateEngine {
 
   private enemyFire(actor: Actor, damage: number) {
     const origin = actor.group.position.clone().add(new THREE.Vector3(0, actor.kind === 'drone' ? 0 : 1.6, 0));
+    this.audio.enemyShot(origin, this.camera.position, this.cameraYaw, !this.hasLineOfSight(origin, this.camera.position));
     const target = (this.currentVehicle?.group.position ?? this.player.position).clone().add(new THREE.Vector3(0, 1.1, 0));
     const distance = origin.distanceTo(target);
     const accuracy = actor.kind === 'boss' ? 0.84 : clamp(0.82 - distance / 140, 0.42, 0.78);
     const hits = seeded(Math.floor(this.elapsed * 17) + actor.id.length, 112) < accuracy;
     const end = hits ? target : target.clone().add(new THREE.Vector3((seeded(actor.id.length, 113) - 0.5) * 8, 3, (seeded(actor.id.length, 114) - 0.5) * 8));
-    this.createTracer(origin, end, 0xd65a45);
-    if (hits) this.takePlayerDamage(damage * difficultyDamage(this.settings.difficulty));
+    const obstruction = this.firstWorldObstruction(origin, end);
+    this.createTracer(origin, obstruction ?? end, 0xd65a45);
+    if (hits && !obstruction) this.takePlayerDamage(damage * difficultyDamage(this.settings.difficulty), origin);
   }
 
-  private takePlayerDamage(amount: number) {
+  private takePlayerDamage(amount: number, source?: THREE.Vector3) {
     if (this.invulnerability > 0 || this.gameOverSent) return;
     this.invulnerability = 0.16;
+    if (source) {
+      const position = this.currentVehicle?.group.position ?? this.player.position;
+      const bearing = Math.atan2(source.x - position.x, source.z - position.z);
+      const forwardBearing = Math.atan2(-Math.sin(this.cameraYaw), -Math.cos(this.cameraYaw));
+      let relative = forwardBearing - bearing;
+      while (relative > Math.PI) relative -= Math.PI * 2;
+      while (relative < -Math.PI) relative += Math.PI * 2;
+      this.damageDirection = relative;
+      this.damageDirectionTimer = 1.15;
+    }
     const armorAbsorb = Math.min(this.armor, amount * 0.62);
     this.armor -= armorAbsorb;
     this.health = Math.max(0, this.health - (amount - armorAbsorb));
     this.damageFlash = 1;
+    this.heroCharacter?.playOnce(this.health <= 0 ? 'death' : 'hit');
     this.audio.playerDamage();
+    this.pulseGamepad(95, 0.62, 0.42);
     if (this.health <= 0 && !this.gameOverSent) {
       this.gameOverSent = true;
       this.mouseShootHeld = false;
+      this.mouseAimHeld = false;
       this.audio.setEngine(0, false);
       this.callbacks.onGameOver();
     }
@@ -1618,42 +2937,70 @@ export class HeavensGateEngine {
 
   private tryShoot() {
     if (this.shotCooldown > 0 || this.reloading > 0 || this.currentVehicle || this.paused) return;
+    const spec = this.activeWeaponSpec();
     if (this.ammo <= 0) {
       this.audio.empty();
       this.shotCooldown = 0.25;
       if (this.reserveAmmo > 0) this.startReload();
       return;
     }
+    this.heroCharacter?.playOnce('fire', 0.045);
     this.ammo -= 1;
-    this.shotCooldown = 0.14;
-    this.audio.shoot();
+    this.shotCooldown = shotIntervalSeconds(spec);
+    this.weaponRecoil = addShotRecoil(this.weaponRecoil, spec);
+    this.cameraPitch = clamp(this.cameraPitch + (this.isAiming() ? spec.aimCameraKick : spec.hipCameraKick), -0.24, 0.74);
+    this.audio.shoot(spec.id);
+    this.pulseGamepad(42, spec.pellets > 1 ? 0.8 : 0.46, spec.pellets > 1 ? 0.95 : 0.78);
     this.lastCombat = this.elapsed;
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-    raycaster.far = 130;
-    const hits = raycaster.intersectObjects(this.rayTargets, false);
-    const hit = hits[0];
-    const end = hit?.point ?? this.camera.position.clone().add(raycaster.ray.direction.clone().multiplyScalar(110));
-    const weapon = this.player.userData.weapon as THREE.Object3D | undefined;
-    const origin = weapon ? weapon.getWorldPosition(new THREE.Vector3()) : this.player.position.clone().add(new THREE.Vector3(0, 1.6, 0));
-    this.createTracer(origin, end, 0xe8c96f);
-    this.createImpact(end, Boolean(hit?.object.userData.actorId));
 
-    const actorId = hit?.object.userData.actorId as string | undefined;
-    if (actorId) {
-      const actor = this.actors.find((candidate) => candidate.id === actorId);
-      if (actor?.alive) {
-        const critical = hit.object.name === 'head';
-        this.damageActor(actor, critical ? 62 : actor.kind === 'boss' ? 18 : 35, critical);
-        this.reticleHit = 1;
-        this.audio.hit(critical);
+    const mount = this.player.userData.weapon as THREE.Object3D | undefined;
+    const activeModel = mount?.children.find((child) => child.visible) ?? mount;
+    const muzzleOffset = (activeModel?.userData.muzzle as THREE.Vector3 | undefined) ?? new THREE.Vector3(0, 0, -0.47);
+    const origin = activeModel
+      ? activeModel.localToWorld(muzzleOffset.clone())
+      : this.player.position.clone().add(new THREE.Vector3(0, 1.6, 0));
+    this.createMuzzleFlash(origin);
+
+    const movement = clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 10.5, 0, 1);
+    const spread = shotSpreadRadians({ aiming: this.isAiming(), movement, recoil: this.weaponRecoil }, spec);
+    const ndcRadius = Math.tan(spread) / Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5));
+    const raycaster = new THREE.Raycaster();
+    raycaster.far = 130;
+    let landedHit = false;
+    for (let pellet = 0; pellet < spec.pellets; pellet += 1) {
+      const shotOffset = deterministicShotOffset(this.shotIndex, ndcRadius);
+      this.shotIndex += 1;
+      raycaster.setFromCamera(new THREE.Vector2(shotOffset.x / Math.max(0.75, this.camera.aspect), shotOffset.y), this.camera);
+      const hits = raycaster.intersectObjects(this.rayTargets, false);
+      const hit = hits.find((candidate) => visibleInScene(candidate.object, this.scene));
+      const end = hit?.point ?? this.camera.position.clone().add(raycaster.ray.direction.clone().multiplyScalar(110));
+      const obstruction = this.firstWorldObstruction(origin, end);
+      this.createTracer(origin, obstruction ?? end, spec.tracerColor);
+      this.createImpact(obstruction ?? end, !obstruction && Boolean(hit?.object.userData.actorId));
+      const trafficId = hit?.object.userData.trafficId as number | undefined;
+      if (trafficId !== undefined && !obstruction) {
+        const car = this.trafficCars[trafficId];
+        if (car) car.panic = 6;
+      }
+      const actorId = hit?.object.userData.actorId as string | undefined;
+      if (actorId && hit && !obstruction) {
+        const actor = this.actors.find((candidate) => candidate.id === actorId);
+        if (actor?.alive) {
+          const critical = hit.object.name === 'head';
+          this.damageActor(actor, weaponDamage(origin.distanceTo(hit.point), critical, actor.kind === 'boss', spec), critical);
+          landedHit = true;
+          this.audio.hit(critical);
+        }
       }
     }
-    if (this.ammo === 0 && this.reserveAmmo > 0) this.emitToast('Magazine empty', 'Press R or X to reload', 'info');
+    if (landedHit) this.reticleHit = 1;
+    if (this.ammo === 0 && this.reserveAmmo > 0) this.emitToast('Magazine empty', `Press ${this.bindingLabel('reload')} or X to reload`, 'info');
   }
 
   private damageActor(actor: Actor, damage: number, critical = false) {
     actor.health -= damage;
+    actor.lastDamageAmount = Math.max(actor.lastDamageAmount, damage);
+    actor.damagePulse = Math.max(actor.damagePulse, critical ? 0.75 : 0.48);
     actor.materials.forEach((material) => {
       const original = material.emissive.clone();
       material.emissive.setHex(critical ? 0xffd98a : 0xa9382d);
@@ -1678,8 +3025,18 @@ export class HeavensGateEngine {
 
   private killActor(actor: Actor) {
     actor.alive = false;
-    actor.group.visible = false;
     this.audio.explosion();
+    if (actor.kind !== 'civilian' && !this.settings.reducedMotion) this.hitStop = Math.max(this.hitStop, actor.kind === 'boss' ? 0.22 : 0.085);
+    const total = actor.kind === 'boss' ? 2.6 : actor.kind === 'drone' ? 1.15 : 1.6;
+    actor.materials.forEach((material) => { material.transparent = true; });
+    (this.corpses ??= []).push({
+      group: actor.group,
+      materials: actor.materials,
+      life: total,
+      total,
+      tip: actor.kind === 'drone' ? 0 : (Math.PI / 2) * (seeded(actor.id.length, 311) > 0.5 ? 1 : -1),
+    });
+    this.spawnDrop(actor);
     if (actor.id.startsWith('warden-')) {
       this.defeatedWardens += 1;
       this.emitToast('Warden severed', `${this.defeatedWardens} of 5`, 'success');
@@ -1690,18 +3047,98 @@ export class HeavensGateEngine {
     }
   }
 
+  private updateCorpses(delta: number) {
+    this.corpses = (this.corpses ?? []).filter((corpse) => {
+      corpse.life -= delta;
+      if (corpse.group.position.y > 0.04) {
+        corpse.group.position.y = Math.max(0.02, corpse.group.position.y - delta * 15);
+      }
+      corpse.group.rotation.z = damp(corpse.group.rotation.z, corpse.tip, 4.6, delta);
+      const fade = clamp(corpse.life / (corpse.total * 0.42), 0, 1);
+      corpse.materials.forEach((material) => { material.opacity = fade; });
+      if (corpse.life > 0) return true;
+      corpse.group.visible = false;
+      return false;
+    });
+  }
+
+  private spawnDrop(actor: Actor) {
+    if (actor.kind === 'civilian' || !this.scene) return;
+    const kind = seeded(actor.id.length + actor.group.position.x, 320) > 0.55 ? 'resonance' : 'ammo';
+    const color = kind === 'ammo' ? 0xd8b76a : 0x9fd6ff;
+    const group = new THREE.Group();
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      emissive: kind === 'ammo' ? 0xb98a2e : 0x3f96c8,
+      emissiveIntensity: 1.9,
+      roughness: 0.28,
+      metalness: 0.6,
+      transparent: true,
+    });
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), material);
+    group.add(core);
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.52, 0.02, 6, 24),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5 }),
+    );
+    halo.rotation.x = Math.PI / 2;
+    group.add(halo);
+    group.position.set(actor.group.position.x, Math.max(0.72, Math.min(actor.group.position.y, 3)), actor.group.position.z);
+    this.scene.add(group);
+    (this.drops ??= []).push({ group, kind, life: 32 });
+  }
+
+  private updateDrops(delta: number, time: number) {
+    const position = this.currentVehicle?.group.position ?? this.player.position;
+    this.drops = (this.drops ?? []).filter((drop) => {
+      drop.life -= delta;
+      drop.group.rotation.y += delta * 2.1;
+      drop.group.position.y = 0.74 + Math.sin(time * 2.3 + drop.group.position.x * 0.7) * 0.12;
+      const fade = clamp(drop.life / 3, 0, 1);
+      if (fade < 1) {
+        drop.group.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            const material = child.material as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial;
+            material.transparent = true;
+            material.opacity = Math.min(material.opacity, fade);
+          }
+        });
+      }
+      const near = distance2D(drop.group.position.x, drop.group.position.z, position.x, position.z) < 2;
+      if (near || drop.life <= 0) {
+        if (near) {
+          if (drop.kind === 'ammo') {
+            const gain = Math.ceil(this.activeWeaponSpec().magazineSize * 0.5);
+            this.reserveAmmo += gain;
+            this.emitToast('Cell recovered', `+${gain} ${this.activeWeaponSpec().name} reserve`, 'success');
+          } else {
+            this.resonance = Math.min(100, this.resonance + 14);
+            this.emitToast('Resonance shard', '+14 resonance', 'success');
+          }
+          this.audio.ui(true);
+        }
+        this.scene.remove(drop.group);
+        this.disposeObject(drop.group);
+        return false;
+      }
+      return true;
+    });
+  }
+
   private startReload() {
-    if (this.reloading > 0 || this.ammo >= 18 || this.reserveAmmo <= 0 || this.currentVehicle) return;
-    this.reloading = 1.05;
+    const spec = this.activeWeaponSpec();
+    if (this.reloading > 0 || this.ammo >= spec.magazineSize || this.reserveAmmo <= 0 || this.currentVehicle) return;
+    this.reloading = spec.reloadSeconds;
+    this.heroCharacter?.playOnce('reload', 0.08);
     this.audio.reload();
-    this.emitToast('Reloading Morrow', `${this.reserveAmmo} rounds in reserve`, 'info');
+    this.pulseGamepad(90, 0.14, 0.2);
+    this.emitToast(`Reloading ${spec.name}`, `${this.reserveAmmo} rounds in reserve`, 'info');
   }
 
   private finishReload() {
-    const needed = 18 - this.ammo;
-    const loaded = Math.min(needed, this.reserveAmmo);
-    this.ammo += loaded;
-    this.reserveAmmo -= loaded;
+    const result = transferReload(this.ammo, this.reserveAmmo, this.activeWeaponSpec());
+    this.ammo = result.ammo;
+    this.reserveAmmo = result.reserve;
     this.reloading = 0;
   }
 
@@ -1744,6 +3181,7 @@ export class HeavensGateEngine {
         }
       });
     });
+    if (!active && this.lastSave?.ending) this.applyEndingWorld(this.lastSave.ending);
   }
 
   private updateVeil(delta: number) {
@@ -1813,23 +3251,39 @@ export class HeavensGateEngine {
     vehicle.occupied = true;
     vehicle.bodyMaterial.emissive.setHex(0x4c3612);
     vehicle.bodyMaterial.emissiveIntensity = 0.5;
+    if (vehicle.spot) vehicle.spot.intensity = 640;
     this.player.visible = false;
     this.cameraYaw = vehicle.heading;
     this.audio.ui(true);
-    this.emitToast('Seraph linked', 'WASD / left stick to drive · E / Y to exit', 'success');
+    const driveKeys = ['moveForward', 'moveLeft', 'moveBackward', 'moveRight'].map((action) => this.bindingLabel(action as KeybindAction)).join(' / ');
+    this.emitToast('Seraph linked', `${driveKeys} / left stick to drive · ${this.bindingLabel('jump')} / A to brake · ${this.bindingLabel('interact')} / Y to exit`, 'success');
   }
 
   private exitVehicle() {
     const vehicle = this.currentVehicle;
     if (!vehicle) return;
+    const edge = WORLD_SIZE / 2 - 2;
+    const exit = [[3.3, 0], [-3.3, 0], [0, 4.5], [0, -4.5]]
+      .map(([x, z]) => new THREE.Vector3(x, 0, z)
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), vehicle.heading)
+        .add(vehicle.group.position))
+      .find((candidate) => Math.abs(candidate.x) <= edge && Math.abs(candidate.z) <= edge
+        && !this.collides(candidate.x, candidate.z, PLAYER_RADIUS)
+        && !sweepPlanarCollision(vehicle.group.position, candidate,
+          (x, z) => this.collides(x, z, PLAYER_RADIUS)).swept);
+    if (!exit) {
+      this.emitToast('Exit blocked', 'Move the vehicle to a clear area before exiting.', 'info');
+      return;
+    }
     this.currentVehicle = null;
     vehicle.occupied = false;
     vehicle.bodyMaterial.emissiveIntensity = 0;
+    if (vehicle.spot) vehicle.spot.intensity = 0;
+    vehicle.group.rotation.x = 0;
+    vehicle.group.rotation.z = 0;
     this.player.visible = true;
-    this.player.position.copy(vehicle.group.position).add(new THREE.Vector3(3.3, 0, 0));
-    if (this.collides(this.player.position.x, this.player.position.z, PLAYER_RADIUS)) {
-      this.player.position.copy(vehicle.group.position).add(new THREE.Vector3(-3.3, 0, 0));
-    }
+    this.player.position.copy(exit);
+    this.playerVelocity.set(0, 0, 0);
     vehicle.speed *= 0.4;
     this.audio.setEngine(0, false);
     this.audio.ui();
@@ -1870,6 +3324,7 @@ export class HeavensGateEngine {
     this.missionIndex = Math.min(this.missionIndex + 1, MISSIONS.length - 1);
     if (this.missionIndex === 5) this.spawnBoss();
     this.updateObjectiveMarker();
+    this.beginCinematic();
     this.saveCheckpoint();
     const timeout = setTimeout(() => {
       this.emitMissionBriefing();
@@ -1934,14 +3389,15 @@ export class HeavensGateEngine {
 
   private updateInteractionPrompt() {
     let prompt: InteractionPrompt | null = null;
-    if (this.currentVehicle) prompt = { action: 'E / Y', label: 'Exit Seraph' };
+    const interact = `${this.bindingLabel('interact')} / Y`;
+    if (this.currentVehicle) prompt = { action: interact, label: 'Exit Seraph' };
     else {
       const vehicle = this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
-      if (vehicle) prompt = { action: 'E / Y', label: `Enter ${vehicle.id.startsWith('seraph') ? 'Seraph' : 'Morrow'}` };
+      if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.id.startsWith('seraph') ? 'Seraph' : 'Morrow'}` };
       const echo = this.echoes.find((candidate) => !candidate.activated && candidate.group.position.distanceTo(this.player.position) < 5);
       if (echo) prompt = this.veilActive
-        ? { action: 'E / Y', label: 'Restore Memory Echo' }
-        : { action: 'Q / LB', label: 'Open Veil to reveal memory' };
+        ? { action: interact, label: 'Restore Memory Echo' }
+        : { action: `${this.bindingLabel('veil')} / LB`, label: 'Open Veil to reveal memory' };
     }
     const signature = prompt ? `${prompt.action}:${prompt.label}` : '';
     if (signature !== this.lastInteraction) {
@@ -1985,8 +3441,17 @@ export class HeavensGateEngine {
       ...INITIAL_HUD,
       health: this.health,
       armor: this.armor,
+      stamina: this.stamina,
+      stance: this.dodgeRemaining > 0
+        ? 'dodging'
+        : this.slideRemaining > 0
+          ? 'sliding'
+          : this.crouching
+            ? 'crouched'
+            : 'standing',
       ammo: this.ammo,
       reserveAmmo: this.reserveAmmo,
+      weapon: this.activeWeaponSpec().hudLabel,
       resonance: this.resonance,
       heat: this.heat,
       heatTier: this.heatTierValue(),
@@ -2002,9 +3467,18 @@ export class HeavensGateEngine {
       district: this.currentDistrict(position.x, position.z),
       timeLabel: formatTime(this.worldHours),
       fps: this.fps,
+      aiming: this.isAiming(),
+      reticleSpread: shotSpreadRadians({
+        aiming: this.isAiming(),
+        movement: clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 10.5, 0, 1),
+        recoil: this.weaponRecoil,
+      }, this.activeWeaponSpec()) * 180 / Math.PI,
       reticleHit: this.reticleHit > 0,
+      reloading: this.reloading > 0,
       damageFlash: this.damageFlash,
+      damageDirection: this.damageDirection,
       bossHealth: this.boss?.alive ? clamp(this.boss.health / this.boss.maxHealth, 0, 1) : null,
+      cinematic: Boolean(this.cinematic),
     };
     this.callbacks.onHUD(hud, this.createMapSnapshot());
   }
@@ -2035,11 +3509,35 @@ export class HeavensGateEngine {
   }
 
   private updateAmbientAnimation(delta: number, time: number) {
+    this.heroCharacter?.update(delta, time, clamp(this.heat / 75 + (this.mouseShootHeld ? 0.2 : 0), 0, 1));
     this.gates.forEach((gate, index) => {
       gate.ring.rotation.z += delta * (0.07 + index * 0.015);
       gate.veil.scale.setScalar(0.98 + Math.sin(time * 1.4 + index) * 0.018);
       gate.veil.material.opacity = (this.veilActive ? 0.17 : 0.055) + Math.sin(time * 1.2 + index) * 0.018;
+      if (gate.shaft) gate.shaft.material.opacity = 0.04 + Math.sin(time * 0.9 + index * 2.1) * 0.014 + (this.veilActive ? 0.03 : 0);
     });
+    if (this.rain && this.rain.mesh.visible) {
+      const center = this.currentVehicle?.group.position ?? this.player.position;
+      const { drops, count, mesh } = this.rain;
+      const wrap = Math.floor(time * 9);
+      for (let i = 0; i < count; i += 1) {
+        let x = drops[i * 3];
+        let y = drops[i * 3 + 1];
+        let z = drops[i * 3 + 2];
+        y -= delta * 36;
+        if (y < -1.5 || Math.abs(x - center.x) > 70 || Math.abs(z - center.z) > 70) {
+          y = 24 + seeded(i, wrap + i * 3) * 16;
+          x = center.x + (seeded(i, wrap + i * 7 + 31) - 0.5) * 120;
+          z = center.z + (seeded(i, wrap + i * 13 + 57) - 0.5) * 120;
+        }
+        drops[i * 3] = x;
+        drops[i * 3 + 1] = y;
+        drops[i * 3 + 2] = z;
+        this.rainMatrix.makeTranslation(x, y, z);
+        mesh.setMatrixAt(i, this.rainMatrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+    }
     this.echoes.forEach((echo, index) => {
       if (echo.activated) return;
       echo.group.rotation.y += delta * (0.38 + index * 0.08);
@@ -2063,7 +3561,7 @@ export class HeavensGateEngine {
       const y = Math.sin(cycle) * 90;
       this.sun.position.set(x, Math.max(8, y), -75);
       this.skyOrb.position.set(x, Math.max(24, y), -150);
-      this.sun.intensity = 1.4 + Math.max(0, Math.sin(cycle)) * 3.2;
+      this.sun.intensity = 2.15 + Math.max(0, Math.sin(cycle)) * 3.05;
     }
   }
 
@@ -2097,12 +3595,39 @@ export class HeavensGateEngine {
     this.effects.push({ object: line, life: 0.08, total: 0.08, mode: 'fade' });
   }
 
+  private createMuzzleFlash(position: THREE.Vector3) {
+    const flash = new THREE.Group();
+    const flare = new THREE.Mesh(
+      new THREE.SphereGeometry(0.085, 6, 4),
+      new THREE.MeshBasicMaterial({ color: 0xffd07a, transparent: true, opacity: 0.95 }),
+    );
+    const light = new THREE.PointLight(0xffa84d, 34, 4.5, 2);
+    flash.position.copy(position);
+    flash.add(flare, light);
+    this.scene.add(flash);
+    this.effects.push({ object: flash, life: 0.055, total: 0.055, mode: 'fade' });
+  }
+
   private createImpact(position: THREE.Vector3, hostile: boolean) {
-    const material = new THREE.MeshBasicMaterial({ color: hostile ? 0xf1cc6a : 0x96b5bd, transparent: true });
-    const spark = new THREE.Mesh(new THREE.SphereGeometry(hostile ? 0.22 : 0.12, 6, 4), material);
-    spark.position.copy(position);
-    this.scene.add(spark);
-    this.effects.push({ object: spark, life: 0.22, total: 0.22, mode: 'pulse' });
+    const group = new THREE.Group();
+    group.position.copy(position);
+    const color = hostile ? 0xf1cc6a : 0x96b5bd;
+    const material = new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const spark = new THREE.Mesh(new THREE.SphereGeometry(hostile ? 0.2 : 0.11, 6, 4), material);
+    group.add(spark);
+    for (let i = 0; i < 5; i += 1) {
+      const chip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.045), material);
+      const angle = seeded(i + Math.floor(position.x * 13), 340) * Math.PI * 2;
+      const lift = seeded(i + Math.floor(position.z * 7), 341);
+      chip.position.set(Math.cos(angle) * (0.12 + lift * 0.2), lift * 0.3, Math.sin(angle) * (0.12 + lift * 0.2));
+      chip.rotation.set(angle, lift * 3, angle * 0.5);
+      group.add(chip);
+    }
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.018, 5, 18), material);
+    ring.rotation.x = Math.PI / 2;
+    group.add(ring);
+    this.scene.add(group);
+    this.effects.push({ object: group, life: hostile ? 0.26 : 0.2, total: hostile ? 0.26 : 0.2, mode: 'pulse' });
   }
 
   private createPulseEffect(position: THREE.Vector3) {
@@ -2125,7 +3650,7 @@ export class HeavensGateEngine {
     this.scene.add(ring);
     this.effects.push({ object: ring, life: 0.62, total: 0.62, mode: 'pulse' });
     const playerPosition = this.currentVehicle?.group.position ?? this.player.position;
-    if (playerPosition.distanceTo(position) < 13) this.takePlayerDamage(16 * difficultyDamage(this.settings.difficulty));
+    if (playerPosition.distanceTo(position) < 13) this.takePlayerDamage(16 * difficultyDamage(this.settings.difficulty), position);
   }
 
   private updatePerformance(delta: number) {
@@ -2143,9 +3668,30 @@ export class HeavensGateEngine {
     }
   }
 
+  getPerformanceSnapshot() {
+    const frameTime = this.frameTimeSampler.summary();
+    return {
+      ...frameTime,
+      fps: this.fps,
+      pixelRatio: this.dynamicPixelRatio,
+      quality: this.settings.quality,
+      mode: this.mode,
+      paused: this.paused,
+      viewportWidth: this.renderer.domElement.clientWidth,
+      viewportHeight: this.renderer.domElement.clientHeight,
+      renderWidth: this.renderer.domElement.width,
+      renderHeight: this.renderer.domElement.height,
+      drawCalls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+      geometries: this.renderer.info.memory.geometries,
+      textures: this.renderer.info.memory.textures,
+    };
+  }
+
   private emitSubtitle(speaker: string, text: string, duration = 3600) {
     if (!this.settings.subtitles) return;
     const line: SubtitleLine = { id: ++this.subtitleId, speaker, text, duration };
+    if (speaker.toLowerCase().includes('aurel')) this.heroCharacter?.speak(duration / 1000, this.subtitleId);
     this.callbacks.onSubtitle(line);
   }
 
@@ -2154,7 +3700,7 @@ export class HeavensGateEngine {
   }
 
   private saveCheckpoint(ending?: 'open' | 'seal') {
-    const save: SaveState = {
+    const save = createCheckpoint({
       version: SAVE_VERSION,
       missionIndex: this.missionIndex,
       health: Math.max(35, Math.round(this.health)),
@@ -2165,9 +3711,18 @@ export class HeavensGateEngine {
       defeatedWardens: this.defeatedWardens,
       echoesActivated: [...this.echoesActivated],
       elapsed: this.elapsed,
+      weaponId: this.weaponId,
+      weaponAmmo: {
+        ...this.weaponPools,
+        [this.weaponId]: { ammo: this.ammo, reserve: this.reserveAmmo },
+      },
       ending,
       updatedAt: Date.now(),
-    };
+    }, this.lastSave);
+    if (!save) {
+      this.emitToast('Checkpoint unavailable', 'The current checkpoint failed validation; the previous save is unchanged.', 'danger');
+      return;
+    }
     this.lastSave = save;
     this.callbacks.onSave(save);
   }
@@ -2178,16 +3733,24 @@ export class HeavensGateEngine {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    if (this.composer) {
+      this.composer.setPixelRatio(this.dynamicPixelRatio);
+      this.composer.setSize(width, height);
+    }
   }
 
   private disposeObject(object: THREE.Object3D) {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
     object.traverse((child) => {
       if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points) {
-        child.geometry?.dispose();
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        materials.forEach((material) => material?.dispose());
+        if (child.geometry) geometries.add(child.geometry);
+        const ownedMaterials = Array.isArray(child.material) ? child.material : [child.material];
+        ownedMaterials.forEach((material) => { if (material) materials.add(material); });
       }
     });
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
   }
 
   dispose() {
@@ -2201,9 +3764,27 @@ export class HeavensGateEngine {
     window.removeEventListener('pointerdown', this.onPointerDown);
     window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('resize', this.onResize);
+    window.removeEventListener('blur', this.onBlur);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     document.removeEventListener('visibilitychange', this.onVisibility);
+    this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
+    this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
+    this.heroLoadToken += 1;
+    if (this.heroCharacter) {
+      this.player.remove(this.heroCharacter.object);
+      this.heroCharacter.dispose();
+      this.heroCharacter = null;
+    }
     this.audio.dispose();
+    this.scannedGround?.dispose();
+    this.scannedGround = null;
+    this.composer?.dispose();
+    this.composer = null;
+    this.bloomPass = null;
+    this.envMapTexture?.dispose();
+    this.envMapTexture = null;
+    this.scene.environment = null;
+    this.billboardTextures.forEach((texture) => texture.dispose());
     this.disposeObject(this.scene);
     this.renderer.dispose();
   }

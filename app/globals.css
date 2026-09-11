@@ -20,6 +20,7 @@
   --danger-soft: oklch(0.34 0.12 28 / 48%);
   --success: oklch(0.76 0.13 150);
   --success-soft: oklch(0.35 0.09 150 / 42%);
+  --stamina: oklch(0.74 0.09 135);
   --cyan: oklch(0.76 0.08 210);
   --shadow: oklch(0.03 0.01 220 / 72%);
   --gradient-brand: linear-gradient(120deg, oklch(0.9 0.09 88), oklch(0.7 0.14 72));
@@ -287,6 +288,45 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.loading-recovery {
+  display: grid;
+  width: min(440px, calc(100vw - 80px));
+  margin-top: 24px;
+  justify-items: start;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.loading-recovery p {
+  max-width: 48ch;
+  margin: 0;
+}
+
+.loading-recovery button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--foreground);
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out);
+}
+
+.loading-recovery button:hover {
+  border-color: var(--primary);
+  background: var(--surface-strong);
+}
+
+.loading-recovery button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
 .title-screen {
   position: absolute;
   z-index: 20;
@@ -461,6 +501,8 @@ button:disabled {
   z-index: 40;
   inset: 0;
   pointer-events: none;
+  transform: scale(var(--hud-scale, 1));
+  transform-origin: center center;
 }
 
 .mission-panel {
@@ -586,6 +628,7 @@ button:disabled {
 }
 
 .reticle {
+  --reticle-spread: 0px;
   position: absolute;
   top: 50%;
   left: 50%;
@@ -599,6 +642,7 @@ button:disabled {
 .reticle span {
   position: absolute;
   background: currentColor;
+  transition: transform 90ms var(--ease-out);
 }
 
 .reticle span:nth-child(1),
@@ -614,6 +658,15 @@ button:disabled {
 .reticle span:nth-child(4) { left: 14px; width: 1px; height: 7px; }
 .reticle span:nth-child(3) { top: 0; }
 .reticle span:nth-child(4) { bottom: 0; }
+
+.reticle span:nth-child(1) { transform: translateX(calc(var(--reticle-spread) * -1)); }
+.reticle span:nth-child(2) { transform: translateX(var(--reticle-spread)); }
+.reticle span:nth-child(3) { transform: translateY(calc(var(--reticle-spread) * -1)); }
+.reticle span:nth-child(4) { transform: translateY(var(--reticle-spread)); }
+
+.reticle-aiming {
+  color: var(--primary-bright);
+}
 
 .reticle-hit {
   color: var(--primary-bright);
@@ -690,6 +743,10 @@ button:disabled {
 
 .vital.armor > i b {
   background: var(--cyan);
+}
+
+.vital.stamina > i b {
+  background: var(--stamina);
 }
 
 .combat-panel {
@@ -955,6 +1012,197 @@ kbd {
   inset: 0;
   pointer-events: none;
   background: radial-gradient(circle, transparent 48%, var(--danger-soft) 105%);
+}
+
+.cinematic-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.cinematic-frame i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 11vh;
+  background: oklch(0.03 0.01 220 / 96%);
+  animation: cinematic-bar 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.cinematic-frame i:first-child {
+  top: 0;
+}
+
+.cinematic-frame i:last-child {
+  bottom: 0;
+}
+
+@keyframes cinematic-bar {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cinematic-frame i { animation: none; }
+}
+
+.hit-direction {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 38;
+  width: 150px;
+  height: 150px;
+  margin: -75px 0 0 -75px;
+  pointer-events: none;
+}
+
+.hit-direction i {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  width: 84px;
+  height: 26px;
+  transform: translateX(-50%);
+  border-radius: 50% 50% 0 0;
+  background: radial-gradient(ellipse at 50% 100%, oklch(0.62 0.19 28 / 85%) 0%, transparent 72%);
+}
+
+.touch-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  pointer-events: none;
+  touch-action: none;
+}
+
+@media (pointer: coarse), (hover: none) {
+  .touch-layer {
+    display: block;
+  }
+}
+
+.touch-look {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 34%;
+  left: 42%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-stick {
+  position: absolute;
+  bottom: 15%;
+  left: 7%;
+  width: 132px;
+  height: 132px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-stick-ring {
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid oklch(0.82 0.11 82 / 42%);
+  border-radius: 50%;
+  background: oklch(0.08 0.02 220 / 30%);
+}
+
+.touch-stick-nub {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  border-radius: 50%;
+  background: oklch(0.78 0.12 82 / 55%);
+  transform: translate(var(--stick-x, 0px), var(--stick-y, 0px));
+}
+
+.touch-buttons {
+  position: absolute;
+  right: 4.5%;
+  bottom: 12%;
+  display: grid;
+  grid-template-columns: repeat(3, 60px);
+  gap: 10px;
+  align-items: end;
+  pointer-events: none;
+}
+
+.touch-button {
+  width: 60px;
+  height: 60px;
+  border: 1px solid oklch(0.82 0.11 82 / 38%);
+  border-radius: 50%;
+  background: oklch(0.1 0.02 220 / 46%);
+  color: oklch(0.9 0.06 82 / 92%);
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-button.touch-fire {
+  grid-row: span 2;
+  width: 76px;
+  height: 76px;
+  background: oklch(0.45 0.16 38 / 52%);
+  border-color: oklch(0.72 0.16 38 / 66%);
+  font-size: 12px;
+}
+
+.touch-button.touch-small {
+  width: 52px;
+  height: 52px;
+  font-size: 9px;
+}
+
+.touch-button.touch-active {
+  background: oklch(0.62 0.13 82 / 52%);
+  border-color: oklch(0.86 0.12 82 / 80%);
+  color: oklch(0.1 0.02 220);
+}
+
+.touch-pause {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 31;
+  width: 44px;
+  height: 44px;
+  border: 1px solid oklch(0.82 0.11 82 / 34%);
+  border-radius: 8px;
+  background: oklch(0.08 0.02 220 / 52%);
+  color: oklch(0.9 0.06 82 / 90%);
+  font-weight: 700;
+  pointer-events: auto;
+}
+
+.hud .mission-panel,
+.hud .world-status,
+.hud .vitals-panel,
+.hud .combat-panel,
+.hud .reticle,
+.hud .tutorial-strip {
+  transition: opacity 420ms ease;
+}
+
+.hud-cinematic .mission-panel,
+.hud-cinematic .world-status,
+.hud-cinematic .vitals-panel,
+.hud-cinematic .combat-panel,
+.hud-cinematic .reticle,
+.hud-cinematic .tutorial-strip,
+.hud-cinematic .touch-layer {
+  opacity: 0;
 }
 
 .subtitle {
@@ -1293,6 +1541,68 @@ kbd {
   cursor: pointer;
 }
 
+.setting-note {
+  display: block;
+  margin-top: -10px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.keybind-fieldset {
+  grid-column: 1 / -1;
+}
+
+.keybind-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 14px;
+}
+
+.keybind-grid button {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 10px;
+  text-align: left;
+}
+
+.keybind-grid button:hover,
+.keybind-grid button.listening {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.keybind-grid kbd {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  padding: 4px 6px;
+  color: var(--primary);
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.reset-bindings {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reset-bindings svg {
+  width: 14px;
+  height: 14px;
+}
+
 .toggle-fieldset {
   grid-column: 1 / -1;
   display: grid;
@@ -1374,6 +1684,15 @@ kbd {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.6;
+}
+
+.codex-grid .codex-note {
+  margin-top: 16px;
+  color: var(--primary);
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .codex-grid dl {
@@ -1674,6 +1993,46 @@ kbd {
   text-transform: uppercase;
 }
 
+.storage-notice {
+  position: absolute;
+  z-index: 110;
+  left: 28px;
+  bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: min(560px, calc(100% - 56px));
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--primary);
+  background: var(--surface-strong);
+  box-shadow: 0 8px 28px var(--shadow);
+}
+
+.storage-notice strong {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.storage-notice p {
+  margin: 6px 0 0;
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.storage-notice button {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 12px;
+}
+
 .desktop-required {
   position: fixed;
   z-index: 1000;
@@ -1779,7 +2138,10 @@ kbd {
   .skin-control { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-@media (max-width: 899px), (max-height: 599px) {
+/* 760×480 is the smallest supported desktop/windowed layout. Mobile-width
+   surfaces remain intentionally gated because the input model is gamepad /
+   keyboard-first and the HUD needs room for readable combat telemetry. */
+@media (max-width: 759px), (max-height: 479px) {
   .desktop-required { display: grid; }
 }
 

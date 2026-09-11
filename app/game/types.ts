@@ -3,6 +3,39 @@ import type { Vector3 } from 'three';
 export type Quality = 'low' | 'medium' | 'high';
 export type Difficulty = 'story' | 'normal' | 'ascendant';
 export type CharacterSkin = 'seraph' | 'relic' | 'nocturne' | 'ash' | 'meridian' | 'voidborn';
+export type WeaponId = 'morrow' | 'psalm' | 'vesper';
+export type KeybindAction =
+  | 'moveForward'
+  | 'moveBackward'
+  | 'moveLeft'
+  | 'moveRight'
+  | 'sprint'
+  | 'crouch'
+  | 'dodge'
+  | 'jump'
+  | 'reload'
+  | 'veil'
+  | 'pulse'
+  | 'weaponSwap'
+  | 'interact'
+  | 'inspect';
+
+export interface Keybinds {
+  moveForward: string;
+  moveBackward: string;
+  moveLeft: string;
+  moveRight: string;
+  sprint: string;
+  crouch: string;
+  dodge: string;
+  jump: string;
+  reload: string;
+  veil: string;
+  pulse: string;
+  weaponSwap: string;
+  interact: string;
+  inspect: string;
+}
 export type ScreenState =
   | 'title'
   | 'loading'
@@ -19,11 +52,13 @@ export interface GameSettings {
   quality: Quality;
   volume: number;
   sensitivity: number;
+  hudScale: number;
   subtitles: boolean;
   reducedMotion: boolean;
   highContrast: boolean;
   difficulty: Difficulty;
   characterSkin: CharacterSkin;
+  keybinds: Keybinds;
 }
 
 export interface SaveState {
@@ -33,6 +68,8 @@ export interface SaveState {
   armor: number;
   ammo: number;
   reserveAmmo: number;
+  weaponId?: WeaponId;
+  weaponAmmo?: Partial<Record<WeaponId, { ammo: number; reserve: number }>>;
   resonance: number;
   defeatedWardens: number;
   echoesActivated: string[];
@@ -44,8 +81,11 @@ export interface SaveState {
 export interface HUDState {
   health: number;
   armor: number;
+  stamina: number;
+  stance: 'standing' | 'crouched' | 'sliding' | 'dodging';
   ammo: number;
   reserveAmmo: number;
+  weapon: string;
   resonance: number;
   heat: number;
   heatTier: number;
@@ -61,9 +101,14 @@ export interface HUDState {
   district: string;
   timeLabel: string;
   fps: number;
+  aiming: boolean;
+  reticleSpread: number;
   reticleHit: boolean;
+  reloading: boolean;
   damageFlash: number;
+  damageDirection: number | null;
   bossHealth: number | null;
+  cinematic: boolean;
 }
 
 export interface MapPoint {
@@ -135,22 +180,44 @@ export interface WorldEntity {
   active: boolean;
 }
 
+export const DEFAULT_KEYBINDS: Keybinds = {
+  moveForward: 'w',
+  moveBackward: 's',
+  moveLeft: 'a',
+  moveRight: 'd',
+  sprint: 'shift',
+  crouch: 'c',
+  dodge: 'alt',
+  jump: ' ',
+  reload: 'r',
+  veil: 'q',
+  pulse: 'f',
+  weaponSwap: 'x',
+  interact: 'e',
+  inspect: 'p',
+};
+
 export const DEFAULT_SETTINGS: GameSettings = {
   quality: 'high',
   volume: 0.72,
   sensitivity: 0.65,
+  hudScale: 1,
   subtitles: true,
   reducedMotion: false,
   highContrast: false,
   difficulty: 'normal',
   characterSkin: 'seraph',
+  keybinds: DEFAULT_KEYBINDS,
 };
 
 export const INITIAL_HUD: HUDState = {
   health: 100,
   armor: 50,
+  stamina: 100,
+  stance: 'standing',
   ammo: 18,
   reserveAmmo: 126,
+  weapon: 'Morrow / 9mm smart',
   resonance: 100,
   heat: 0,
   heatTier: 0,
@@ -166,9 +233,14 @@ export const INITIAL_HUD: HUDState = {
   district: 'Crown District',
   timeLabel: '03:17',
   fps: 60,
+  aiming: false,
+  reticleSpread: 0,
   reticleHit: false,
+  reloading: false,
   damageFlash: 0,
+  damageDirection: null,
   bossHealth: null,
+  cinematic: false,
 };
 
 export const MISSIONS: MissionDefinition[] = [

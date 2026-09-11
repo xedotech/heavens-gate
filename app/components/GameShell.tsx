@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   ArrowLeft,
   BookOpen,
@@ -27,7 +27,10 @@ import {
   Zap,
 } from 'lucide-react';
 import type { HeavensGateEngine } from '../game/engine';
+import { TouchControls } from './TouchControls';
+import { assignKeybind, mergeKeybinds } from '../game/keybinds';
 import { formatDistance } from '../game/mechanics';
+import { eraseSaves, normalizeSettings, readSave, readSettings, retrySettings, saveReadNotice, saveWriteNotice, writeSave, writeSettings } from '../game/persistence';
 import {
   DEFAULT_SETTINGS,
   INITIAL_HUD,
@@ -37,6 +40,7 @@ import {
   type GameSettings,
   type HUDState,
   type InteractionPrompt,
+  type KeybindAction,
   type MapSnapshot,
   type Quality,
   type SaveState,
@@ -45,8 +49,7 @@ import {
   type ToastMessage,
 } from '../game/types';
 
-const SAVE_KEY = 'heavens-gate-save-v1';
-const SETTINGS_KEY = 'heavens-gate-settings-v1';
+const browserStorage = () => window.localStorage;
 const CHARACTER_SKINS: Array<{ id: CharacterSkin; name: string; detail: string }> = [
   { id: 'seraph', name: 'Seraph', detail: 'Gilded canon' },
   { id: 'relic', name: 'Relic', detail: 'Sun-worn bronze' },
@@ -56,13 +59,27 @@ const CHARACTER_SKINS: Array<{ id: CharacterSkin; name: string; detail: string }
   { id: 'voidborn', name: 'Voidborn', detail: 'Veil-touched' },
 ];
 
-function loadJSON<T>(key: string): T | null {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? JSON.parse(raw) as T : null;
-  } catch {
-    return null;
-  }
+const KEYBIND_ACTIONS: Array<{ id: KeybindAction; label: string }> = [
+  { id: 'moveForward', label: 'Move forward' },
+  { id: 'moveBackward', label: 'Move backward' },
+  { id: 'moveLeft', label: 'Move left' },
+  { id: 'moveRight', label: 'Move right' },
+  { id: 'sprint', label: 'Sprint / boost' },
+  { id: 'crouch', label: 'Crouch / slide' },
+  { id: 'dodge', label: 'Dodge' },
+  { id: 'jump', label: 'Jump / brake' },
+  { id: 'reload', label: 'Reload' },
+  { id: 'veil', label: 'Veil' },
+  { id: 'pulse', label: 'Pulse' },
+  { id: 'interact', label: 'Interact' },
+  { id: 'inspect', label: 'Inspect character' },
+];
+
+function formatBinding(binding: string) {
+  if (binding === ' ') return 'SPACE';
+  if (binding === 'control') return 'CTRL';
+  if (binding === 'escape') return 'ESC';
+  return binding.toUpperCase();
 }
 
 function MiniMap({ snapshot, label }: { snapshot: MapSnapshot; label: string }) {
@@ -186,11 +203,19 @@ function MenuButton({
 export default function GameShell() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<HeavensGateEngine | null>(null);
+  const getEngine = useCallback(() => engineRef.current, []);
+  const settingsRef = useRef<GameSettings>(DEFAULT_SETTINGS);
+  const unsavedSettingsRef = useRef(false);
+  const latestSaveRef = useRef<SaveState | null>(null);
   const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const [screen, setScreen] = useState<ScreenState>('loading');
   const [returnScreen, setReturnScreen] = useState<'title' | 'paused'>('title');
-  const [loading, setLoading] = useState({ progress: 0, label: 'Opening the sky' });
+  const [loading, setLoading] = useState<{ progress: number; label: string; slow: boolean }>({
+    progress: 0,
+    label: 'Opening the sky',
+    slow: false,
+  });
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
   const [save, setSave] = useState<SaveState | null>(null);
   const [hud, setHUD] = useState<HUDState>(INITIAL_HUD);
@@ -202,16 +227,25 @@ export default function GameShell() {
   const [tutorial, setTutorial] = useState(false);
   const [ending, setEnding] = useState<'open' | 'seal' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [listeningAction, setListeningAction] = useState<KeybindAction | null>(null);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const storedSettings = loadJSON<Partial<GameSettings>>(SETTINGS_KEY);
-    const mergedSettings: GameSettings = { ...DEFAULT_SETTINGS, ...storedSettings };
-    const storedSave = loadJSON<SaveState>(SAVE_KEY);
+    const storedSettings = readSettings(browserStorage);
+    const mergedSettings = storedSettings.value ?? normalizeSettings(null);
+    const storedSave = readSave(browserStorage);
+    settingsRef.current = mergedSettings;
+    unsavedSettingsRef.current = false;
+    latestSaveRef.current = storedSave.value;
     const storageSyncTimer = setTimeout(() => {
-      if (storedSave?.version === 1) setSave(storedSave);
+      setSave(storedSave.value);
       setSettings(mergedSettings);
+      setSaveNotice(saveReadNotice(storedSave.status));
+      if (storedSettings.status === 'unavailable') setSettingsNotice('Settings are session-only while browser storage is unavailable.');
+      else if (storedSettings.status === 'invalid' || storedSettings.status === 'repaired') setSettingsNotice('Invalid or older settings were repaired using safe defaults.');
     }, 0);
     const toastTimers = toastTimersRef.current;
 
@@ -226,13 +260,27 @@ export default function GameShell() {
 
     let disposed = false;
     let engine: HeavensGateEngine | null = null;
+    const slowBootTimer = window.setTimeout(() => {
+      if (disposed) return;
+      setLoading((current) => ({
+        ...current,
+        slow: true,
+        label: current.progress < 0.08 ? 'Still loading the engine' : current.label,
+      }));
+    }, 20_000);
     const bootEngine = async () => {
       try {
+        setLoading({ progress: 0.02, label: 'Loading the engine', slow: false });
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
         const { HeavensGateEngine: Engine } = await import('../game/engine');
         if (disposed) return;
+        setLoading({ progress: 0.06, label: 'Starting the renderer', slow: false });
         engine = new Engine(canvas, {
-        onReady: () => setScreen('title'),
-        onLoadProgress: (progress, label) => setLoading({ progress, label }),
+        onReady: () => {
+          window.clearTimeout(slowBootTimer);
+          setScreen('title');
+        },
+        onLoadProgress: (progress, label) => setLoading((current) => ({ progress, label, slow: current.slow })),
         onHUD: (nextHUD, nextMap) => {
           setHUD(nextHUD);
           setMap(nextMap);
@@ -258,12 +306,14 @@ export default function GameShell() {
           setScreen('ending');
         },
         onError: (message) => {
+          window.clearTimeout(slowBootTimer);
           setError(message);
           setScreen('title');
         },
         onSave: (nextSave) => {
-          window.localStorage.setItem(SAVE_KEY, JSON.stringify(nextSave));
+          latestSaveRef.current = nextSave;
           setSave(nextSave);
+          setSaveNotice(saveWriteNotice(writeSave(browserStorage, nextSave)));
         },
         }, mergedSettings);
         if (disposed) {
@@ -275,6 +325,7 @@ export default function GameShell() {
         await engine.initialize();
       } catch (initializationError) {
         if (disposed) return;
+        window.clearTimeout(slowBootTimer);
         setError(initializationError instanceof Error ? initializationError.message : 'The world could not start.');
         setScreen('title');
       }
@@ -283,6 +334,7 @@ export default function GameShell() {
 
     return () => {
       disposed = true;
+      window.clearTimeout(slowBootTimer);
       if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
       clearTimeout(storageSyncTimer);
       toastTimers.forEach((timer) => clearTimeout(timer));
@@ -303,13 +355,54 @@ export default function GameShell() {
     return () => window.removeEventListener('keydown', onEscape);
   }, [returnScreen, screen]);
 
-  const updateSettings = (patch: Partial<GameSettings>) => {
-    setSettings((current) => {
-      const next = { ...current, ...patch };
-      window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
-      engineRef.current?.setSettings(next);
-      return next;
-    });
+  const updateSettings = useCallback((patch: Partial<GameSettings>) => {
+    const next = normalizeSettings({ ...settingsRef.current, ...patch });
+    settingsRef.current = next;
+    setSettings(next);
+    engineRef.current?.setSettings(next);
+    const result = writeSettings(browserStorage, next);
+    unsavedSettingsRef.current = result.status !== 'saved';
+    setSettingsNotice(result.status === 'saved' ? null : 'Settings changed for this session but could not be saved. Retry before closing the game.');
+  }, []);
+
+  useEffect(() => {
+    if (!listeningAction || screen !== 'settings') return undefined;
+    const onRebind = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.key === 'Escape') {
+        setListeningAction(null);
+        return;
+      }
+      const binding = event.key;
+      if (!binding) return;
+      updateSettings({ keybinds: assignKeybind(settingsRef.current.keybinds, listeningAction, binding) });
+      setListeningAction(null);
+    };
+    window.addEventListener('keydown', onRebind, true);
+    return () => window.removeEventListener('keydown', onRebind, true);
+  }, [listeningAction, screen, updateSettings]);
+
+  const retryStorage = () => {
+    if (latestSaveRef.current) {
+      setSaveNotice(saveWriteNotice(writeSave(browserStorage, latestSaveRef.current)));
+    } else {
+      const restored = readSave(browserStorage);
+      latestSaveRef.current = restored.value;
+      setSave(restored.value);
+      setSaveNotice(saveReadNotice(restored.status));
+    }
+    const result = retrySettings(browserStorage, settingsRef.current, unsavedSettingsRef.current);
+    if (result.status === 'unavailable') {
+      setSettingsNotice('Settings are still session-only. Check the browser storage permissions and retry.');
+    } else {
+      const restored = result.value ?? normalizeSettings(null);
+      unsavedSettingsRef.current = false;
+      settingsRef.current = restored;
+      setSettings(restored);
+      engineRef.current?.setSettings(restored);
+      setSettingsNotice(result.status === 'invalid' || result.status === 'repaired' ? 'Invalid or older settings were repaired using safe defaults.' : null);
+    }
   };
 
   const startGame = async (continueSave: boolean) => {
@@ -338,8 +431,13 @@ export default function GameShell() {
   };
 
   const restartCampaign = () => {
-    window.localStorage.removeItem(SAVE_KEY);
+    if (!eraseSaves(browserStorage)) {
+      setSaveNotice('The saved checkpoint could not be erased. Check browser storage permissions, then try again.');
+      return;
+    }
+    latestSaveRef.current = null;
     setSave(null);
+    setSaveNotice(null);
     void startGame(false);
   };
 
@@ -347,9 +445,10 @@ export default function GameShell() {
     'data-high-contrast': settings.highContrast ? 'true' : 'false',
     'data-reduced-motion': settings.reducedMotion ? 'true' : 'false',
   };
+  const rootStyle = { '--hud-scale': settings.hudScale } as CSSProperties;
 
   return (
-    <main className="game-shell" {...rootAttributes}>
+    <main className="game-shell" {...rootAttributes} style={rootStyle}>
       <canvas ref={canvasRef} className="world-canvas" aria-label="The playable city of Aethel" />
       <div className="world-vignette" aria-hidden="true" />
 
@@ -364,12 +463,18 @@ export default function GameShell() {
       </header>
 
       {screen === 'loading' && (
-        <section className="loading-screen" role="status" aria-live="polite">
+        <section className="loading-screen" role="status" aria-live="polite" aria-busy="true">
           <div className="loading-glyph" aria-hidden="true"><span /><span /><span /></div>
           <p className="eyebrow">Constructing a living city</p>
           <h1>Heaven waits<br />for no machine.</h1>
           <div className="loading-track"><span style={{ width: `${loading.progress * 100}%` }} /></div>
           <div className="loading-meta"><span>{loading.label}</span><span>{Math.round(loading.progress * 100)}%</span></div>
+          {loading.slow && (
+            <div className="loading-recovery">
+              <p>High-fidelity assets are taking longer than expected. The gate is still working.</p>
+              <button type="button" onClick={() => window.location.reload()}>Restart loading</button>
+            </div>
+          )}
         </section>
       )}
 
@@ -404,7 +509,7 @@ export default function GameShell() {
       )}
 
       {screen === 'playing' && (
-        <section className="hud" aria-label="Game HUD">
+        <section className={`hud${hud.cinematic ? ' hud-cinematic' : ''}`} aria-label="Game HUD">
           <div className="mission-panel">
             <p className="eyebrow">Active operation</p>
             <div className="mission-title-line"><h2>{hud.objectiveTitle}</h2>{hud.objectiveDistance !== null && <span>{formatDistance(hud.objectiveDistance)}</span>}</div>
@@ -419,13 +524,18 @@ export default function GameShell() {
             </div>
           </div>
 
-          <div className={`reticle${hud.reticleHit ? ' reticle-hit' : ''}`} aria-hidden="true"><span /><span /><span /><span /></div>
+          <div
+            className={`reticle${hud.aiming ? ' reticle-aiming' : ''}${hud.reticleHit ? ' reticle-hit' : ''}`}
+            style={{ '--reticle-spread': `${Math.min(16, hud.reticleSpread * 4.6)}px` } as CSSProperties}
+            aria-hidden="true"
+          ><span /><span /><span /><span /></div>
 
           <div className="vitals-panel">
             <MiniMap snapshot={map} label={hud.district} />
             <div className="vitals-bars">
               <div className="vital"><span><Heart aria-hidden="true" /> Vital</span><strong>{Math.round(hud.health)}</strong><i><b style={{ width: `${hud.health}%` }} /></i></div>
               <div className="vital armor"><span><Shield aria-hidden="true" /> Aegis</span><strong>{Math.round(hud.armor)}</strong><i><b style={{ width: `${hud.armor}%` }} /></i></div>
+              <div className="vital stamina"><span>Drive · {hud.stance}</span><strong>{Math.round(hud.stamina)}</strong><i><b style={{ width: `${hud.stamina}%` }} /></i></div>
             </div>
           </div>
 
@@ -433,11 +543,11 @@ export default function GameShell() {
             {hud.inVehicle ? (
               <div className="speed-block"><span><Gauge aria-hidden="true" /> Seraph velocity</span><strong>{Math.round(hud.vehicleSpeed)}</strong><small>km/h</small></div>
             ) : (
-              <div className="ammo-block"><span>Morrow / 9mm smart</span><strong>{hud.ammo.toString().padStart(2, '0')}</strong><small>/ {hud.reserveAmmo}</small></div>
+              <div className="ammo-block"><span>{hud.reloading ? `${hud.weapon.split(' / ')[0]} / reloading` : hud.weapon}</span><strong>{hud.ammo.toString().padStart(2, '0')}</strong><small>/ {hud.reserveAmmo}</small></div>
             )}
             <div className="abilities">
-              <div className={hud.veilActive ? 'active' : ''}><Eye aria-hidden="true" /><span><strong>Veil</strong><small>Q / LB</small></span><i>{hud.veilActive ? 'OPEN' : hud.veilCooldown > 0 ? `${Math.ceil(hud.veilCooldown)}s` : 'READY'}</i></div>
-              <div><Zap aria-hidden="true" /><span><strong>Pulse</strong><small>F / RB</small></span><i>{hud.pulseCooldown > 0 ? `${Math.ceil(hud.pulseCooldown)}s` : 'READY'}</i></div>
+              <div className={hud.veilActive ? 'active' : ''}><Eye aria-hidden="true" /><span><strong>Veil</strong><small>{formatBinding(settings.keybinds.veil)} / LB</small></span><i>{hud.veilActive ? 'OPEN' : hud.veilCooldown > 0 ? `${Math.ceil(hud.veilCooldown)}s` : 'READY'}</i></div>
+              <div><Zap aria-hidden="true" /><span><strong>Pulse</strong><small>{formatBinding(settings.keybinds.pulse)} / RB</small></span><i>{hud.pulseCooldown > 0 ? `${Math.ceil(hud.pulseCooldown)}s` : 'READY'}</i></div>
             </div>
             <div className="resonance-track"><span style={{ width: `${hud.resonance}%` }} /><small>{Math.round(hud.resonance)} resonance</small></div>
           </div>
@@ -449,11 +559,26 @@ export default function GameShell() {
           {interaction && <div className="interaction-prompt"><kbd>{interaction.action}</kbd><span>{interaction.label}</span></div>}
           {tutorial && (
             <div className="tutorial-strip" role="status">
-              <span><kbd>WASD</kbd> Move</span><span><kbd>Mouse</kbd> Aim</span><span><kbd>LMB</kbd> Fire</span><span><kbd>E</kbd> Interact</span><span><kbd>Q</kbd> Veil</span><span><kbd>F</kbd> Pulse</span>
+              <span><kbd>{[settings.keybinds.moveForward, settings.keybinds.moveLeft, settings.keybinds.moveBackward, settings.keybinds.moveRight].map(formatBinding).join(' / ')}</kbd> Move</span><span><kbd>{formatBinding(settings.keybinds.sprint)}</kbd> Sprint</span><span><kbd>{formatBinding(settings.keybinds.crouch)}</kbd> Crouch · slide</span><span><kbd>{formatBinding(settings.keybinds.dodge)} / B</kbd> Dodge</span><span><kbd>RMB / LT</kbd> Aim</span><span><kbd>LMB / RT</kbd> Fire</span><span><kbd>{formatBinding(settings.keybinds.interact)}</kbd> Interact</span><span><kbd>{formatBinding(settings.keybinds.weaponSwap)} / ↓</kbd> Swap</span><span><kbd>{formatBinding(settings.keybinds.inspect)}</kbd> Inspect</span>
               <button type="button" onClick={() => setTutorial(false)} aria-label="Dismiss controls"><Check aria-hidden="true" /></button>
             </div>
           )}
           <div className="damage-vignette" style={{ opacity: hud.damageFlash }} aria-hidden="true" />
+          {hud.damageDirection !== null && (
+            <div
+              className="hit-direction"
+              style={{ transform: `rotate(${hud.damageDirection}rad)` }}
+              aria-hidden="true"
+            ><i /></div>
+          )}
+          {hud.cinematic && <div className="cinematic-frame" aria-hidden="true"><i /><i /></div>}
+          <TouchControls
+            engine={getEngine}
+            onPause={() => {
+              engineRef.current?.pause();
+              setScreen('paused');
+            }}
+          />
         </section>
       )}
 
@@ -494,7 +619,10 @@ export default function GameShell() {
               {(['story', 'normal', 'ascendant'] as Difficulty[]).map((difficulty) => <button type="button" key={difficulty} className={settings.difficulty === difficulty ? 'selected' : ''} onClick={() => updateSettings({ difficulty })}>{difficulty}<small>{difficulty === 'story' ? '0.62× damage' : difficulty === 'normal' ? 'Intended' : '1.45× damage'}</small></button>)}
             </div></fieldset>
             <fieldset><legend>Audio</legend><label htmlFor="master-volume">Master volume <output>{Math.round(settings.volume * 100)}%</output></label><input id="master-volume" type="range" min="0" max="1" step="0.01" value={settings.volume} onChange={(event) => updateSettings({ volume: Number(event.target.value) })} /><button className="secondary-button" type="button" onClick={() => engineRef.current?.testAudio()}><Headphones aria-hidden="true" /> Test procedural mix</button></fieldset>
-            <fieldset><legend>Controls</legend><label htmlFor="look-sensitivity">Look sensitivity <output>{Math.round(settings.sensitivity * 100)}%</output></label><input id="look-sensitivity" type="range" min="0.2" max="1.4" step="0.05" value={settings.sensitivity} onChange={(event) => updateSettings({ sensitivity: Number(event.target.value) })} /></fieldset>
+            <fieldset><legend>Controls</legend><label htmlFor="look-sensitivity">Look sensitivity <output>{Math.round(settings.sensitivity * 100)}%</output></label><input id="look-sensitivity" type="range" min="0.2" max="1.4" step="0.05" value={settings.sensitivity} onChange={(event) => updateSettings({ sensitivity: Number(event.target.value) })} /><label htmlFor="hud-scale">HUD scale <output>{Math.round(settings.hudScale * 100)}%</output></label><input id="hud-scale" type="range" min="0.8" max="1.3" step="0.05" value={settings.hudScale} onChange={(event) => updateSettings({ hudScale: Number(event.target.value) })} /><small className="setting-note">Scales objective, map, reticle, and combat readouts.</small></fieldset>
+            <fieldset className="keybind-fieldset"><legend>Keyboard remapping</legend><p>Choose any key. If it is already assigned, Heaven&apos;s Gate swaps the two actions so every control stays reachable.</p><div className="keybind-grid">
+              {KEYBIND_ACTIONS.map((action) => <button type="button" key={action.id} className={listeningAction === action.id ? 'listening' : ''} onClick={() => setListeningAction(action.id)}><span>{action.label}</span><kbd>{listeningAction === action.id ? 'Press a key · Esc cancels' : formatBinding(settings.keybinds[action.id])}</kbd></button>)}
+            </div><button className="secondary-button reset-bindings" type="button" onClick={() => { setListeningAction(null); updateSettings({ keybinds: mergeKeybinds(null) }); }}><RotateCcw aria-hidden="true" /> Reset keyboard bindings</button></fieldset>
             <fieldset className="toggle-fieldset"><legend>Accessibility</legend>
               <label><span><strong>Subtitles</strong><small>All narrative dialogue and radio calls</small></span><input type="checkbox" checked={settings.subtitles} onChange={(event) => updateSettings({ subtitles: event.target.checked })} /></label>
               <label><span><strong>Reduced motion</strong><small>Static title camera and instant menu transitions</small></span><input type="checkbox" checked={settings.reducedMotion} onChange={(event) => updateSettings({ reducedMotion: event.target.checked })} /></label>
@@ -508,7 +636,7 @@ export default function GameShell() {
         <section className="menu-screen codex-screen" aria-labelledby="codex-title">
           <div className="panel-header"><button className="back-button" type="button" onClick={() => setScreen(returnScreen)}><ArrowLeft aria-hidden="true" /> Back</button><div><p className="eyebrow">Field manual // Version 1.0</p><h1 id="codex-title">How to survive heaven</h1></div></div>
           <div className="codex-grid">
-            <article><Keyboard aria-hidden="true" /><h2>On foot</h2><dl><div><dt>Move</dt><dd>WASD / left stick</dd></div><div><dt>Aim</dt><dd>Mouse / right stick</dd></div><div><dt>Fire</dt><dd>Left mouse / RT</dd></div><div><dt>Jump</dt><dd>Space / A</dd></div><div><dt>Reload</dt><dd>R / X</dd></div></dl></article>
+            <article><Keyboard aria-hidden="true" /><h2>On foot</h2><dl><div><dt>Move</dt><dd>WASD / left stick</dd></div><div><dt>Sprint</dt><dd>Shift / L3</dd></div><div><dt>Crouch / slide</dt><dd>C or Ctrl / R3</dd></div><div><dt>Dodge</dt><dd>Alt / B</dd></div><div><dt>Aim</dt><dd>Right mouse / LT</dd></div><div><dt>Look</dt><dd>Mouse / right stick</dd></div><div><dt>Fire</dt><dd>Left mouse / RT</dd></div><div><dt>Jump / vault</dt><dd>Space / A</dd></div><div><dt>Reload</dt><dd>R / X</dd></div><div><dt>Character inspection</dt><dd>P</dd></div></dl><p className="codex-note">Keyboard bindings and HUD scale can be changed in Settings.</p></article>
             <article><Car aria-hidden="true" /><h2>Vehicles</h2><dl><div><dt>Enter / exit</dt><dd>E / Y</dd></div><div><dt>Accelerate</dt><dd>W / RT stick axis</dd></div><div><dt>Steer</dt><dd>A D / left stick</dd></div><div><dt>Handbrake</dt><dd>Space</dd></div><div><dt>Overdrive</dt><dd>Shift</dd></div></dl></article>
             <article><Eye aria-hidden="true" /><h2>The Veil</h2><p>Press Q or LB to cross into memory-space for eight seconds. Echoes become tangible and hostiles remain visible through fog. It costs resonance and then enters cooldown.</p></article>
             <article><Zap aria-hidden="true" /><h2>Resonance pulse</h2><p>Press F or RB to emit a close-range shockwave. It breaks drone armor, staggers Wardens, and deals heavy damage to clustered enemies.</p></article>
@@ -549,8 +677,8 @@ export default function GameShell() {
         <section className="menu-screen credits-screen" aria-labelledby="credits-title">
           <div className="panel-header"><button className="back-button" type="button" onClick={() => setScreen(returnScreen)}><ArrowLeft aria-hidden="true" /> Back</button><div><p className="eyebrow">Open-source release</p><h1 id="credits-title">Built in the open</h1></div></div>
           <div className="credits-layout">
-            <div className="credits-statement"><p>Heaven&apos;s Gate is an original browser-game vertical slice made from procedural geometry, authored systems, and synthesized sound. No GTA, Call of Duty, Free Guy, Rockstar, or other franchise assets are included.</p><p>The code is released under the MIT License so you can study it, fork it, replace the procedural art, and turn the prototype into a larger production.</p></div>
-            <dl><div><dt>Creative direction</dt><dd>Celestial noir / Aurelian Void</dd></div><div><dt>World</dt><dd>Aethel · 340-meter systemic city</dd></div><div><dt>Campaign</dt><dd>8 operations · 2 endings · free roam</dd></div><div><dt>Graphics</dt><dd>Three.js · procedural geometry · ACES tone mapping</dd></div><div><dt>Sound</dt><dd>Web Audio synthesis · zero sampled tracks</dd></div><div><dt>Input</dt><dd>Keyboard, mouse, standard gamepad API</dd></div><div><dt>License</dt><dd>MIT</dd></div></dl>
+            <div className="credits-statement"><p>Heaven&apos;s Gate is an original browser-game vertical slice made from procedural geometry, authored systems, CC0 human source assets, and synthesized sound. No GTA, Call of Duty, Free Guy, Rockstar, or other franchise assets are included.</p><p>The game code is MIT licensed. Generated Aurel character meshes derive from documented MakeHuman Community CC0 assets; the reproducible Blender/MPFB compiler, file hashes, and full notices ship with the repository.</p></div>
+            <dl><div><dt>Creative direction</dt><dd>Celestial noir / Aurelian Void</dd></div><div><dt>World</dt><dd>Aethel · 340-meter systemic city</dd></div><div><dt>Campaign</dt><dd>8 operations · 2 endings · free roam</dd></div><div><dt>Graphics</dt><dd>Three.js · CC0 MakeHuman source · ACES tone mapping</dd></div><div><dt>Characters</dt><dd>53-bone rigs · facial units · streamed glTF</dd></div><div><dt>Sound</dt><dd>Web Audio synthesis · zero sampled tracks</dd></div><div><dt>Input</dt><dd>Keyboard, mouse, standard gamepad API</dd></div><div><dt>License</dt><dd>MIT code · CC0 character source</dd></div></dl>
             <button className="danger-button" type="button" onClick={restartCampaign}><RotateCcw aria-hidden="true" /> Erase save and begin again</button>
           </div>
         </section>
@@ -560,7 +688,14 @@ export default function GameShell() {
         <div className="error-banner" role="alert"><strong>The gate did not open.</strong><span>{error}</span><button type="button" onClick={() => window.location.reload()}>Retry</button></div>
       )}
 
-      <div className="desktop-required" role="alert"><Gamepad2 aria-hidden="true" /><h1>A larger gate is required.</h1><p>Heaven&apos;s Gate is built for PC, Mac, and console-sized displays. Use a window at least 900 × 600.</p></div>
+      {(saveNotice || settingsNotice) && screen !== 'loading' && (
+        <aside className="storage-notice" role="status" aria-live="polite">
+          <div><strong>Local storage</strong>{saveNotice && <p>{saveNotice}</p>}{settingsNotice && <p>{settingsNotice}</p>}</div>
+          <button type="button" onClick={retryStorage}>Retry storage</button>
+        </aside>
+      )}
+
+      <div className="desktop-required" role="alert"><Gamepad2 aria-hidden="true" /><h1>A larger gate is required.</h1><p>Heaven&apos;s Gate is built for PC, Mac, and console-sized displays. Use a desktop window at least 760 × 480.</p></div>
     </main>
   );
 }
