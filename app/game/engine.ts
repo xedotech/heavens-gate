@@ -1753,7 +1753,7 @@ export class HeavensGateEngine {
       this.rainMatrix.makeTranslation(drops[i * 3], drops[i * 3 + 1], drops[i * 3 + 2]);
       mesh.setMatrixAt(i, this.rainMatrix);
     }
-    mesh.visible = this.settings.quality === 'high';
+    mesh.visible = this.settings.quality !== 'low';
     this.scene.add(mesh);
     this.rain = { mesh, drops, count };
   }
@@ -2167,8 +2167,8 @@ export class HeavensGateEngine {
       this.bloomPass.radius = 0.55;
       this.bloomPass.threshold = 0.82;
     }
-    if (this.rain) this.rain.mesh.visible = this.settings.quality === 'high';
-    this.audio.setRainBed(this.settings.quality === 'high');
+    if (this.rain) this.rain.mesh.visible = this.settings.quality !== 'low';
+    this.audio.setRainBed(this.settings.quality !== 'low');
     this.scannedGround?.setQuality(this.settings.quality);
     this.resize();
   }

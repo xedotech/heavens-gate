@@ -28,7 +28,7 @@ Open the local URL printed by the server. Use a current Chromium, Firefox, or Sa
 | Fire | Left mouse | Right trigger |
 | Jump | `Space` | A / Cross |
 | Reload | `R` | X / Square |
-| Swap weapon (Morrow / Psalm / Vesper) | `X` | D-pad down |
+| Swap weapon (Morrow / Psalm / Vesper) | `X` / mouse wheel | D-pad down |
 | Enter / exit vehicle, restore echo | `E` | Y / Triangle |
 | Open / close Veil | `Q` | Left bumper |
 | Resonance pulse | `F` | Right bumper |
@@ -61,8 +61,8 @@ Checkpoints save locally after every operation and restored echo. Settings also 
 - **Procedural world:** deterministic city blocks, five districts, three landmarks, roads, gates, emissive windows, neon signage, streetlamps, billboards, ambient traffic with panic reactions, civilians, patrols, and airborne drones. High quality adds an instanced rain layer with its own ambience bed.
 - **Rendering:** HDR post-processing (bloom, output tone-mapped pass) on medium/high, PMREM image-based lighting from an authored night-city environment, ACES tone mapping, day/night sun, and volumetric-style gate shafts.
 - **Combat:** three weapons (Morrow sidearm, Psalm repeater, Vesper scattergun) with per-weapon ammo pools, critical hits, armor, reloading, enemy accuracy curves, close-range pulse, kill drops, hit-stop, directional damage indicators, civilian consequences, and a multi-phase boss encounter.
-- **Vehicles:** enter/exit interaction, acceleration, reverse, steering, overdrive, handbrake, collision damage, chase camera, spinning/steering wheels, body lean, brake and head lights, and synthesized engine sound.
-- **Presentation:** letterboxed mission flyovers, camera bob and landing dips, corpse tip-over and dissolve, muzzle light, tracer and spark impacts, and a touch-ready HUD.
+- **Vehicles:** enter/exit interaction, acceleration, reverse, steering, overdrive, handbrake, collision damage, chase camera, spinning/steering wheels, body lean, brake and head lights, ambient traffic that brakes, panics, and can be wrecked, and synthesized engine sound.
+- **Presentation:** letterboxed mission flyovers and boss intro, camera bob and landing dips, corpse tip-over and dissolve, muzzle light on both sides of a firefight, tracer and spark impacts, floating damage readouts, storm lightning with delayed thunder, rain on medium/high, and a touch-ready HUD.
 - **Veil:** timed alternate-state rendering that reveals memory echoes and boosts situational awareness at a resonance cost.
 - **Living response:** five Choir heat tiers, fleeing civilians, activated drone response, and heat decay after breaking contact.
 - **Human rendering:** varied skin tones, facial proportions, eyes, hair silhouettes, layered clothing, equipment, body variation, critical-hit geometry, facial morph/viseme channels, weapon grip correction, gait/combat animation, and six live-switchable physically shaded Aurel outfits. The hero asset contract is 53 bones, 67 facial/body shapes, 9 meshes, and 11 authored actions per skin.
