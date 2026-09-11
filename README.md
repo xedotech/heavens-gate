@@ -28,6 +28,7 @@ Open the local URL printed by the server. Use a current Chromium, Firefox, or Sa
 | Fire | Left mouse | Right trigger |
 | Jump | `Space` | A / Cross |
 | Reload | `R` | X / Square |
+| Swap weapon (Morrow / Psalm / Vesper) | `X` | D-pad down |
 | Enter / exit vehicle, restore echo | `E` | Y / Triangle |
 | Open / close Veil | `Q` | Left bumper |
 | Resonance pulse | `F` | Right bumper |
@@ -39,6 +40,8 @@ assignments are swapped automatically. HUD scale is adjustable from 80% to 130%
 for distance and readability preferences.
 
 Click the world once if the mouse is not captured. Gamepad play does not require pointer lock.
+
+On touch devices (phones, tablets), a touch layer appears automatically during play: a left virtual stick for movement/steering, drag on the right half of the screen to look, and on-screen FIRE / AIM / JUMP / RUN / interact / reload / weapon-swap / Veil / pulse buttons with a pause shortcut.
 
 ## Campaign
 
@@ -55,9 +58,11 @@ Checkpoints save locally after every operation and restored echo. Settings also 
 
 ## Systems
 
-- **Procedural world:** deterministic city blocks, five districts, three landmarks, roads, gates, traffic props, civilians, patrols, and airborne drones.
-- **Combat:** hitscan sidearm, critical hits, armor, reloading, enemy accuracy curves, close-range pulse, civilian consequences, and a multi-phase boss encounter.
-- **Vehicles:** enter/exit interaction, acceleration, reverse, steering, overdrive, handbrake, collision damage, chase camera, and synthesized engine sound.
+- **Procedural world:** deterministic city blocks, five districts, three landmarks, roads, gates, emissive windows, neon signage, streetlamps, billboards, ambient traffic with panic reactions, civilians, patrols, and airborne drones. High quality adds an instanced rain layer with its own ambience bed.
+- **Rendering:** HDR post-processing (bloom, output tone-mapped pass) on medium/high, PMREM image-based lighting from an authored night-city environment, ACES tone mapping, day/night sun, and volumetric-style gate shafts.
+- **Combat:** three weapons (Morrow sidearm, Psalm repeater, Vesper scattergun) with per-weapon ammo pools, critical hits, armor, reloading, enemy accuracy curves, close-range pulse, kill drops, hit-stop, directional damage indicators, civilian consequences, and a multi-phase boss encounter.
+- **Vehicles:** enter/exit interaction, acceleration, reverse, steering, overdrive, handbrake, collision damage, chase camera, spinning/steering wheels, body lean, brake and head lights, and synthesized engine sound.
+- **Presentation:** letterboxed mission flyovers, camera bob and landing dips, corpse tip-over and dissolve, muzzle light, tracer and spark impacts, and a touch-ready HUD.
 - **Veil:** timed alternate-state rendering that reveals memory echoes and boosts situational awareness at a resonance cost.
 - **Living response:** five Choir heat tiers, fleeing civilians, activated drone response, and heat decay after breaking contact.
 - **Human rendering:** varied skin tones, facial proportions, eyes, hair silhouettes, layered clothing, equipment, body variation, critical-hit geometry, facial morph/viseme channels, weapon grip correction, gait/combat animation, and six live-switchable physically shaded Aurel outfits. The hero asset contract is 53 bones, 67 facial/body shapes, 9 meshes, and 11 authored actions per skin.

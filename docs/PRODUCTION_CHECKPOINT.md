@@ -4,6 +4,44 @@ This is an in-progress checkpoint, not a release approval. Preserve all existing
 changes. `QUALITY_GATES.md` remains authoritative; no failed gate is closed by
 the work below.
 
+## AAA sprint wave — latest edit session
+
+- Added an HDR post stack (EffectComposer + RenderPass + UnrealBloomPass +
+  OutputPass over a HalfFloat target) with a direct-render fallback, quality
+  gating, resize handling, context-loss recovery, and disposal.
+- City dressing pass: HDR-capable emissive window instances, neon strips,
+  streetlamps, billboard signage, additive gate light shafts, and a
+  high-quality instanced rain layer with a filtered-noise ambience bed.
+- Vehicles gained wheel pivots (spin + steering visuals), body lean, brake
+  lights, headlight cones plus a driven-vehicle spotlight, and five ambient
+  traffic cars that update dynamic obstacle volumes, brake around the player,
+  and panic when struck by gunfire.
+- Combat now exposes three weapons — Morrow sidearm, Psalm repeater, Vesper
+  scattergun — with a shared spec table (RPM, spread/recoil, falloff, pellets,
+  reload, swap seconds, tracer color), per-weapon ammo pools persisted in
+  checkpoints, swap on X / D-pad down, and three distinct procedural gun meshes
+  on a shared mount that the hero GLB hand socket parents.
+- Mission cinematics: letterboxed objective flyovers on campaign start,
+  checkpoint retry, mission completion, and free-roam entry. Any movement or
+  fire input interrupts; reduced-motion skips; HUD panels dim during playback.
+- Feel pass: corpse tip-over + material fade (drones crash down first),
+  hit-stop on kills, camera walk-bob and landing dip, directional damage arc,
+  spark-burst impacts, kill drops (ammo cells / resonance shards), and a
+  pickup collection loop.
+- IBL: PMREM baked at init from an authored gradient-dome + emissive-card
+  environment scene; assigned as scene.environment (intensity 0.5).
+- Touch controls for coarse-pointer devices: left virtual stick, right-half
+  drag look, FIRE/AIM/JUMP/RUN/E/R/SWP/VEIL/PLS buttons, pause shortcut; CSS
+  media-gated so desktop rendering is untouched.
+- Verified after these changes: `tsc --noEmit` clean, 162/162 tests across 19
+  files, `eslint` clean, `vinext build` succeeded (known >650 kB chunk warning
+  remains). Engine harness compatibility preserved via defensive access for
+  Object.create test objects.
+- Not closed by this wave: browser playthrough capture, sustained frame trace,
+  any QUALITY_GATES score change, console/native builds, photogrammetry (no
+  scan sources exist), multiplayer. MPFB is not installed in the local Blender
+  5.2 so the character compiler cannot run here yet.
+
 ## Consolidated combat verification
 
 ### Locomotion audit and runtime follow-up
