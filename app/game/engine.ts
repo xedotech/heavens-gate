@@ -135,6 +135,9 @@ interface TrafficCar {
   cruise: number;
   speed: number;
   panic: number;
+  damage: number;
+  wrecked: boolean;
+  smoke?: THREE.Group;
   wheels: VehicleWheel[];
   tailMaterial: THREE.MeshStandardMaterial;
 }
@@ -1619,6 +1622,8 @@ export class HeavensGateEngine {
         cruise: 8.4 + seeded(index, 81) * 3.2,
         speed: 0,
         panic: 0,
+        damage: 0,
+        wrecked: false,
         wheels,
         tailMaterial,
       });
@@ -1635,10 +1640,10 @@ export class HeavensGateEngine {
       const lateral = car.axis === 'x'
         ? Math.abs(playerPosition.z - position.z)
         : Math.abs(playerPosition.x - position.x);
-      const blocked = ahead > 0.5 && ahead < 10 && lateral < 3.4;
+      const blocked = !car.wrecked && ahead > 0.5 && ahead < 10 && lateral < 3.4;
       car.panic = Math.max(0, car.panic - delta);
-      const target = blocked ? 0 : car.cruise * (car.panic > 0 ? 1.8 : 1);
-      car.speed = damp(car.speed, target, blocked ? 9 : 2.1, delta);
+      const target = car.wrecked || blocked ? 0 : car.cruise * (car.panic > 0 ? 1.8 : 1);
+      car.speed = damp(car.speed, target, blocked || car.wrecked ? 9 : 2.1, delta);
       car.progress += car.speed * car.direction * delta;
       if (car.progress > 150) car.progress -= 300;
       else if (car.progress < -150) car.progress += 300;
@@ -1647,14 +1652,49 @@ export class HeavensGateEngine {
       car.wheels.forEach((wheel) => {
         wheel.pivot.rotation.x += (car.speed * delta) / 0.52;
       });
-      const braking = blocked || car.speed < target * 0.55;
-      car.tailMaterial.emissiveIntensity = damp(car.tailMaterial.emissiveIntensity, braking ? 3.4 : 0.95, 9, delta);
+      if (car.wrecked && car.smoke) {
+        const pulse = 0.55 + Math.sin(this.elapsed * 3.1 + car.lane) * 0.2;
+        car.smoke.children.forEach((child, index) => {
+          const mesh = child as THREE.Mesh;
+          (mesh.material as THREE.MeshBasicMaterial).opacity = pulse * (0.16 - index * 0.045);
+          mesh.position.y = 1.15 + index * 0.55 + Math.sin(this.elapsed * 1.4 + index * 2.2) * 0.08;
+        });
+      }
+      const braking = car.wrecked || blocked || car.speed < target * 0.55;
+      car.tailMaterial.emissiveIntensity = damp(
+        car.tailMaterial.emissiveIntensity,
+        car.wrecked ? 0.06 : braking ? 3.4 : 0.95,
+        9,
+        delta,
+      );
     });
     this.dynamicObstacles = this.trafficCars?.map((car) => ({
       x: car.group.position.x,
       z: car.group.position.z,
       radius: 2.55,
     })) ?? [];
+  }
+
+  private wreckTrafficCar(car: TrafficCar) {
+    car.wrecked = true;
+    car.panic = 0;
+    car.group.rotation.z = (seeded(car.lane, 330) > 0.5 ? 1 : -1) * 0.045;
+    car.group.position.y = -0.06;
+    const smoke = new THREE.Group();
+    for (let i = 0; i < 3; i += 1) {
+      const puff = new THREE.Mesh(
+        new THREE.SphereGeometry(0.5 + i * 0.3, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0x14161a, transparent: true, opacity: 0.14, depthWrite: false }),
+      );
+      puff.position.set(0, 1.15 + i * 0.55, -0.4);
+      puff.scale.y = 1.35;
+      smoke.add(puff);
+    }
+    car.smoke = smoke;
+    car.group.add(smoke);
+    this.heat = clamp(this.heat + 8, 0, 100);
+    this.emitToast('Vehicle disabled', 'Choir response escalating', 'danger');
+    this.audio.explosion();
   }
 
   private createRain() {
@@ -2176,6 +2216,15 @@ export class HeavensGateEngine {
       car.progress = car.spawnProgress;
       car.speed = 0;
       car.panic = 0;
+      car.damage = 0;
+      car.wrecked = false;
+      car.group.rotation.z = 0;
+      car.group.position.y = 0;
+      if (car.smoke) {
+        car.group.remove(car.smoke);
+        this.disposeObject(car.smoke);
+        car.smoke = undefined;
+      }
     });
     this.invulnerability = 0;
     this.reticleHit = 0;
@@ -3086,6 +3135,8 @@ export class HeavensGateEngine {
     const hits = seeded(Math.floor(this.elapsed * 17) + actor.id.length, 112) < accuracy;
     const end = hits ? target : target.clone().add(new THREE.Vector3((seeded(actor.id.length, 113) - 0.5) * 8, 3, (seeded(actor.id.length, 114) - 0.5) * 8));
     const obstruction = this.firstWorldObstruction(origin, end);
+    const muzzle = origin.clone().addScaledVector(end.clone().sub(origin).normalize(), 0.55);
+    this.createMuzzleFlash(muzzle);
     this.createTracer(origin, obstruction ?? end, 0xd65a45);
     if (hits && !obstruction) this.takePlayerDamage(damage * difficultyDamage(this.settings.difficulty), origin);
   }
@@ -3164,7 +3215,11 @@ export class HeavensGateEngine {
       const trafficId = hit?.object.userData.trafficId as number | undefined;
       if (trafficId !== undefined && !obstruction) {
         const car = this.trafficCars[trafficId];
-        if (car) car.panic = 6;
+        if (car && !car.wrecked) {
+          car.panic = 6;
+          car.damage += weaponDamage(origin.distanceTo(hit!.point), false, false, spec);
+          if (car.damage > 95) this.wreckTrafficCar(car);
+        }
       }
       const actorId = hit?.object.userData.actorId as string | undefined;
       if (actorId && hit && !obstruction) {
@@ -3792,6 +3847,7 @@ export class HeavensGateEngine {
   }
 
   private createMuzzleFlash(position: THREE.Vector3) {
+    if (!this.scene) return;
     const flash = new THREE.Group();
     const flare = new THREE.Mesh(
       new THREE.SphereGeometry(0.085, 6, 4),
