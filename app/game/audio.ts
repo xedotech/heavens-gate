@@ -198,8 +198,10 @@ export class AudioEngine {
     filter.connect(pan);
     pan.connect(gain);
     gain.connect(this.effectsBus);
-    const voices = [this.noise(0.12, 0.14, 1500, filter),
-      this.tone(76, 0.16, 'triangle', 0.055, 0, filter, 38)].filter((voice) => voice !== undefined);
+    const voices = [this.noise(0.06, 0.16, 2400, filter),
+      this.noise(0.14, 0.12, 800, filter),
+      this.tone(76, 0.18, 'triangle', 0.06, 0, filter, 38),
+      this.tone(54, 0.22, 'sine', 0.05, 0, filter, 26)].filter((voice) => voice !== undefined);
     let remaining = voices.length;
     const cleanup = () => { filter.disconnect(); pan.disconnect(); gain.disconnect(); };
     if (!remaining) cleanup();
@@ -214,18 +216,28 @@ export class AudioEngine {
   }
 
   shoot(voice: 'morrow' | 'psalm' | 'vesper' = 'morrow') {
+    const jitter = 0.94 + Math.random() * 0.12;
     if (voice === 'psalm') {
-      this.noise(0.08, 0.15, 2600);
-      this.tone(148, 0.09, 'square', 0.052, 0, this.effectsBus, 68);
+      this.noise(0.05, 0.16, 3400 * jitter);
+      this.noise(0.14, 0.11, 950 * jitter);
+      this.tone(210 * jitter, 0.1, 'square', 0.05, 0, this.effectsBus, 72);
+      this.tone(64 * jitter, 0.17, 'sine', 0.09, 0, this.effectsBus, 30);
+      this.noise(0.34, 0.026, 420);
       return;
     }
     if (voice === 'vesper') {
-      this.noise(0.24, 0.3, 820);
-      this.tone(58, 0.24, 'sawtooth', 0.115, 0, this.effectsBus, 28);
+      this.noise(0.07, 0.3, 1500 * jitter);
+      this.noise(0.3, 0.22, 640 * jitter);
+      this.tone(52 * jitter, 0.34, 'sine', 0.16, 0, this.effectsBus, 24);
+      this.tone(96 * jitter, 0.12, 'sawtooth', 0.06, 0.01, this.effectsBus, 40);
+      this.noise(0.52, 0.034, 300);
       return;
     }
-    this.noise(0.11, 0.19, 1800);
-    this.tone(92, 0.13, 'square', 0.07, 0, this.effectsBus, 45);
+    this.noise(0.045, 0.2, 2600 * jitter);
+    this.noise(0.12, 0.13, 1300 * jitter);
+    this.tone(110 * jitter, 0.11, 'square', 0.06, 0, this.effectsBus, 48);
+    this.tone(58 * jitter, 0.18, 'sine', 0.1, 0, this.effectsBus, 28);
+    this.noise(0.3, 0.02, 480);
   }
 
   swap() {
@@ -243,11 +255,16 @@ export class AudioEngine {
   }
 
   hit(critical = false) {
-    this.tone(critical ? 1200 : 760, 0.07, 'sine', critical ? 0.075 : 0.045);
+    this.tone(critical ? 1240 : 780, 0.06, 'sine', critical ? 0.08 : 0.05);
+    this.noise(0.05, critical ? 0.05 : 0.028, critical ? 2400 : 1600);
+    if (critical) this.tone(340, 0.12, 'triangle', 0.045, 0.015, this.effectsBus, 220);
   }
 
   footstep(run = false) {
-    this.noise(0.045, run ? 0.025 : 0.016, 130);
+    const jitter = 0.9 + Math.random() * 0.2;
+    this.noise(0.05, run ? 0.03 : 0.018, 150 * jitter);
+    this.noise(0.028, run ? 0.014 : 0.008, 950 * jitter);
+    this.tone(88 * jitter, 0.045, 'sine', run ? 0.02 : 0.011, 0, this.effectsBus, 55);
   }
 
   playerDamage() {

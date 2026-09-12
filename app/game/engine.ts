@@ -180,6 +180,7 @@ interface TimedEffect {
   life: number;
   total: number;
   mode: 'fade' | 'pulse';
+  pooled?: boolean;
 }
 
 const WORLD_SIZE = 340;
@@ -276,6 +277,18 @@ export class HeavensGateEngine {
   private reinforcementTimer = 0;
   private reinforcementSeq = 0;
   private playerSprinting = false;
+  private pointerFallback = false;
+  private weaponSway = { yaw: 0, pitch: 0 };
+  private weaponKick = 0;
+  private weaponSwayParentScale = new THREE.Vector3(1, 1, 1);
+  private tracerPool: THREE.Line[] = [];
+  private tracerCursor = 0;
+  private flashPool: THREE.Group[] = [];
+  private flashCursor = 0;
+  private impactPool: THREE.Group[] = [];
+  private impactCursor = 0;
+  private prevCameraYaw = 0;
+  private prevCameraPitch = 0;
   private inspectionKey: THREE.PointLight | null = null;
   private skyOrb: THREE.Mesh | null = null;
   private composer: EffectComposer | null = null;
@@ -366,7 +379,8 @@ export class HeavensGateEngine {
   };
 
   private readonly onMouseMove = (event: MouseEvent) => {
-    if (!this.pointerLocked || this.mode !== 'playing' || this.paused || this.contextLost) return;
+    if ((!this.pointerLocked && !this.pointerFallback) || this.mode !== 'playing' || this.paused || this.contextLost) return;
+    if (this.pointerFallback && event.target !== this.canvas) return;
     const sensitivity = this.settings.sensitivity * 0.0022;
     this.cameraYaw -= event.movementX * sensitivity;
     this.cameraPitch = clamp(this.cameraPitch - event.movementY * sensitivity, -0.24, 0.74);
@@ -374,10 +388,25 @@ export class HeavensGateEngine {
 
   private readonly onPointerDown = (event: PointerEvent) => {
     if ((event.button !== 0 && event.button !== 2) || this.mode !== 'playing' || this.paused || this.contextLost || event.target !== this.canvas) return;
-    if (!this.pointerLocked) {
+    if (!this.pointerLocked && !this.pointerFallback) {
       const lockRequest = this.canvas.requestPointerLock?.();
-      if (lockRequest) void lockRequest.catch(() => { this.pointerLocked = false; });
+      if (lockRequest) {
+        void lockRequest.catch(() => this.enablePointerFallback());
+      } else {
+        this.enablePointerFallback();
+      }
+      // Some embedders (iframes, previews) resolve the request but never lock.
+      const timeout = setTimeout(() => {
+        this.timeouts.delete(timeout);
+        if (!this.pointerLocked) this.enablePointerFallback();
+      }, 450);
+      this.timeouts.add(timeout);
       return;
+    }
+    if (!this.pointerLocked && this.pointerFallback) {
+      // Retry real lock on each gesture — a transient denial shouldn't disable lock forever.
+      const retry = this.canvas.requestPointerLock?.();
+      if (retry) void retry.catch(() => {});
     }
     if (event.button === 2) {
       this.mouseAimHeld = true;
@@ -387,13 +416,19 @@ export class HeavensGateEngine {
     this.tryShoot();
   };
 
+  private enablePointerFallback() {
+    if (this.pointerLocked || this.pointerFallback) return;
+    this.pointerFallback = true;
+    this.emitToast('Pointer lock unavailable', 'Drag-look fallback active — click the canvas, then move the mouse to aim.', 'info');
+  }
+
   private readonly onPointerUp = (event: PointerEvent) => {
     if (event.button === 0) this.mouseShootHeld = false;
     if (event.button === 2) this.mouseAimHeld = false;
   };
 
   private readonly onWheel = (event: WheelEvent) => {
-    if (this.mode !== 'playing' || this.paused || this.contextLost || !this.pointerLocked || event.deltaY === 0) return;
+    if (this.mode !== 'playing' || this.paused || this.contextLost || (!this.pointerLocked && !this.pointerFallback) || event.deltaY === 0) return;
     this.cycleWeapon(event.deltaY > 0 ? 1 : -1);
   };
 
@@ -482,7 +517,7 @@ export class HeavensGateEngine {
       const target = new THREE.WebGLRenderTarget(
         Math.max(1, size.x),
         Math.max(1, size.y),
-        { type: THREE.HalfFloatType, samples: this.settings.quality === 'high' ? 4 : 2 },
+        { type: THREE.HalfFloatType, samples: this.settings.quality === 'high' ? 2 : 0 },
       );
       this.composer?.dispose();
       const composer = new EffectComposer(this.renderer, target);
@@ -771,6 +806,8 @@ export class HeavensGateEngine {
     if (buildings.instanceColor) buildings.instanceColor.needsUpdate = true;
     this.scene.add(buildings);
     this.rayTargets.push(buildings);
+    this.createBuildingDetails(buildingData);
+    this.createStreetMarkings();
 
     const windowMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const windowGeometry = new THREE.BoxGeometry(0.66, 0.34, 0.1);
@@ -813,6 +850,136 @@ export class HeavensGateEngine {
     this.createLandmark(new THREE.Vector3(0, 0, -54), 0xd1ad61, 'Crown Basilica');
     this.createLandmark(new THREE.Vector3(90, 0, 76), 0x7fa7b0, 'Meridian Needle');
     this.createLandmark(new THREE.Vector3(-94, 0, 78), 0x8e8264, 'The Archive');
+  }
+
+  private createBuildingDetails(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
+    const crowns: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }> = [];
+    const parapets: Array<{ position: THREE.Vector3; scale: THREE.Vector3 }> = [];
+    buildingData.forEach((building, index) => {
+      parapets.push({
+        position: new THREE.Vector3(building.position.x, building.scale.y + 0.16, building.position.z),
+        scale: new THREE.Vector3(building.scale.x * 1.04, 0.42, building.scale.z * 1.04),
+      });
+      if (building.scale.y > 26 && seeded(index, 95) > 0.4) {
+        const crownHeight = Math.min(10, building.scale.y * (0.2 + seeded(index, 96) * 0.14));
+        const crownColor = building.color.clone().offsetHSL(0, 0, -0.035);
+        crowns.push({
+          position: new THREE.Vector3(building.position.x, building.scale.y + crownHeight * 0.5 - 0.3, building.position.z),
+          scale: new THREE.Vector3(building.scale.x * 0.7, crownHeight, building.scale.z * 0.7),
+          color: crownColor,
+        });
+        if (seeded(index, 97) > 0.62) {
+          const spireHeight = 2.5 + seeded(index, 98) * 4;
+          crowns.push({
+            position: new THREE.Vector3(building.position.x, building.scale.y + crownHeight + spireHeight * 0.5 - 0.5, building.position.z),
+            scale: new THREE.Vector3(building.scale.x * 0.4, spireHeight, building.scale.z * 0.4),
+            color: crownColor.clone().offsetHSL(0, 0, -0.03),
+          });
+        }
+      }
+    });
+    const crownMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.44, metalness: 0.5, emissive: 0x0c1012, emissiveIntensity: 0.3 });
+    this.phaseMaterials.push(crownMaterial);
+    const parapetMaterial = new THREE.MeshStandardMaterial({ color: 0x14181b, roughness: 0.58, metalness: 0.4 });
+    const matrix = new THREE.Matrix4();
+    const crownMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), crownMaterial, Math.max(1, crowns.length));
+    crowns.forEach((crown, index) => {
+      matrix.compose(crown.position, new THREE.Quaternion(), crown.scale);
+      crownMesh.setMatrixAt(index, matrix);
+      crownMesh.setColorAt(index, crown.color);
+    });
+    const parapetMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), parapetMaterial, Math.max(1, parapets.length));
+    parapets.forEach((parapet, index) => {
+      matrix.compose(parapet.position, new THREE.Quaternion(), parapet.scale);
+      parapetMesh.setMatrixAt(index, matrix);
+    });
+    [crownMesh, parapetMesh].forEach((mesh) => {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = this.settings.quality === 'high';
+      mesh.receiveShadow = true;
+      mesh.userData.blocksShot = true;
+      this.scene.add(mesh);
+      this.rayTargets.push(mesh);
+    });
+
+    // Edge-lit corner strips — the skyscraper "edge lighting" that sells silhouette at night.
+    const strips: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }> = [];
+    buildingData.forEach((building, index) => {
+      if (building.scale.y < 18 || seeded(index, 110) < 0.52) return;
+      const tint = this.districtColor(building.position.x, building.position.z).lerp(new THREE.Color(0xffffff), 0.3);
+      const stripHeight = building.scale.y * 0.94;
+      const halfX = building.scale.x * 0.5 + 0.06;
+      const halfZ = building.scale.z * 0.5 + 0.06;
+      const corners = seeded(index, 111) > 0.5
+        ? [[halfX, halfZ], [-halfX, -halfZ]]
+        : [[halfX, -halfZ], [-halfX, halfZ]];
+      corners.forEach(([cx, cz]) => {
+        strips.push({
+          position: new THREE.Vector3(building.position.x + cx, stripHeight * 0.5, building.position.z + cz),
+          scale: new THREE.Vector3(0.16, stripHeight, 0.16),
+          color: tint,
+        });
+      });
+    });
+    const stripMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.82, blending: THREE.AdditiveBlending, depthWrite: false });
+    const stripMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), stripMaterial, Math.max(1, strips.length));
+    strips.forEach((strip, index) => {
+      matrix.compose(strip.position, new THREE.Quaternion(), strip.scale);
+      stripMesh.setMatrixAt(index, matrix);
+      stripMesh.setColorAt(index, strip.color);
+    });
+    stripMesh.instanceMatrix.needsUpdate = true;
+    if (stripMesh.instanceColor) stripMesh.instanceColor.needsUpdate = true;
+    this.scene.add(stripMesh);
+  }
+
+  private createStreetMarkings() {
+    const curbPieces: Array<{ position: THREE.Vector3; yaw: number }> = [];
+    for (let line = -150; line <= 150; line += 30) {
+      for (let t = -146; t <= 146; t += 7.5) {
+        const mod = ((t % 30) + 30) % 30;
+        if (mod < 7.4 || mod > 22.6) continue;
+        for (const side of [-5.15, 5.15]) {
+          const index = (line + 400) * 100 + Math.round(t * 10) + (side > 0 ? 7 : 3);
+          if (seeded(index, 100) < 0.06) continue;
+          if (!this.collides(line + side, t, 2.2)) curbPieces.push({ position: new THREE.Vector3(line + side, 0.07, t), yaw: 0 });
+          if (!this.collides(t, line + side, 2.2)) curbPieces.push({ position: new THREE.Vector3(t, 0.07, line + side), yaw: Math.PI / 2 });
+        }
+      }
+    }
+    const curbMaterial = new THREE.MeshStandardMaterial({ color: 0x232b2e, roughness: 0.72, metalness: 0.18 });
+    const curbMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.14, 7.2), curbMaterial, Math.max(1, curbPieces.length));
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const upAxis = new THREE.Vector3(0, 1, 0);
+    curbPieces.forEach((piece, index) => {
+      quaternion.setFromAxisAngle(upAxis, piece.yaw);
+      matrix.compose(piece.position, quaternion, new THREE.Vector3(1, 1, 1));
+      curbMesh.setMatrixAt(index, matrix);
+    });
+    curbMesh.instanceMatrix.needsUpdate = true;
+    curbMesh.receiveShadow = true;
+    this.scene.add(curbMesh);
+
+    const stripes: Array<{ x: number; z: number; yaw: number }> = [];
+    for (let lx = -150; lx <= 150; lx += 30) {
+      for (let lz = -150; lz <= 150; lz += 30) {
+        for (const offset of [-6.2, 6.2]) {
+          stripes.push({ x: lx + offset, z: lz, yaw: Math.PI / 2 });
+          stripes.push({ x: lx, z: lz + offset, yaw: 0 });
+        }
+      }
+    }
+    const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0x9aa4a8, transparent: true, opacity: 0.34 });
+    const stripeMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.02, 7.4), stripeMaterial, stripes.length);
+    stripes.forEach((stripe, index) => {
+      quaternion.setFromAxisAngle(upAxis, stripe.yaw);
+      matrix.compose(new THREE.Vector3(stripe.x, 0.042, stripe.z), quaternion, new THREE.Vector3(1, 1, 1));
+      stripeMesh.setMatrixAt(index, matrix);
+    });
+    stripeMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(stripeMesh);
   }
 
   private districtColor(x: number, z: number) {
@@ -1334,6 +1501,10 @@ export class HeavensGateEngine {
       this.updateInspectionFraming(character.object);
       const weapon = this.player.userData.weapon as THREE.Object3D | undefined;
       if (weapon && !character.attachHeldObject(weapon)) this.restoreFallbackWeaponTransform(weapon);
+      if (weapon) {
+        delete weapon.userData.restRotation;
+        delete weapon.userData.restPosition;
+      }
       this.emitToast('Character streaming complete', `${character.boneCount} bones · ${character.morphCount} facial/body shapes`, 'success');
     } catch (error) {
       if (token !== this.heroLoadToken || this.disposed) return;
@@ -1351,6 +1522,8 @@ export class HeavensGateEngine {
     weapon.position.set(0.48, 1.7, -0.62);
     weapon.rotation.set(-0.08, 0, 0);
     weapon.scale.setScalar(1);
+    delete weapon.userData.restRotation;
+    delete weapon.userData.restPosition;
     weapon.updateMatrixWorld(true);
   }
 
@@ -2506,6 +2679,7 @@ export class HeavensGateEngine {
     this.updateCorpses(delta);
     this.updateDrops(delta, time);
     this.updateVeil(delta);
+    this.updateWeaponSway(delta);
     this.updateEffects(delta);
     this.updateMission();
     this.updateCamera(delta);
@@ -3009,6 +3183,47 @@ export class HeavensGateEngine {
     }
   }
 
+  private updateWeaponSway(delta: number) {
+    const mount = this.player?.userData.weapon as THREE.Object3D | undefined;
+    if (!mount || this.currentVehicle) {
+      this.prevCameraYaw = this.cameraYaw;
+      this.prevCameraPitch = this.cameraPitch;
+      return;
+    }
+    if (!mount.userData.restRotation) {
+      mount.userData.restRotation = mount.rotation.clone();
+      mount.userData.restPosition = mount.position.clone();
+    }
+    if (!mount.userData.restPosition) mount.userData.restPosition = mount.position.clone();
+    const rest = mount.userData.restRotation as THREE.Euler;
+    const restPosition = mount.userData.restPosition as THREE.Vector3;
+    const lookYaw = clamp((this.cameraYaw - this.prevCameraYaw) * 2.4, -0.16, 0.16);
+    const lookPitch = clamp((this.cameraPitch - this.prevCameraPitch) * 2.0, -0.12, 0.12);
+    this.weaponSway.yaw = damp(this.weaponSway.yaw, -lookYaw, 11, delta);
+    this.weaponSway.pitch = damp(this.weaponSway.pitch, lookPitch, 11, delta);
+    this.weaponKick = Math.max(0, this.weaponKick - delta * 7.5);
+    const speedFactor = clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 9.5, 0, 1);
+    const aimFactor = this.isAiming() ? 0.28 : 1;
+    const bob = Math.sin((this.walkPhase ?? 0) * 2) * 0.028 * speedFactor * aimFactor;
+    const kick = this.weaponKick * this.weaponKick;
+    const aimPitch = -this.cameraPitch * 0.55;
+    const worldUnits = this.weaponSwayParentScale.set(1, 1, 1);
+    mount.parent?.getWorldScale(worldUnits);
+    const localUnits = 1 / Math.max(0.001, Math.abs(worldUnits.x));
+    mount.rotation.set(
+      rest.x + this.weaponSway.pitch * aimFactor + bob * 0.45 - kick * 0.16 + aimPitch,
+      rest.y + this.weaponSway.yaw * aimFactor,
+      rest.z + bob * 0.5 + kick * 0.05,
+    );
+    mount.position.set(
+      restPosition.x + this.weaponSway.yaw * 0.05 * localUnits,
+      restPosition.y + bob * 0.05 * localUnits - kick * 0.028 * localUnits,
+      restPosition.z + kick * 0.09 * localUnits,
+    );
+    this.prevCameraYaw = this.cameraYaw;
+    this.prevCameraPitch = this.cameraPitch;
+  }
+
   private updateActors(delta: number, time: number) {
     const playerPosition = this.currentVehicle?.group.position ?? this.player.position;
     const activeCombat = this.missionIndex >= 1 && this.missionIndex <= 5;
@@ -3224,6 +3439,7 @@ export class HeavensGateEngine {
     this.ammo -= 1;
     this.shotCooldown = shotIntervalSeconds(spec);
     this.weaponRecoil = addShotRecoil(this.weaponRecoil, spec);
+    this.weaponKick = Math.min(1, this.weaponKick + (spec.pellets > 1 ? 0.85 : 0.55));
     this.cameraPitch = clamp(this.cameraPitch + (this.isAiming() ? spec.aimCameraKick : spec.hipCameraKick), -0.24, 0.74);
     this.audio.shoot(spec.id);
     this.pulseGamepad(42, spec.pellets > 1 ? 0.8 : 0.46, spec.pellets > 1 ? 0.95 : 0.78);
@@ -3902,55 +4118,121 @@ export class HeavensGateEngine {
         }
       });
       if (effect.life <= 0) {
-        this.scene.remove(effect.object);
-        this.disposeObject(effect.object);
+        this.releasePooledEffect(effect);
         return false;
       }
       return true;
     });
   }
 
+  private releasePooledEffect(effect: { object: THREE.Object3D; pooled?: boolean }) {
+    if (effect.pooled) {
+      effect.object.visible = false;
+    } else {
+      this.scene?.remove(effect.object);
+      this.disposeObject(effect.object);
+    }
+  }
+
+  private requeuePooled(object: THREE.Object3D) {
+    // A reused pooled object may still have a live effect entry — retire it first.
+    this.effects = (this.effects ?? []).filter((effect) => effect.object !== object);
+  }
+
+  private pushEffect(effect: TimedEffect) {
+    (this.effects ??= []).push(effect);
+  }
+
   private createTracer(origin: THREE.Vector3, end: THREE.Vector3, color: number) {
-    const geometry = new THREE.BufferGeometry().setFromPoints([origin, end]);
-    const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.88 }));
-    this.scene.add(line);
-    this.effects.push({ object: line, life: 0.08, total: 0.08, mode: 'fade' });
+    if (!this.scene) return;
+    if (!this.tracerPool.length) {
+      for (let i = 0; i < 20; i += 1) {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ transparent: true, opacity: 0.88 }));
+        line.visible = false;
+        line.frustumCulled = false;
+        this.scene.add(line);
+        this.tracerPool.push(line);
+      }
+    }
+    const line = this.tracerPool[this.tracerCursor % this.tracerPool.length];
+    this.tracerCursor += 1;
+    this.requeuePooled(line);
+    const attribute = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+    attribute.setXYZ(0, origin.x, origin.y, origin.z);
+    attribute.setXYZ(1, end.x, end.y, end.z);
+    attribute.needsUpdate = true;
+    const material = line.material as THREE.LineBasicMaterial;
+    material.color.setHex(color);
+    material.opacity = 0.88;
+    line.visible = true;
+    this.pushEffect({ object: line, life: 0.08, total: 0.08, mode: 'fade', pooled: true });
   }
 
   private createMuzzleFlash(position: THREE.Vector3) {
     if (!this.scene) return;
-    const flash = new THREE.Group();
-    const flare = new THREE.Mesh(
-      new THREE.SphereGeometry(0.085, 6, 4),
-      new THREE.MeshBasicMaterial({ color: 0xffd07a, transparent: true, opacity: 0.95 }),
-    );
-    const light = new THREE.PointLight(0xffa84d, 34, 4.5, 2);
+    if (!this.flashPool.length) {
+      const flareGeometry = new THREE.SphereGeometry(0.085, 6, 4);
+      for (let i = 0; i < 6; i += 1) {
+        const flash = new THREE.Group();
+        const flare = new THREE.Mesh(flareGeometry, new THREE.MeshBasicMaterial({ color: 0xffd07a, transparent: true, opacity: 0.95 }));
+        const light = new THREE.PointLight(0xffa84d, 30, 3.4, 2);
+        flash.add(flare, light);
+        flash.visible = false;
+        this.scene.add(flash);
+        this.flashPool.push(flash);
+      }
+    }
+    const flash = this.flashPool[this.flashCursor % this.flashPool.length];
+    this.flashCursor += 1;
+    this.requeuePooled(flash);
     flash.position.copy(position);
-    flash.add(flare, light);
-    this.scene.add(flash);
-    this.effects.push({ object: flash, life: 0.055, total: 0.055, mode: 'fade' });
+    (flash.children[0] as THREE.Mesh).scale.setScalar(0.85 + Math.random() * 0.5);
+    ((flash.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.95;
+    flash.visible = true;
+    this.pushEffect({ object: flash, life: 0.055, total: 0.055, mode: 'fade', pooled: true });
   }
 
   private createImpact(position: THREE.Vector3, hostile: boolean) {
-    const group = new THREE.Group();
-    group.position.copy(position);
-    const color = hostile ? 0xf1cc6a : 0x96b5bd;
-    const material = new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
-    const spark = new THREE.Mesh(new THREE.SphereGeometry(hostile ? 0.2 : 0.11, 6, 4), material);
-    group.add(spark);
-    for (let i = 0; i < 5; i += 1) {
-      const chip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.045), material);
-      const angle = seeded(i + Math.floor(position.x * 13), 340) * Math.PI * 2;
-      const lift = seeded(i + Math.floor(position.z * 7), 341);
-      chip.position.set(Math.cos(angle) * (0.12 + lift * 0.2), lift * 0.3, Math.sin(angle) * (0.12 + lift * 0.2));
-      chip.rotation.set(angle, lift * 3, angle * 0.5);
-      group.add(chip);
+    if (!this.scene) return;
+    if (!this.impactPool.length) {
+      const sparkGeometry = new THREE.SphereGeometry(0.14, 6, 4);
+      const chipGeometry = new THREE.BoxGeometry(0.045, 0.045, 0.045);
+      const ringGeometry = new THREE.TorusGeometry(0.2, 0.018, 5, 18);
+      for (let i = 0; i < 12; i += 1) {
+        const material = new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+        const group = new THREE.Group();
+        const spark = new THREE.Mesh(sparkGeometry, material);
+        group.add(spark);
+        for (let chipIndex = 0; chipIndex < 5; chipIndex += 1) {
+          const chip = new THREE.Mesh(chipGeometry, material);
+          const angle = seeded(chipIndex + i * 13, 340) * Math.PI * 2;
+          const lift = seeded(chipIndex + i * 7, 341);
+          chip.position.set(Math.cos(angle) * (0.12 + lift * 0.2), lift * 0.3, Math.sin(angle) * (0.12 + lift * 0.2));
+          chip.rotation.set(angle, lift * 3, angle * 0.5);
+          group.add(chip);
+        }
+        const ring = new THREE.Mesh(ringGeometry, material);
+        ring.rotation.x = Math.PI / 2;
+        group.add(ring);
+        group.visible = false;
+        this.scene.add(group);
+        this.impactPool.push(group);
+      }
     }
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.018, 5, 18), material);
-    ring.rotation.x = Math.PI / 2;
-    group.add(ring);
-    this.scene.add(group);
-    this.effects.push({ object: group, life: hostile ? 0.26 : 0.2, total: hostile ? 0.26 : 0.2, mode: 'pulse' });
+    const group = this.impactPool[this.impactCursor % this.impactPool.length];
+    this.impactCursor += 1;
+    this.requeuePooled(group);
+    group.position.copy(position);
+    group.rotation.y = Math.random() * Math.PI * 2;
+    group.scale.setScalar(1);
+    (group.children[0] as THREE.Mesh).scale.setScalar(hostile ? 1.5 : 0.8);
+    const material = (group.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    material.color.setHex(hostile ? 0xf1cc6a : 0x96b5bd);
+    material.opacity = 1;
+    group.visible = true;
+    this.pushEffect({ object: group, life: hostile ? 0.26 : 0.2, total: hostile ? 0.26 : 0.2, mode: 'pulse', pooled: true });
   }
 
   private createPulseEffect(position: THREE.Vector3) {
@@ -3983,8 +4265,14 @@ export class HeavensGateEngine {
       this.fps = Math.round(this.fpsFrames / this.fpsTimer);
       this.fpsTimer = 0;
       this.fpsFrames = 0;
-      if (this.settings.quality === 'high' && this.fps < 36 && this.dynamicPixelRatio > 0.85) {
-        this.dynamicPixelRatio = Math.max(0.85, this.dynamicPixelRatio - 0.1);
+      const baseRatio = this.settings.quality === 'high' ? 1.6 : this.settings.quality === 'medium' ? 1.3 : 1;
+      const target = Math.min(window.devicePixelRatio, baseRatio);
+      if (this.fps < 42 && this.dynamicPixelRatio > 0.6) {
+        this.dynamicPixelRatio = Math.max(0.6, this.dynamicPixelRatio - 0.12);
+        this.renderer.setPixelRatio(this.dynamicPixelRatio);
+        this.resize();
+      } else if (this.fps > 56 && this.dynamicPixelRatio < target) {
+        this.dynamicPixelRatio = Math.min(target, this.dynamicPixelRatio + 0.08);
         this.renderer.setPixelRatio(this.dynamicPixelRatio);
         this.resize();
       }

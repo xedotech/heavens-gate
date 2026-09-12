@@ -40,7 +40,7 @@ describe('audio routing lifecycle', () => {
     audio.dispose();
   });
 
-  it('disconnects all transient gunshot nodes after both layers finish', async () => {
+  it('disconnects all transient gunshot nodes after every layer finishes', async () => {
     const audio = new AudioEngine();
     await audio.unlock();
     const context = Context.instances[0];
@@ -48,7 +48,7 @@ describe('audio routing lifecycle', () => {
     const sourceStart = context.sources.length;
     audio.enemyShot({ x: 5, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, 0, false);
     const sources = context.sources.slice(sourceStart);
-    expect(sources).toHaveLength(2);
+    expect(sources.length).toBeGreaterThanOrEqual(2);
     sources.forEach((source) => source.finish());
     context.nodes.slice(nodeStart).forEach((node) => expect(node.disconnect).toHaveBeenCalledOnce());
     audio.dispose();
