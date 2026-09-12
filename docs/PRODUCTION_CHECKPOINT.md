@@ -55,6 +55,19 @@ the work below.
   200, `validate:release` passed, `validate:characters` reported zero failures.
   Engine harness compatibility preserved via defensive access for
   Object.create test objects.
+- Playtest-fix wave (latest): pointer-lock fallback hardened — look input now
+  gates to the canvas target in fallback mode, every pointer gesture retries a
+  real lock so a transient denial recovers, and the mouse wheel cycles weapons
+  while in fallback. Weapon presentation: the mount now tracks camera pitch,
+  carries positional sway lag and a quadratic recoil kick normalized against
+  the parent bone's world scale, and rest transforms are invalidated on every
+  re-attach/restore path. Gun audio rebuilt as layered crack/body/sub/tail
+  voices with per-shot jitter; enemy fire layered through the spatial bus.
+  Performance: tracers, muzzle flashes, and impact bursts are pooled (no
+  per-shot geometry/material/light allocation), render-target MSAA reduced,
+  and the auto pixel-ratio adapter now runs on every quality tier with upward
+  recovery. Architecture: instanced setback crowns, parapet rims, corner
+  edge-light strips, sidewalk curbs, and crosswalks.
 - Not closed by this wave: browser playthrough capture, sustained frame trace,
   any QUALITY_GATES score change, console/native builds, photogrammetry (no
   scan sources exist), multiplayer. MPFB is not installed in the local Blender
