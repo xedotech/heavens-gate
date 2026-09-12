@@ -572,7 +572,7 @@ export class HeavensGateEngine {
 
   private createAtmosphere() {
     this.scene.background = new THREE.Color(0x091016);
-    this.scene.fog = new THREE.FogExp2(0x101920, 0.0064);
+    this.scene.fog = new THREE.FogExp2(0x101920, 0.0054);
 
     const hemisphere = new THREE.HemisphereLight(0xc6dcf0, 0x24180f, 2.45);
     this.scene.add(hemisphere);
@@ -3683,7 +3683,7 @@ export class HeavensGateEngine {
     this.scene.background = new THREE.Color(active ? 0x111225 : 0x070a0d);
     if (this.scene.fog instanceof THREE.FogExp2) {
       this.scene.fog.color.setHex(active ? 0x17142d : 0x090d10);
-      this.scene.fog.density = active ? 0.011 : 0.0078;
+      this.scene.fog.density = active ? 0.0095 : 0.0068;
     }
     this.phaseMaterials.forEach((material) => {
       material.emissive.setHex(active ? 0x2a2048 : 0x0d1111);

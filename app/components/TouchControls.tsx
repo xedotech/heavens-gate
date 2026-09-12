@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type PointerEvent as ReactPointerEvent, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type CSSProperties } from 'react';
 import type { HeavensGateEngine } from '../game/engine';
 import type { KeybindAction } from '../game/types';
 
@@ -11,21 +11,38 @@ interface TouchControlsProps {
   onPause: () => void;
 }
 
+function capturePointer(event: ReactPointerEvent<HTMLElement>) {
+  try {
+    event.currentTarget.setPointerCapture(event.pointerId);
+  } catch {
+    // Embedders (iframes/previews) can report pointer ids that are not active.
+  }
+}
+
 export function TouchControls({ engine, onPause }: TouchControlsProps) {
   const [aimOn, setAimOn] = useState(false);
   const [sprintOn, setSprintOn] = useState(false);
+  const [touchSeen, setTouchSeen] = useState(false);
   const [stick, setStick] = useState({ x: 0, y: 0 });
   const stickPointer = useRef<number | null>(null);
   const stickOrigin = useRef({ x: 0, y: 0 });
   const lookPointer = useRef<number | null>(null);
   const lookLast = useRef({ x: 0, y: 0 });
 
+  useEffect(() => {
+    const markTouch = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') setTouchSeen(true);
+    };
+    window.addEventListener('pointerdown', markTouch, { passive: true });
+    return () => window.removeEventListener('pointerdown', markTouch);
+  }, []);
+
   const stickDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (stickPointer.current !== null) return;
     stickPointer.current = event.pointerId;
     const bounds = event.currentTarget.getBoundingClientRect();
     stickOrigin.current = { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    capturePointer(event);
   };
 
   const stickMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -51,7 +68,7 @@ export function TouchControls({ engine, onPause }: TouchControlsProps) {
     if (lookPointer.current !== null) return;
     lookPointer.current = event.pointerId;
     lookLast.current = { x: event.clientX, y: event.clientY };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    capturePointer(event);
   };
 
   const lookMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -68,7 +85,7 @@ export function TouchControls({ engine, onPause }: TouchControlsProps) {
 
   const tapAction = (action: KeybindAction) => ({
     onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => {
-      event.currentTarget.setPointerCapture(event.pointerId);
+      capturePointer(event);
       engine()?.pressTouchAction(action);
     },
     onPointerUp: () => engine()?.releaseTouchAction(action),
@@ -89,7 +106,7 @@ export function TouchControls({ engine, onPause }: TouchControlsProps) {
   };
 
   return (
-    <div className="touch-layer" aria-hidden="true">
+    <div className={`touch-layer${touchSeen ? ' touch-seen' : ''}`} aria-hidden="true">
       <div
         className="touch-look"
         onPointerDown={lookDown}
@@ -117,7 +134,7 @@ export function TouchControls({ engine, onPause }: TouchControlsProps) {
           className="touch-button touch-fire"
           tabIndex={-1}
           onPointerDown={(event) => {
-            event.currentTarget.setPointerCapture(event.pointerId);
+            capturePointer(event);
             engine()?.setTouchFire(true);
           }}
           onPointerUp={() => engine()?.setTouchFire(false)}

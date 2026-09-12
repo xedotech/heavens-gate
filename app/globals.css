@@ -1104,10 +1104,8 @@ kbd {
   touch-action: none;
 }
 
-@media (pointer: coarse), (hover: none) {
-  .touch-layer {
-    display: block;
-  }
+.touch-layer.touch-seen {
+  display: block;
 }
 
 .touch-look {

@@ -418,9 +418,9 @@ export class HeroCharacter {
     this.heldObject = object;
     object.position.copy(this.rightHand.worldToLocal(desiredWorldPosition));
     object.quaternion.copy(handWorldQuaternion.invert().multiply(weaponWorldQuaternion));
-    // Keep the Morrow at its authored 0.68 world scale while letting the hand
-    // bone own the socket. The hero root is normalized to HERO_CHARACTER_SCALE.
-    object.scale.setScalar(0.68 / HERO_CHARACTER_SCALE);
+    // Keep the weapon at ~0.8 world scale while letting the hand bone own the
+    // socket. The hero root is normalized to HERO_CHARACTER_SCALE.
+    object.scale.setScalar(0.8 / HERO_CHARACTER_SCALE);
     this.applyGripPose();
     object.updateMatrixWorld(true);
     return true;
