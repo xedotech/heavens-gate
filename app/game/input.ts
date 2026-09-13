@@ -38,6 +38,7 @@ export const GAMEPAD_ACTION_BUTTONS: Partial<Record<KeybindAction, number>> = {
   weaponSwap: 13,
   melee: 12,
   throwCharge: 14,
+  shoulderSwap: 15,
 };
 
 const neutralAxes = (): GamepadAxes => ({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, aim: 0, shoot: 0 });

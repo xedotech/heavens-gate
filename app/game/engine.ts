@@ -384,6 +384,10 @@ export class HeavensGateEngine {
   private chapelZone: THREE.Box3 | null = null;
   private chapelVisited = false;
   private chapelCandles: THREE.PointLight[] = [];
+  private peekLean = 0;
+  private shoulderSide = 1;
+  private shoulderOffset = 0.78;
+  private casings: Array<{ mesh: THREE.Mesh; velocity: THREE.Vector3; spin: number; timer: number; active: boolean }> = [];
   private pulseCooldown = 0;
   private reticleHit = 0;
   private hitDamagePool = 0;
@@ -3148,6 +3152,7 @@ export class HeavensGateEngine {
     this.updateCorpses(delta);
     this.updateDrops(delta, time);
     this.updateCharges(delta);
+    this.updateCasings(delta);
     this.updateChapel();
     this.updateVeil(delta);
     this.updateWeaponSway(delta);
@@ -3176,6 +3181,10 @@ export class HeavensGateEngine {
     if (this.wasActionPressed('weaponSwap')) this.cycleWeapon();
     if (this.wasActionPressed('melee')) this.tryMelee();
     if (this.wasActionPressed('throwCharge')) this.throwCharge();
+    if (this.wasActionPressed('shoulderSwap')) {
+      this.shoulderSide = -(this.shoulderSide ?? 1);
+      this.emitToast('Shoulder swapped', this.shoulderSide > 0 ? 'Camera favors the right shoulder' : 'Camera favors the left shoulder', 'info');
+    }
     if (this.wasActionPressed('interact')) this.interact();
   }
 
@@ -3370,6 +3379,11 @@ export class HeavensGateEngine {
       && this.dodgeRemaining <= 0
       && this.stamina > 0.5
       && inputLength > 0.05;
+    // Sprint cancels a reload in progress — hands go to the run.
+    if (sprinting && !this.playerSprinting && this.reloading > 0) {
+      this.reloading = 0;
+      this.emitToast('Reload canceled', 'Sprinting holstered the magazine', 'info');
+    }
     this.playerSprinting = sprinting;
     this.stamina = updateStamina(this.stamina, delta, sprinting);
     const desired = desiredDirection.multiplyScalar(movementSpeed({ aiming, crouching: this.crouching, sprinting }) * Math.min(1, inputLength));
@@ -3755,7 +3769,16 @@ export class HeavensGateEngine {
       forward.set(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     }
     const desiredCamera = targetPosition.clone().addScaledVector(forward, -distance);
-    if (aiming) desiredCamera.addScaledVector(right, 0.78);
+    this.shoulderOffset = damp(this.shoulderOffset ?? 0.78, 0.78 * (this.shoulderSide ?? 1), 10, delta);
+    if (aiming) desiredCamera.addScaledVector(right, this.shoulderOffset);
+    // Cover peek: while aiming from cover the camera slides along the wall
+    // tangent — a readable lean instead of full exposure.
+    this.peekLean = damp(this.peekLean ?? 0, this.coverFace && aiming ? 1 : 0, 8, delta);
+    if (this.peekLean > 0.01 && this.coverFace) {
+      const tangent = this.tmpMove.set(-this.coverFace.z, 0, this.coverFace.x);
+      if (tangent.dot(right) * (this.shoulderSide ?? 1) < 0) tangent.negate();
+      desiredCamera.addScaledVector(tangent, this.peekLean * 0.62);
+    }
     this.landDip = damp(this.landDip ?? 0, 0, 9.5, delta);
     const bob = !this.settings?.reducedMotion && !this.currentVehicle && this.grounded && this.slideRemaining <= 0
       ? Math.sin((this.walkPhase ?? 0) * 2) * 0.026 * clamp(speed / 9, 0, 1)
@@ -3764,6 +3787,11 @@ export class HeavensGateEngine {
     this.camera.position.lerp(desiredCamera, 1 - Math.exp(-9 * delta));
     this.constrainCamera(targetPosition.clone().add(new THREE.Vector3(0, 1.6 + stanceOffset, 0)));
     const lookTarget = targetPosition.clone().add(new THREE.Vector3(0, this.currentVehicle ? 1.1 : (aiming ? 1.52 : 1.6) + stanceOffset, 0));
+    if (this.peekLean > 0.01 && this.coverFace) {
+      const tangent = this.tmpMove.set(-this.coverFace.z, 0, this.coverFace.x);
+      if (tangent.dot(right) * (this.shoulderSide ?? 1) < 0) tangent.negate();
+      lookTarget.addScaledVector(tangent, this.peekLean * 0.4);
+    }
     lookTarget.addScaledVector(forward, (aiming ? 7 : 3.25) + this.cameraPitch * 2);
     lookTarget.y += bob * 0.6 - this.landDip * 0.4;
     this.camera.lookAt(lookTarget);
@@ -4026,14 +4054,14 @@ export class HeavensGateEngine {
   private takePlayerDamage(amount: number, source?: THREE.Vector3) {
     if (this.invulnerability > 0 || this.gameOverSent) return;
     this.invulnerability = 0.16;
-    // Cover blocks most fire arriving from beyond the held face while you
-    // aren't aiming — peeking exposes you fully.
-    if (source && this.coverFace && !this.isAiming()) {
+    // Cover blocks most fire arriving from beyond the held face. Aiming
+    // peeks over/around it — exposed, but not fully.
+    if (source && this.coverFace) {
       const position = this.currentVehicle?.group.position ?? this.player.position;
       const toSource = Math.hypot(source.x - position.x, source.z - position.z) || 1;
       const exposure = ((source.x - position.x) / toSource) * -this.coverFace.x
         + ((source.z - position.z) / toSource) * -this.coverFace.z;
-      if (exposure > 0.35) amount *= 0.35;
+      if (exposure > 0.35) amount *= this.isAiming() ? 0.62 : 0.35;
     }
     if (this.ownedUpgrades?.has('plating')) amount *= 0.78;
     if (source) {
@@ -4063,7 +4091,13 @@ export class HeavensGateEngine {
   }
 
   private tryShoot() {
-    if (this.shotCooldown > 0 || this.reloading > 0 || this.currentVehicle || this.paused) return;
+    if (this.shotCooldown > 0 || this.currentVehicle || this.paused) return;
+    // Reload cancel: pulling the trigger mid-reload with rounds left drops
+    // the reload and fires — standard shooter behavior.
+    if (this.reloading > 0) {
+      if (this.ammo <= 0) return;
+      this.reloading = 0;
+    }
     const spec = this.activeWeaponSpec();
     if (this.ammo <= 0) {
       this.audio.empty();
@@ -4088,6 +4122,7 @@ export class HeavensGateEngine {
       ? activeModel.localToWorld(muzzleOffset.clone())
       : this.player.position.clone().add(new THREE.Vector3(0, 1.6, 0));
     this.createMuzzleFlash(origin);
+    this.spawnCasing(origin);
 
     const movement = clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 10.5, 0, 1);
     const spread = shotSpreadRadians({ aiming: this.isAiming(), movement, recoil: this.weaponRecoil }, spec);
@@ -4298,7 +4333,12 @@ export class HeavensGateEngine {
 
   private startReload() {
     const spec = this.activeWeaponSpec();
-    if (this.reloading > 0 || this.ammo >= spec.magazineSize || this.reserveAmmo <= 0 || this.currentVehicle) return;
+    if (this.reloading > 0) {
+      this.reloading = 0;
+      this.emitToast('Reload canceled', `${this.ammo} rounds remain in the magazine`, 'info');
+      return;
+    }
+    if (this.ammo >= spec.magazineSize || this.reserveAmmo <= 0 || this.currentVehicle) return;
     this.reloading = spec.reloadSeconds;
     this.heroCharacter?.playOnce('reload', 0.08);
     this.audio.reload();
@@ -4484,6 +4524,68 @@ export class HeavensGateEngine {
         charge.mesh.visible = false;
         charge.light.intensity = 0;
         this.explodeCharge(pos);
+      }
+    });
+  }
+
+  private spawnCasing(origin: THREE.Vector3) {
+    if (!this.scene || !this.casings) return;
+    if (!this.casings.length) {
+      const geometry = new THREE.CylinderGeometry(0.012, 0.012, 0.045, 6);
+      for (let i = 0; i < 24; i += 1) {
+        const mesh = new THREE.Mesh(
+          geometry,
+          new THREE.MeshStandardMaterial({ color: 0xc9a13b, metalness: 0.85, roughness: 0.3 }),
+        );
+        mesh.visible = false;
+        this.scene.add(mesh);
+        this.casings.push({ mesh, velocity: new THREE.Vector3(), spin: 0, timer: 0, active: false });
+      }
+    }
+    const casing = this.casings.find((candidate) => !candidate.active) ?? this.casings[0];
+    this.camera.getWorldDirection(this.cameraForward);
+    const rightX = -this.cameraForward.z;
+    const rightZ = this.cameraForward.x;
+    casing.mesh.position.copy(origin);
+    casing.mesh.position.y -= 0.08;
+    casing.velocity.set(
+      rightX * (1.5 + Math.random() * 0.9) + this.cameraForward.x * 0.25,
+      1.7 + Math.random() * 0.9,
+      rightZ * (1.5 + Math.random() * 0.9) + this.cameraForward.z * 0.25,
+    );
+    casing.spin = 14 + Math.random() * 10;
+    casing.timer = 5.5;
+    casing.active = true;
+    casing.mesh.visible = true;
+    casing.mesh.scale.setScalar(1);
+    casing.mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+  }
+
+  private updateCasings(delta: number) {
+    if (!this.casings?.length) return;
+    this.casings.forEach((casing) => {
+      if (!casing.active) return;
+      casing.timer -= delta;
+      if (casing.timer <= 0) {
+        casing.active = false;
+        casing.mesh.visible = false;
+        return;
+      }
+      const resting = casing.mesh.position.y <= 0.045 && casing.velocity.y <= 0;
+      if (!resting) {
+        casing.velocity.y -= 16 * delta;
+        casing.mesh.position.addScaledVector(casing.velocity, delta);
+        casing.mesh.rotation.x += casing.spin * delta;
+        casing.mesh.rotation.z += casing.spin * 0.7 * delta;
+        if (casing.mesh.position.y <= 0.045) {
+          casing.mesh.position.y = 0.045;
+          casing.velocity.y *= -0.32;
+          casing.velocity.x *= 0.55;
+          casing.velocity.z *= 0.55;
+        }
+      } else {
+        // Shrink out instead of a per-mesh material fade.
+        if (casing.timer < 0.6) casing.mesh.scale.setScalar(Math.max(0.01, casing.timer / 0.6));
       }
     });
   }

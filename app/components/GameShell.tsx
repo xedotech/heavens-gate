@@ -75,6 +75,7 @@ const KEYBIND_ACTIONS: Array<{ id: KeybindAction; label: string }> = [
   { id: 'weaponSwap', label: 'Swap weapon' },
   { id: 'melee', label: 'Melee strike' },
   { id: 'throwCharge', label: 'Throw charge' },
+  { id: 'shoulderSwap', label: 'Swap shoulder' },
   { id: 'interact', label: 'Interact' },
   { id: 'inspect', label: 'Inspect character' },
 ];

@@ -19,6 +19,7 @@ export type KeybindAction =
   | 'weaponSwap'
   | 'melee'
   | 'throwCharge'
+  | 'shoulderSwap'
   | 'interact'
   | 'inspect';
 
@@ -37,6 +38,7 @@ export interface Keybinds {
   weaponSwap: string;
   melee: string;
   throwCharge: string;
+  shoulderSwap: string;
   interact: string;
   inspect: string;
 }
@@ -208,6 +210,7 @@ export const DEFAULT_KEYBINDS: Keybinds = {
   weaponSwap: 'x',
   melee: 'v',
   throwCharge: 'g',
+  shoulderSwap: 't',
   interact: 'e',
   inspect: 'p',
 };
