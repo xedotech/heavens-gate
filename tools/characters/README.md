@@ -24,6 +24,21 @@ per-action track floors (`HG_Idle` 3, `HG_Walk` 11, `HG_Run` 12, and the
 combat/locomotion floors in `validate_characters.mjs`) rather than requiring a
 zero rotation key on every bone.
 
+Clip authoring lives in `animation_library.py`, shared by the full compile and
+by `rebuild_animations.py`, which re-authors the eleven `HG_*` actions inside
+already-published GLBs without MPFB (use it when only the clips changed):
+
+```powershell
+& $BlenderExe --background --python-exit-code 1 `
+  --python tools/characters/rebuild_animations.py -- `
+  --manifest tools/characters/characters.json `
+  --input public/assets/characters `
+  --output artifacts/characters
+```
+
+`audit_gait.py` measures the exported knee-articulation range and loop seam on
+a built GLB (`HG_Walk`/`HG_Run` must exceed ten degrees of knee travel).
+
 Asset license: CC0 1.0. MPFB itself is AGPL/GPL tooling; its generated output is
 unrestricted. See `THIRD_PARTY_NOTICES.md` at the repository root.
 

@@ -392,6 +392,7 @@ export class HeavensGateEngine {
   private veilWhisperTimer = 0;
   private chapelZone: THREE.Box3 | null = null;
   private chapelVisited = false;
+  private chapelInterior = false;
   private chapelCandles: THREE.PointLight[] = [];
   private peekLean = 0;
   private shoulderSide = 1;
@@ -2817,9 +2818,14 @@ export class HeavensGateEngine {
     this.chapelCandles?.forEach((flame, index) => {
       flame.intensity = 4.2 + Math.sin(this.elapsed * 7.3 + index * 2.1) * 0.7 + Math.sin(this.elapsed * 13.7 + index * 4.3) * 0.4;
     });
-    if (!this.chapelZone || this.chapelVisited || !this.player) return;
+    if (!this.chapelZone || !this.player) return;
     const position = this.currentVehicle?.group.position ?? this.player.position;
-    if (!this.chapelZone.containsPoint(position)) return;
+    const inside = this.chapelZone.containsPoint(position);
+    if (inside !== this.chapelInterior) {
+      this.chapelInterior = inside;
+      this.audio.setInterior?.(inside ? 1 : 0);
+    }
+    if (!inside || this.chapelVisited) return;
     this.chapelVisited = true;
     this.emitSubtitle('The Archivist', 'The Unburied Chapel. The Choir burned the records — the candles remember anyway.');
     this.audio.whisperBlip?.();

@@ -7,6 +7,7 @@ export class AudioEngine {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private masterFilter: BiquadFilterNode | null = null;
+  private interiorSend: GainNode | null = null;
   private veilBed: { source: AudioBufferSourceNode; gain: GainNode; lfo: OscillatorNode; lfoGain: GainNode } | null = null;
   private ambientBus: GainNode | null = null;
   private effectsBus: GainNode | null = null;
@@ -47,9 +48,40 @@ export class AudioEngine {
       this.engineBus.connect(this.master);
       this.master.connect(this.masterFilter);
       this.masterFilter.connect(this.context.destination);
+
+      // Interior slapback: effects feed a short feedback delay through a
+      // lowpass — a stone-room tail for the chapel. Gain stays at 0 outside.
+      if (typeof this.context.createDelay === 'function') {
+      const echoDelay = this.context.createDelay(0.4);
+      echoDelay.delayTime.value = 0.085;
+      const echoFilter = this.context.createBiquadFilter();
+      echoFilter.type = 'lowpass';
+      echoFilter.frequency.value = 2400;
+      const echoFeedback = this.context.createGain();
+      echoFeedback.gain.value = 0.34;
+      this.interiorSend = this.context.createGain();
+      this.interiorSend.gain.value = 0;
+      this.effectsBus.connect(this.interiorSend);
+      this.interiorSend.connect(echoDelay);
+      echoDelay.connect(echoFilter);
+      echoFilter.connect(echoFeedback);
+      echoFeedback.connect(echoDelay);
+      echoFilter.connect(this.master);
+      }
+
       this.startAmbient();
     }
     if (this.context.state !== 'running') await this.context.resume();
+  }
+
+  // 0 = open street, 1 = fully enclosed — ramps the slapback send and dips
+  // the city bed so interiors sound like interiors.
+  setInterior(amount: number) {
+    if (!this.context || !this.interiorSend || !this.ambientBus) return;
+    const level = clamp(amount, 0, 1);
+    const now = this.context.currentTime;
+    this.interiorSend.gain.setTargetAtTime(level * 0.5, now, 0.25);
+    this.ambientBus.gain.setTargetAtTime(0.42 * (1 - level * 0.72), now, 0.35);
   }
 
   setVolume(volume: number) {
