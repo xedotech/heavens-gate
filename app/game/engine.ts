@@ -3228,11 +3228,11 @@ export class HeavensGateEngine {
   }
 
   private isActionHeld(action: KeybindAction) {
-    return this.input.isHeld(action, this.settings.keybinds) || (this.touchHeld?.has(action) ?? false);
+    return this.input.isHeld(action, this.settings.keybinds, this.settings.gamepadBinds) || (this.touchHeld?.has(action) ?? false);
   }
 
   private wasActionPressed(action: KeybindAction) {
-    return this.input.wasPressed(action, this.settings.keybinds) || (this.touchPressed?.has(action) ?? false);
+    return this.input.wasPressed(action, this.settings.keybinds, this.settings.gamepadBinds) || (this.touchPressed?.has(action) ?? false);
   }
 
   private clearInput() {

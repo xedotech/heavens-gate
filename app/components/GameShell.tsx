@@ -29,6 +29,7 @@ import {
 import type { HeavensGateEngine } from '../game/engine';
 import { TouchControls } from './TouchControls';
 import { assignKeybind, mergeKeybinds } from '../game/keybinds';
+import { GAMEPAD_ACTION_BUTTONS, GAMEPAD_BUTTON_LABELS } from '../game/input';
 import { UPGRADES } from '../game/upgrades';
 import { formatDistance } from '../game/mechanics';
 import { eraseSaves, normalizeSettings, readSave, readSettings, retrySettings, saveReadNotice, saveWriteNotice, writeSave, writeSettings } from '../game/persistence';
@@ -232,6 +233,7 @@ export default function GameShell() {
   const [ending, setEnding] = useState<'open' | 'seal' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [listeningAction, setListeningAction] = useState<KeybindAction | null>(null);
+  const [listeningPadAction, setListeningPadAction] = useState<KeybindAction | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
 
@@ -386,6 +388,51 @@ export default function GameShell() {
     window.addEventListener('keydown', onRebind, true);
     return () => window.removeEventListener('keydown', onRebind, true);
   }, [listeningAction, screen, updateSettings]);
+
+  // Gamepad capture: poll the pad each frame while a row is listening; the
+  // first newly pressed button wins and swaps with whoever held it before.
+  useEffect(() => {
+    if (!listeningPadAction || screen !== 'settings') return undefined;
+    let raf = 0;
+    let armed = false;
+    // Buttons held when listening starts are the baseline — they can't bind
+    // until released, so an already-held button never self-assigns.
+    let baseline = new Set<number>();
+    const action = listeningPadAction;
+    const poll = () => {
+      const pad = navigator.getGamepads?.().find((candidate) => candidate?.connected);
+      if (!pad) { raf = requestAnimationFrame(poll); return; }
+      const pressed = new Set<number>();
+      pad.buttons.forEach((button, index) => {
+        if (button.pressed || button.value > 0.5) pressed.add(index);
+      });
+      if (!armed) {
+        baseline = pressed;
+        armed = true;
+      } else {
+        for (const index of pressed) {
+          if (baseline.has(index)) continue;
+          const current = { ...(settingsRef.current.gamepadBinds ?? {}) };
+          const effective = (a: KeybindAction) => current[a] ?? GAMEPAD_ACTION_BUTTONS[a];
+          const previous = (Object.keys(GAMEPAD_ACTION_BUTTONS) as KeybindAction[])
+            .find((a) => a !== action && effective(a) === index);
+          current[action] = index;
+          const dislodged = effective(action);
+          if (previous && dislodged !== undefined) current[previous] = dislodged;
+          updateSettings({ gamepadBinds: current });
+          setListeningPadAction(null);
+          return;
+        }
+      }
+      raf = requestAnimationFrame(poll);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setListeningPadAction(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    raf = requestAnimationFrame(poll);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('keydown', onKey, true); };
+  }, [listeningPadAction, screen, updateSettings]);
 
   const retryStorage = () => {
     if (latestSaveRef.current) {
@@ -664,6 +711,12 @@ export default function GameShell() {
             <fieldset className="keybind-fieldset"><legend>Keyboard remapping</legend><p>Choose any key. If it is already assigned, Heaven&apos;s Gate swaps the two actions so every control stays reachable.</p><div className="keybind-grid">
               {KEYBIND_ACTIONS.map((action) => <button type="button" key={action.id} className={listeningAction === action.id ? 'listening' : ''} onClick={() => setListeningAction(action.id)}><span>{action.label}</span><kbd>{listeningAction === action.id ? 'Press a key · Esc cancels' : formatBinding(settings.keybinds[action.id])}</kbd></button>)}
             </div><button className="secondary-button reset-bindings" type="button" onClick={() => { setListeningAction(null); updateSettings({ keybinds: mergeKeybinds(null) }); }}><RotateCcw aria-hidden="true" /> Reset keyboard bindings</button></fieldset>
+            <fieldset className="keybind-fieldset"><legend>Gamepad remapping</legend><p>Select an action, then press the pad button to assign. Triggers stay on aim/fire; sticks stay on move/look.</p><div className="keybind-grid">
+              {KEYBIND_ACTIONS.filter((action) => action.id in GAMEPAD_ACTION_BUTTONS).map((action) => {
+                const bound = settings.gamepadBinds?.[action.id] ?? GAMEPAD_ACTION_BUTTONS[action.id];
+                return <button type="button" key={action.id} className={listeningPadAction === action.id ? 'listening' : ''} onClick={() => setListeningPadAction(action.id)}><span>{action.label}</span><kbd>{listeningPadAction === action.id ? 'Press a pad button · Esc cancels' : GAMEPAD_BUTTON_LABELS[bound ?? -1] ?? `Btn ${bound}`}</kbd></button>;
+              })}
+            </div><button className="secondary-button reset-bindings" type="button" onClick={() => { setListeningPadAction(null); updateSettings({ gamepadBinds: {} }); }}><RotateCcw aria-hidden="true" /> Reset gamepad bindings</button></fieldset>
             <fieldset className="toggle-fieldset"><legend>Accessibility</legend>
               <label><span><strong>Subtitles</strong><small>All narrative dialogue and radio calls</small></span><input type="checkbox" checked={settings.subtitles} onChange={(event) => updateSettings({ subtitles: event.target.checked })} /></label>
               <label><span><strong>Large subtitles</strong><small>Bigger caption text for readability</small></span><input type="checkbox" checked={settings.subtitleSize === 'large'} onChange={(event) => updateSettings({ subtitleSize: event.target.checked ? 'large' : 'standard' })} /></label>

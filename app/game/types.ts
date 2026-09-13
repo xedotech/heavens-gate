@@ -54,6 +54,8 @@ export type ScreenState =
   | 'ending'
   | 'credits';
 
+export type GamepadBinds = Partial<Record<KeybindAction, number>>;
+
 export interface GameSettings {
   quality: Quality;
   volume: number;
@@ -68,6 +70,8 @@ export interface GameSettings {
   difficulty: Difficulty;
   characterSkin: CharacterSkin;
   keybinds: Keybinds;
+  /** Gamepad button-index overrides; absent actions use the default map. */
+  gamepadBinds: GamepadBinds;
 }
 
 export interface SaveState {
@@ -231,6 +235,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   difficulty: 'normal',
   characterSkin: 'seraph',
   keybinds: DEFAULT_KEYBINDS,
+  gamepadBinds: {},
 };
 
 export const INITIAL_HUD: HUDState = {

@@ -1,5 +1,5 @@
 import { normalizeKeyBinding } from './keybinds';
-import { DEFAULT_KEYBINDS, type KeybindAction, type Keybinds } from './types';
+import { DEFAULT_KEYBINDS, type GamepadBinds, type KeybindAction, type Keybinds } from './types';
 
 interface KeyboardInput {
   key: string;
@@ -40,6 +40,32 @@ export const GAMEPAD_ACTION_BUTTONS: Partial<Record<KeybindAction, number>> = {
   throwCharge: 14,
   shoulderSwap: 15,
 };
+
+/** Standard-layout gamepad button labels for the remap UI. */
+export const GAMEPAD_BUTTON_LABELS: Record<number, string> = {
+  0: 'A / Cross', 1: 'B / Circle', 2: 'X / Square', 3: 'Y / Triangle',
+  4: 'LB / L1', 5: 'RB / R1', 6: 'LT / L2', 7: 'RT / R2',
+  8: 'Back / Share', 9: 'Start / Options', 10: 'L3', 11: 'R3',
+  12: 'D-up', 13: 'D-down', 14: 'D-left', 15: 'D-right', 16: 'Home',
+};
+
+/** Validate stored pad overrides: known actions, standard button indices only. */
+export function mergeGamepadBinds(value: unknown): GamepadBinds {
+  if (!value || typeof value !== 'object') return {};
+  const binds: GamepadBinds = {};
+  Object.entries(value as Record<string, unknown>).forEach(([action, button]) => {
+    if (!(action in GAMEPAD_ACTION_BUTTONS)) return;
+    if (typeof button === 'number' && Number.isInteger(button) && button >= 0 && button <= 16) {
+      binds[action as KeybindAction] = button;
+    }
+  });
+  return binds;
+}
+
+/** Resolve the button index for an action, honoring per-player overrides. */
+export function gamepadButtonFor(action: KeybindAction, pad?: GamepadBinds) {
+  return pad?.[action] ?? GAMEPAD_ACTION_BUTTONS[action];
+}
 
 const neutralAxes = (): GamepadAxes => ({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, aim: 0, shoot: 0 });
 const finiteClamped = (value: number | undefined, minimum: number, maximum: number) => (
@@ -136,15 +162,15 @@ export class GameInputState {
     };
   }
 
-  isHeld(action: KeybindAction, bindings: Keybinds) {
-    const button = GAMEPAD_ACTION_BUTTONS[action];
+  isHeld(action: KeybindAction, bindings: Keybinds, pad?: GamepadBinds) {
+    const button = gamepadButtonFor(action, pad);
     return this.isKeyboardHeld(bindings[action])
       || (action === 'crouch' && acceptsLegacyCrouch(bindings) && this.isKeyboardHeld('control'))
       || (button !== undefined && this.gamepadHeld.has(button) && !this.blockedGamepadButtons.has(button));
   }
 
-  wasPressed(action: KeybindAction, bindings: Keybinds) {
-    const button = GAMEPAD_ACTION_BUTTONS[action];
+  wasPressed(action: KeybindAction, bindings: Keybinds, pad?: GamepadBinds) {
+    const button = gamepadButtonFor(action, pad);
     return this.keyboardPressed.has(bindings[action])
       || (action === 'crouch' && acceptsLegacyCrouch(bindings) && this.keyboardPressed.has('control'))
       || (button !== undefined && this.gamepadPressed.has(button));

@@ -1,4 +1,5 @@
 import { MORROW_SPEC, WEAPONS, WEAPON_ORDER } from './combat';
+import { mergeGamepadBinds } from './input';
 import { mergeKeybinds } from './keybinds';
 import { UPGRADE_IDS } from './upgrades';
 import { DEFAULT_SETTINGS, MISSIONS, type GameSettings, type SaveState, type WeaponId } from './types';
@@ -51,6 +52,7 @@ export function normalizeSettings(value: unknown): GameSettings {
     difficulty: choice(source.difficulty, ['story', 'normal', 'ascendant'], DEFAULT_SETTINGS.difficulty),
     characterSkin: choice(source.characterSkin, ['seraph', 'relic', 'nocturne', 'ash', 'meridian', 'voidborn'], DEFAULT_SETTINGS.characterSkin),
     keybinds: mergeKeybinds(source.keybinds),
+    gamepadBinds: mergeGamepadBinds(source.gamepadBinds),
   };
 }
 
