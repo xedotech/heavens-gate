@@ -284,6 +284,15 @@ export class AudioEngine {
     this.tone(confirm ? 660 : 440, 0.09, 'sine', 0.045, 0, this.effectsBus, confirm ? 880 : 520);
   }
 
+  // Low-health heartbeat — a lub-dub pair of deep sine thumps routed through
+  // the ambient bus so it sits under the mix like a pulse, not an effect.
+  heartbeat(intensity = 0.5) {
+    if (!this.context) return;
+    const level = clamp(intensity, 0, 1);
+    this.tone(58, 0.16, 'sine', 0.09 + level * 0.13, 0, this.ambientBus, 40);
+    this.tone(50, 0.13, 'sine', 0.06 + level * 0.09, 0.24, this.ambientBus, 36);
+  }
+
   shoot(voice: 'morrow' | 'psalm' | 'vesper' = 'morrow') {
     const jitter = 0.94 + Math.random() * 0.12;
     if (voice === 'psalm') {

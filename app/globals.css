@@ -787,6 +787,12 @@ button:disabled {
   transform: translate(-50%, -50%) scale(1.25);
 }
 
+.reticle-kill {
+  color: var(--danger);
+  transform: translate(-50%, -50%) scale(1.55) rotate(45deg);
+  filter: drop-shadow(0 0 6px var(--danger-soft));
+}
+
 .hit-damage {
   position: absolute;
   top: 50%;
@@ -1157,6 +1163,18 @@ kbd {
   inset: 0;
   pointer-events: none;
   background: radial-gradient(circle, transparent 48%, var(--danger-soft) 105%);
+}
+
+/* Low health pulses via filter so it stacks under the inline damage-flash
+   opacity instead of being overridden by (or overriding) it. */
+.damage-vignette.low-health {
+  opacity: 0.34 !important;
+  animation: low-health-pulse 1.15s ease-in-out infinite;
+}
+
+@keyframes low-health-pulse {
+  0%, 100% { filter: brightness(0.75); }
+  45% { filter: brightness(1.35); }
 }
 
 .veil-overlay {

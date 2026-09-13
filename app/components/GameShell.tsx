@@ -529,7 +529,7 @@ export default function GameShell() {
           </div>
 
           <div
-            className={`reticle${hud.aiming ? ' reticle-aiming' : ''}${hud.reticleHit ? ' reticle-hit' : ''}`}
+            className={`reticle${hud.aiming ? ' reticle-aiming' : ''}${hud.reticleHit ? ' reticle-hit' : ''}${hud.reticleKill ? ' reticle-kill' : ''}`}
             style={{ '--reticle-spread': `${Math.min(16, hud.reticleSpread * 4.6)}px` } as CSSProperties}
             aria-hidden="true"
           ><span /><span /><span /><span /></div>
@@ -571,7 +571,7 @@ export default function GameShell() {
             </div>
           )}
           {hud.veilActive && <div className="veil-overlay" aria-hidden="true"><i /><i /></div>}
-          <div className="damage-vignette" style={{ opacity: hud.damageFlash }} aria-hidden="true" />
+          <div className={`damage-vignette${hud.lowHealth ? ' low-health' : ''}`} style={{ opacity: hud.damageFlash }} aria-hidden="true" />
           {hud.damageDirection !== null && (
             <div
               className="hit-direction"

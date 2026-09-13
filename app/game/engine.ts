@@ -401,6 +401,8 @@ export class HeavensGateEngine {
   private casings: Array<{ mesh: THREE.Mesh; velocity: THREE.Vector3; spin: number; timer: number; active: boolean }> = [];
   private pulseCooldown = 0;
   private reticleHit = 0;
+  private reticleKill = 0;
+  private heartbeatTimer = 0;
   private hitDamagePool = 0;
   private hitDamageTimer = 0;
   private hitDamageSeq = 0;
@@ -3163,6 +3165,15 @@ export class HeavensGateEngine {
     this.veilCooldown = Math.max(0, this.veilCooldown - delta);
     this.pulseCooldown = Math.max(0, this.pulseCooldown - delta);
     this.reticleHit = Math.max(0, this.reticleHit - delta * 5);
+    this.reticleKill = Math.max(0, (this.reticleKill ?? 0) - delta);
+    // Low-health heartbeat — a slow double-thump that quickens as HP drops.
+    if (this.health <= 30 && this.health > 0 && !this.gameOverSent) {
+      this.heartbeatTimer = (this.heartbeatTimer ?? 0) - delta;
+      if (this.heartbeatTimer <= 0) {
+        this.audio.heartbeat?.(1 - this.health / 30);
+        this.heartbeatTimer = 1.15 - (1 - this.health / 30) * 0.35;
+      }
+    }
     this.hitDamageTimer = Math.max(0, (this.hitDamageTimer ?? 0) - delta);
     this.damageFlash = Math.max(0, this.damageFlash - delta * 2.4);
     this.damageDirectionTimer = Math.max(0, this.damageDirectionTimer - delta);
@@ -4326,6 +4337,7 @@ export class HeavensGateEngine {
   private killActor(actor: Actor) {
     actor.alive = false;
     this.audio.explosion();
+    if (actor.kind !== 'civilian') this.reticleKill = 0.55;
     if (actor.kind !== 'civilian' && !this.settings.reducedMotion) this.hitStop = Math.max(this.hitStop, actor.kind === 'boss' ? 0.22 : 0.085);
     const total = actor.kind === 'boss' ? 2.6 : actor.kind === 'drone' ? 1.15 : 1.6;
     actor.materials.forEach((material) => { material.transparent = true; });
@@ -4984,6 +4996,8 @@ export class HeavensGateEngine {
         recoil: this.weaponRecoil,
       }, this.activeWeaponSpec()) * 180 / Math.PI,
       reticleHit: this.reticleHit > 0,
+      reticleKill: (this.reticleKill ?? 0) > 0,
+      lowHealth: this.health <= 30 && this.health > 0,
       hitDamage: this.hitDamageTimer > 0 ? Math.max(1, Math.round(this.hitDamagePool)) : null,
       hitDamageSeq: this.hitDamageSeq,
       reloading: this.reloading > 0,
