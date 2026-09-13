@@ -86,13 +86,12 @@ function formatBinding(binding: string) {
   return binding.toUpperCase();
 }
 
-function MiniMap({ snapshot, label }: { snapshot: MapSnapshot; label: string }) {
+function MiniMap({ snapshot, label, size = 164 }: { snapshot: MapSnapshot; label: string; size?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    const size = 164;
     const ratio = Math.min(window.devicePixelRatio, 2);
     canvas.width = size * ratio;
     canvas.height = size * ratio;
@@ -170,7 +169,7 @@ function MiniMap({ snapshot, label }: { snapshot: MapSnapshot; label: string }) 
     context.beginPath();
     context.arc(center, center, center - 2.5, 0, Math.PI * 2);
     context.stroke();
-  }, [snapshot]);
+  }, [snapshot, size]);
 
   return <canvas ref={ref} className="mini-map" role="img" aria-label={`Tactical map of ${label}`} />;
 }
@@ -591,7 +590,7 @@ export default function GameShell() {
       )}
 
       {subtitle && screen === 'playing' && (
-        <div className="subtitle" role="status" aria-live="polite"><strong>{subtitle.speaker}</strong><span>{subtitle.text}</span></div>
+        <div className={`subtitle${settings.subtitleSize === 'large' ? ' large' : ''}`} role="status" aria-live="polite"><strong>{subtitle.speaker}</strong><span>{subtitle.text}</span></div>
       )}
 
       <div className="toast-stack" aria-live="polite">
@@ -610,6 +609,15 @@ export default function GameShell() {
             <MenuButton icon={<RotateCcw />} title="Restart checkpoint" detail={save ? MISSIONS[save.missionIndex]?.title : 'The Bell Below'} onClick={() => { engineRef.current?.retryCheckpoint(); setScreen('playing'); void engineRef.current?.resume(); }} />
             <MenuButton icon={<ArrowLeft />} title="Return to title" detail="Progress is saved automatically" onClick={() => { engineRef.current?.returnToTitle(); setScreen('title'); }} />
           </nav>
+          <div className="pause-map" aria-label="City map">
+            <MiniMap snapshot={map} label={hud.district} size={240} />
+            <div className="pause-map-legend">
+              <span><i className="dot dot-player" /> You</span>
+              <span><i className="dot dot-objective" /> Objective</span>
+              <span><i className="dot dot-hostile" /> Hostile</span>
+              <span><i className="dot dot-gate" /> Gate</span>
+            </div>
+          </div>
           <div className="attunements" aria-label="Attunements">
             <div className="attunements-head">
               <h2>Attunements</h2>
@@ -657,6 +665,8 @@ export default function GameShell() {
             </div><button className="secondary-button reset-bindings" type="button" onClick={() => { setListeningAction(null); updateSettings({ keybinds: mergeKeybinds(null) }); }}><RotateCcw aria-hidden="true" /> Reset keyboard bindings</button></fieldset>
             <fieldset className="toggle-fieldset"><legend>Accessibility</legend>
               <label><span><strong>Subtitles</strong><small>All narrative dialogue and radio calls</small></span><input type="checkbox" checked={settings.subtitles} onChange={(event) => updateSettings({ subtitles: event.target.checked })} /></label>
+              <label><span><strong>Large subtitles</strong><small>Bigger caption text for readability</small></span><input type="checkbox" checked={settings.subtitleSize === 'large'} onChange={(event) => updateSettings({ subtitleSize: event.target.checked ? 'large' : 'standard' })} /></label>
+              <label><span><strong>Aim assist</strong><small>Gamepad reticle eases toward hostiles while aiming</small></span><input type="checkbox" checked={settings.aimAssist} onChange={(event) => updateSettings({ aimAssist: event.target.checked })} /></label>
               <label><span><strong>Reduced motion</strong><small>Static title camera and instant menu transitions</small></span><input type="checkbox" checked={settings.reducedMotion} onChange={(event) => updateSettings({ reducedMotion: event.target.checked })} /></label>
               <label><span><strong>High contrast HUD</strong><small>Stronger panels, borders, and objective signals</small></span><input type="checkbox" checked={settings.highContrast} onChange={(event) => updateSettings({ highContrast: event.target.checked })} /></label>
             </fieldset>

@@ -44,6 +44,8 @@ export function normalizeSettings(value: unknown): GameSettings {
     fov: finite(source.fov, DEFAULT_SETTINGS.fov, 48, 78),
     hudScale: finite(source.hudScale, DEFAULT_SETTINGS.hudScale, 0.8, 1.3),
     subtitles: typeof source.subtitles === 'boolean' ? source.subtitles : DEFAULT_SETTINGS.subtitles,
+    subtitleSize: choice(source.subtitleSize, ['standard', 'large'], DEFAULT_SETTINGS.subtitleSize),
+    aimAssist: typeof source.aimAssist === 'boolean' ? source.aimAssist : DEFAULT_SETTINGS.aimAssist,
     reducedMotion: typeof source.reducedMotion === 'boolean' ? source.reducedMotion : DEFAULT_SETTINGS.reducedMotion,
     highContrast: typeof source.highContrast === 'boolean' ? source.highContrast : DEFAULT_SETTINGS.highContrast,
     difficulty: choice(source.difficulty, ['story', 'normal', 'ascendant'], DEFAULT_SETTINGS.difficulty),

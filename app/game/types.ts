@@ -59,6 +59,8 @@ export interface GameSettings {
   fov: number;
   hudScale: number;
   subtitles: boolean;
+  subtitleSize: 'standard' | 'large';
+  aimAssist: boolean;
   reducedMotion: boolean;
   highContrast: boolean;
   difficulty: Difficulty;
@@ -217,6 +219,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   fov: 56,
   hudScale: 1,
   subtitles: true,
+  subtitleSize: 'standard',
+  aimAssist: true,
   reducedMotion: false,
   highContrast: false,
   difficulty: 'normal',

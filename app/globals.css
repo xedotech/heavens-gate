@@ -375,6 +375,40 @@ button:disabled {
   gap: 8px;
 }
 
+.pause-map {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.pause-map-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #b9b4a6);
+}
+
+.pause-map-legend span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pause-map-legend .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot-player { background: #f2d377; }
+.dot-objective { background: #fff3c4; }
+.dot-hostile { background: #e4644d; }
+.dot-gate { background: #c49b42; }
+
 .attunements {
   margin-top: 18px;
   border-top: 1px solid var(--border);
@@ -794,6 +828,11 @@ button:disabled {
   height: 164px;
   border-radius: 50%;
   filter: drop-shadow(0 10px 24px var(--shadow));
+}
+
+.pause-map .mini-map {
+  width: 240px;
+  height: 240px;
 }
 
 .vitals-bars {
@@ -1381,6 +1420,15 @@ kbd {
 .subtitle span {
   font-size: 14px;
   line-height: 1.45;
+}
+
+.subtitle.large span {
+  font-size: 19px;
+  line-height: 1.5;
+}
+
+.subtitle.large strong {
+  font-size: 11px;
 }
 
 .toast-stack {

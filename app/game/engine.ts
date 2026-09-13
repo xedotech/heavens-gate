@@ -310,6 +310,15 @@ export class HeavensGateEngine {
   private charges: Array<{ mesh: THREE.Mesh; light: THREE.PointLight; velocity: THREE.Vector3; timer: number; active: boolean }> = [];
   private chargeVelocity = new THREE.Vector3();
   private cameraForward = new THREE.Vector3();
+  private tmpToPlayer = new THREE.Vector3();
+  private tmpPlayerDir = new THREE.Vector3();
+  private tmpActorFwd = new THREE.Vector3();
+  private tmpDestination = new THREE.Vector3();
+  private tmpAimTarget = new THREE.Vector3();
+  private tmpLosFrom = new THREE.Vector3();
+  private tmpLosTo = new THREE.Vector3();
+  private tmpMove = new THREE.Vector3();
+  private tmpPrevPos = new THREE.Vector3();
   private contactShadows: THREE.InstancedMesh | null = null;
   private contactShadowMatrix = new THREE.Matrix4();
   private contactShadowPosition = new THREE.Vector3();
@@ -372,6 +381,9 @@ export class HeavensGateEngine {
   private veilTimer = 0;
   private veilCooldown = 0;
   private veilWhisperTimer = 0;
+  private chapelZone: THREE.Box3 | null = null;
+  private chapelVisited = false;
+  private chapelCandles: THREE.PointLight[] = [];
   private pulseCooldown = 0;
   private reticleHit = 0;
   private hitDamagePool = 0;
@@ -593,6 +605,7 @@ export class HeavensGateEngine {
       this.callbacks.onLoadProgress(0.76, 'Tuning the gates');
       this.createGatesAndEchoes();
       this.createObjectiveMarker();
+      this.createChapel();
       this.createContactShadows();
       await this.nextFrame();
       this.callbacks.onLoadProgress(1, 'The city remembers');
@@ -2662,6 +2675,120 @@ export class HeavensGateEngine {
     this.updateObjectiveMarker();
   }
 
+  // The Chapel of the Unburied — the city's one enterable interior, sitting
+  // in the Old Spine clearing at (-72, 48). Door faces east toward the road.
+  private createChapel() {
+    const cx = -72;
+    const cz = 48;
+    const chapel = new THREE.Group();
+    chapel.position.set(cx, 0, cz);
+
+    const stone = new THREE.MeshStandardMaterial({ color: 0x2e2c2a, roughness: 0.9, metalness: 0.05 });
+    const stoneDark = new THREE.MeshStandardMaterial({ color: 0x232120, roughness: 0.94 });
+    const wood = new THREE.MeshStandardMaterial({ color: 0x3d2f22, roughness: 0.82 });
+    const glass = new THREE.MeshStandardMaterial({ color: 0x2a3550, emissive: 0x5a78c8, emissiveIntensity: 1.5, roughness: 0.2 });
+    const glassWarm = new THREE.MeshStandardMaterial({ color: 0x503528, emissive: 0xc8864a, emissiveIntensity: 1.4, roughness: 0.2 });
+    const candleMat = new THREE.MeshStandardMaterial({ color: 0xe8d8b0, emissive: 0xffb84a, emissiveIntensity: 2.4 });
+
+    const box = (w: number, h: number, d: number, x: number, y: number, z: number, material: THREE.Material) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = this.settings.quality === 'high';
+      mesh.receiveShadow = true;
+      chapel.add(mesh);
+      return mesh;
+    };
+
+    // Floor + threshold step.
+    box(13.6, 0.26, 11.6, 0, 0.05, 0, stoneDark);
+    box(1.2, 0.14, 3.2, 7.0, 0.07, 0, stone);
+
+    // Back wall (west), side walls, front wall split by a 2.8m door gap.
+    box(0.6, 6.2, 11.6, -6.5, 3.1, 0, stone);
+    box(13.6, 6.2, 0.6, 0, 3.1, -5.5, stone);
+    box(13.6, 6.2, 0.6, 0, 3.1, 5.5, stone);
+    box(0.6, 6.2, 4.4, 6.5, 3.1, -3.6, stone);
+    box(0.6, 6.2, 4.4, 6.5, 3.1, 3.6, stone);
+    box(0.6, 2.2, 2.8, 6.5, 5.1, 0, stone);
+
+    // Colliders — real walls, so cover + bullet obstruction work indoors.
+    const wall = (x: number, z: number, w: number, d: number) => {
+      this.collisionBoxes.push(new THREE.Box3(
+        new THREE.Vector3(cx + x - w / 2, 0, cz + z - d / 2),
+        new THREE.Vector3(cx + x + w / 2, 6.2, cz + z + d / 2),
+      ));
+    };
+    wall(-6.5, 0, 0.6, 11.6);
+    wall(0, -5.5, 13.6, 0.6);
+    wall(0, 5.5, 13.6, 0.6);
+    wall(6.5, -3.6, 0.6, 4.4);
+    wall(6.5, 3.6, 0.6, 4.4);
+
+    // Roof slab + interior cross beams.
+    box(14.2, 0.45, 12.2, 0, 6.35, 0, stoneDark);
+    [-3.2, 0, 3.2].forEach((bx) => box(0.34, 0.5, 11.0, bx, 5.85, 0, wood));
+
+    // Stained glass panels along the side walls — the chapel's only exterior read.
+    [-2.8, 0, 2.8].forEach((gz, index) => {
+      box(0.12, 3.4, 1.1, -6.1, 3.2, gz, index === 1 ? glassWarm : glass);
+    });
+    [-3.4, 3.4].forEach((gz) => {
+      box(1.1, 3.0, 0.12, -3.5, 3.1, gz * 1.5, glass);
+    });
+
+    // Altar + hanging ring + votive candles.
+    box(2.4, 1.15, 1.3, -4.4, 0.7, 0, stone);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.05, 8, 40), new THREE.MeshStandardMaterial({
+      color: 0xd8b46a, emissive: 0xa8842f, emissiveIntensity: 1.8, roughness: 0.35, metalness: 0.7,
+    }));
+    ring.position.set(-4.4, 4.1, 0);
+    ring.rotation.y = Math.PI / 2;
+    chapel.add(ring);
+
+    // Pews: two rows split by a center aisle.
+    [-2.2, 0.4].forEach((px) => {
+      [-2.4, 2.4].forEach((pz) => {
+        box(0.5, 0.5, 3.4, px, 0.55, pz, wood);
+        box(0.5, 0.9, 0.18, px, 0.95, pz - 1.55, wood);
+        box(0.5, 0.9, 0.18, px, 0.95, pz + 1.55, wood);
+      });
+    });
+
+    // Candles flanking the altar.
+    [-1.6, 1.6].forEach((offset) => {
+      const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.5, 8), candleMat);
+      candle.position.set(-4.4, 1.5, offset);
+      chapel.add(candle);
+      const flame = new THREE.PointLight(0xffb05a, 4.5, 7, 1.8);
+      flame.position.set(-4.2, 1.9, offset);
+      chapel.add(flame);
+      this.chapelCandles.push(flame);
+    });
+    const altarLight = new THREE.PointLight(0x8ab0ff, 9, 12, 1.6);
+    altarLight.position.set(-3.6, 4.4, 0);
+    chapel.add(altarLight);
+
+    this.scene.add(chapel);
+    this.chapelZone = new THREE.Box3(
+      new THREE.Vector3(cx - 6.2, -1, cz - 5.2),
+      new THREE.Vector3(cx + 6.2, 6, cz + 5.2),
+    );
+  }
+
+  private updateChapel() {
+    // Candle flames breathe even before the player finds the chapel.
+    this.chapelCandles?.forEach((flame, index) => {
+      flame.intensity = 4.2 + Math.sin(this.elapsed * 7.3 + index * 2.1) * 0.7 + Math.sin(this.elapsed * 13.7 + index * 4.3) * 0.4;
+    });
+    if (!this.chapelZone || this.chapelVisited || !this.player) return;
+    const position = this.currentVehicle?.group.position ?? this.player.position;
+    if (!this.chapelZone.containsPoint(position)) return;
+    this.chapelVisited = true;
+    this.emitSubtitle('The Archivist', 'The Unburied Chapel. The Choir burned the records — the candles remember anyway.');
+    this.audio.whisperBlip?.();
+    this.audio.ui(true);
+  }
+
   private applyQuality() {
     const baseRatio = this.settings.quality === 'high' ? 1.6 : this.settings.quality === 'medium' ? 1.3 : 1;
     this.dynamicPixelRatio = Math.min(window.devicePixelRatio, baseRatio);
@@ -3021,6 +3148,7 @@ export class HeavensGateEngine {
     this.updateCorpses(delta);
     this.updateDrops(delta, time);
     this.updateCharges(delta);
+    this.updateChapel();
     this.updateVeil(delta);
     this.updateWeaponSway(delta);
     this.updateEffects(delta);
@@ -3096,6 +3224,37 @@ export class HeavensGateEngine {
     const look = gamepadLookDelta(this.gamepadAxes, this.settings.sensitivity, delta);
     this.cameraYaw += look.yaw;
     this.cameraPitch = clamp(this.cameraPitch + look.pitch, -0.24, 0.74);
+    // Aim assist (gamepad only): while holding LT, ease the reticle toward
+    // the nearest hostile inside a narrow cone — magnetism, not snapping.
+    if (this.settings.aimAssist && this.gamepadAxes.aim > 0.2 && this.actors?.length) {
+      const origin = this.camera.position;
+      this.camera.getWorldDirection(this.cameraForward);
+      let bestAngle = 0.1;
+      let best: Actor | null = null;
+      for (const actor of this.actors) {
+        if (!actor.alive || actor.kind === 'civilian') continue;
+        const to = actor.group.position.clone().sub(origin);
+        to.y += 1.3;
+        const distance = to.length();
+        if (distance < 4 || distance > 64) continue;
+        to.normalize();
+        const angle = to.angleTo(this.cameraForward);
+        if (angle < bestAngle) { bestAngle = angle; best = actor; }
+      }
+      if (best) {
+        const chest = best.group.position.clone();
+        chest.y += 1.3;
+        const toTarget = chest.sub(origin).normalize();
+        const desiredYaw = Math.atan2(-toTarget.x, -toTarget.z);
+        const desiredPitch = Math.asin(clamp(toTarget.y, -1, 1));
+        let yawDelta = desiredYaw - this.cameraYaw;
+        while (yawDelta > Math.PI) yawDelta -= Math.PI * 2;
+        while (yawDelta < -Math.PI) yawDelta += Math.PI * 2;
+        const strength = 1 - Math.exp(-9 * delta);
+        this.cameraYaw += yawDelta * strength * 0.35;
+        this.cameraPitch = clamp(this.cameraPitch + (desiredPitch - this.cameraPitch) * strength * 0.3, -0.24, 0.74);
+      }
+    }
   }
 
   private isAiming() {
@@ -3679,7 +3838,7 @@ export class HeavensGateEngine {
         const threatened = actor.flee > 0 || (this.heat > 12 && distance < 22);
         if (threatened) {
           actor.flee = Math.max(actor.flee, 3.5);
-          const away = actor.group.position.clone().sub(playerPosition).setY(0).normalize();
+          const away = this.tmpMove.copy(actor.group.position).sub(playerPosition).setY(0).normalize();
           this.moveActor(actor, away, actor.speed * 2.25, delta);
           actor.flee -= delta;
         } else if (actor.vignette === 'talk') {
@@ -3699,7 +3858,7 @@ export class HeavensGateEngine {
           this.animateActor(actor, 0, delta);
         } else {
           actor.wanderAngle += Math.sin(time * 0.18 + actorIndex) * delta * 0.12;
-          this.moveActor(actor, new THREE.Vector3(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle)), actor.speed * 0.42, delta);
+          this.moveActor(actor, this.tmpMove.set(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle)), actor.speed * 0.42, delta);
         }
         return;
       }
@@ -3709,7 +3868,7 @@ export class HeavensGateEngine {
         actor.group.position.y = actor.spawn.y + Math.sin(time * 1.4 + actorIndex) * 1.1;
         actor.group.rotation.z += delta * 0.65;
         if (shouldAttack && distance < 72) {
-          const direction = playerPosition.clone().sub(actor.group.position).setY(0).normalize();
+          const direction = this.tmpMove.copy(playerPosition).sub(actor.group.position).setY(0).normalize();
           this.moveActor(actor, direction, distance > 18 ? actor.speed : -actor.speed * 0.35, delta);
           actor.group.lookAt(playerPosition.x, actor.group.position.y, playerPosition.z);
           if (actor.cooldown <= 0 && distance < 48) {
@@ -3727,14 +3886,17 @@ export class HeavensGateEngine {
       const hostile = actor.kind === 'boss' || activeCombat || this.heat > 6;
       if (actor.aiState) {
         const actorPosition = actor.group.position;
-        const toPlayer = playerPosition.clone().sub(actorPosition).setY(0);
-        const playerDirection = toPlayer.clone().normalize();
-        const actorForward = new THREE.Vector3(Math.sin(actor.group.rotation.y), 0, Math.cos(actor.group.rotation.y));
+        const toPlayer = this.tmpToPlayer.copy(playerPosition).sub(actorPosition).setY(0);
+        const playerDirection = this.tmpPlayerDir.copy(toPlayer).normalize();
+        const actorForward = this.tmpActorFwd.set(Math.sin(actor.group.rotation.y), 0, Math.cos(actor.group.rotation.y));
         const target = hostile && distance < 96 ? {
           position: { x: playerPosition.x, y: playerPosition.y + 1.4, z: playerPosition.z },
           distanceMeters: distance,
           viewAlignment: actorForward.dot(playerDirection),
-          inLineOfSight: this.hasLineOfSight(actorPosition.clone().add(new THREE.Vector3(0, 1.55, 0)), playerPosition.clone().add(new THREE.Vector3(0, 1.4, 0))),
+          inLineOfSight: this.hasLineOfSight(
+            this.tmpLosFrom.copy(actorPosition).setY(actorPosition.y + 1.55),
+            this.tmpLosTo.copy(playerPosition).setY(playerPosition.y + 1.4),
+          ),
           visibility: this.veilActive && distance > 8 ? 0.18 : 1,
           movement: clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 10.5, 0, 1),
         } : undefined;
@@ -3763,13 +3925,13 @@ export class HeavensGateEngine {
         if (aiStep.emittedRadio) frameRadio.push(aiStep.emittedRadio);
 
         const destination = aiStep.decision.destination
-          ? new THREE.Vector3(aiStep.decision.destination.x, actorPosition.y, aiStep.decision.destination.z)
+          ? this.tmpDestination.set(aiStep.decision.destination.x, actorPosition.y, aiStep.decision.destination.z)
           : undefined;
         const aimTarget = aiStep.decision.aimTarget
-          ? new THREE.Vector3(aiStep.decision.aimTarget.x, actorPosition.y + 1.4, aiStep.decision.aimTarget.z)
+          ? this.tmpAimTarget.set(aiStep.decision.aimTarget.x, actorPosition.y + 1.4, aiStep.decision.aimTarget.z)
           : playerPosition;
         if (aiStep.decision.action === 'engage') {
-          const direction = toPlayer.lengthSq() > 0.001 ? playerDirection : new THREE.Vector3(0, 0, 1);
+          const direction = toPlayer.lengthSq() > 0.001 ? playerDirection : this.tmpMove.set(0, 0, 1);
           const ideal = actor.kind === 'boss' ? 13 : 10;
           if (distance > ideal) this.moveActor(actor, direction, actor.speed, delta);
           else if (distance < ideal * 0.7) this.moveActor(actor, direction, -actor.speed * 0.45, delta);
@@ -3785,7 +3947,7 @@ export class HeavensGateEngine {
           this.moveActor(actor, direction, actor.speed * 1.15, delta);
           actor.group.rotation.y = Math.atan2(direction.x, direction.z);
         } else if (aiStep.decision.action === 'react-to-damage') {
-          const direction = actorPosition.clone().sub(aimTarget).setY(0).normalize();
+          const direction = this.tmpMove.copy(actorPosition).sub(aimTarget).setY(0).normalize();
           this.moveActor(actor, direction, actor.speed * 0.72, delta);
           actor.group.rotation.y = Math.atan2(-direction.x, -direction.z);
         } else if ((aiStep.decision.action === 'investigate' || aiStep.decision.action === 'search' || aiStep.decision.action === 'return') && destination) {
@@ -3794,10 +3956,10 @@ export class HeavensGateEngine {
           actor.group.rotation.y = Math.atan2(direction.x, direction.z);
         } else {
           actor.wanderAngle += Math.sin(time * 0.2 + actorIndex) * delta * 0.18;
-          const offset = actor.spawn.clone().sub(actor.group.position).setY(0);
+          const offset = this.tmpMove.copy(actor.spawn).sub(actor.group.position).setY(0);
           const direction = offset.length() > 7
             ? offset.normalize()
-            : new THREE.Vector3(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle));
+            : offset.set(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle));
           this.moveActor(actor, direction, actor.speed * 0.34, delta);
         }
       }
@@ -3807,7 +3969,7 @@ export class HeavensGateEngine {
   }
 
   private moveActor(actor: Actor, direction: THREE.Vector3, speed: number, delta: number) {
-    const previous = actor.group.position.clone();
+    const previous = this.tmpPrevPos.copy(actor.group.position);
     actor.group.position.addScaledVector(direction, speed * delta);
     this.clampWorld(actor.group.position, 4);
     if (actor.kind !== 'drone' && this.collides(actor.group.position.x, actor.group.position.z, 0.62)) {

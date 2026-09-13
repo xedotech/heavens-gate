@@ -45,7 +45,26 @@ export default defineConfig(async () => {
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   return {
-    build: { chunkSizeWarningLimit: 650 },
+    build: {
+      // Three.js alone minifies to ~730 kB — that vendor floor is the budget.
+      // Anything larger than it means game code regressed, not the library.
+      chunkSizeWarningLimit: 780,
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                // Three.js (+ its examples) is large and stable — splitting it
+                // out keeps the game-code chunk lean and lets the browser cache
+                // the renderer independently of gameplay iterations.
+                name: 'three',
+                test: /node_modules[\\/]three[\\/]/,
+              },
+            ],
+          },
+        },
+      },
+    },
     css: { postcss: { plugins: [tailwindcss()] } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
