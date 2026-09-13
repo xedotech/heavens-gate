@@ -59,9 +59,23 @@ The entire cheap-wins shortlist and the top [S]/[A] items are now live:
 - ✅ Near-miss whiz: spatialized supersonic snap on close enemy rounds
 - ✅ Enemy tracer signatures: hot orange boss, cold blue drone
 - ✅ GTAO pass on high quality (replaces RenderPass while enabled)
+- ✅ Full gamepad button remapping (persisted overrides, capture UI,
+  swap semantics, standard-layout labels)
+- ✅ Veil sneak strikes: 1.7x damage on unaware targets, +3 marks on
+  execution kills — Veil is now a stealth verb, not a palette swap
+- ✅ Drive look-back (hold crouch/R3), wet-sheen roads, patrol-drone
+  scan cones that brighten over civilians
+- ✅ Kill-confirm reticle (red 45° flash) + low-health heartbeat and
+  vignette pulse that quickens as HP drops
+- ✅ Interior acoustics: slapback delay send + exterior dip inside the
+  chapel zone
+- ✅ **Gait fixed at the asset level**: all six GLBs regenerated with
+  real knee flex (30-34° walk, 55-61° run), foot pitch channels added,
+  loop seams intact — the "sliding walk" defect is closed
 
-Still open: gamepad button remapping, photogrammetry source assets,
-and the [C] honesty items below.
+Still open: photogrammetry source assets (none exist), sustained
+hardware frame trace, browser playthrough capture, and the [C]
+honesty items below.
 
 ---
 
@@ -147,9 +161,8 @@ matter more than deep AI.
 
 ## 4. Animation & character (vs. Uncharted / RDR2)
 
-- [S] **Documented stiff gait** — near-zero knee articulation in the baked
-  clips. Re-export or procedurally exaggerate the knee/hip swing; this is
-  visible every second of play.
+- ~~[S] **Documented stiff gait**~~ — **FIXED**: regenerated GLBs ship real
+  knee articulation (30-34° walk, 55-61° run) plus foot pitch channels.
 - [S] **No foot IK.** Feet float over curbs/slopes; the procedural city makes
   this frequent.
 - [A] **No turn-in-place** — character pivots on a dime with no step anim.
