@@ -15,6 +15,9 @@ export class AudioEngine {
   private engineFilter: BiquadFilterNode | null = null;
   private rainSource: AudioBufferSourceNode | null = null;
   private rainGain: GainNode | null = null;
+  private citySources: AudioScheduledSourceNode[] = [];
+  private cityNodes: AudioNode[] = [];
+  private cityTimer: ReturnType<typeof setInterval> | null = null;
   private scoreTimer: ReturnType<typeof setInterval> | null = null;
   private scoreStep = 0;
   private intensity = 0;
@@ -211,6 +214,40 @@ export class AudioEngine {
     }, { once: true }));
   }
 
+  // Ambient pedestrian chatter — short filtered murmurs spatialized like
+  // enemy shots so a conversation reads from the direction it happens in.
+  pedestrianBlip(source: SoundPosition, listener: SoundPosition, yaw: number) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(source, listener, yaw, false);
+    const gain = Math.min(mix.gain * 0.5, 0.03);
+    if (gain < 0.002) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan * 0.7;
+    master.gain.value = gain;
+    filter.type = 'bandpass';
+    filter.frequency.value = 320 + Math.random() * 320;
+    filter.Q.value = 2.2;
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const syllables = 2 + Math.floor(Math.random() * 3);
+    const voices: AudioScheduledSourceNode[] = [];
+    for (let i = 0; i < syllables; i += 1) {
+      const pitch = 140 + Math.random() * 160;
+      const voice = this.tone(pitch, 0.07 + Math.random() * 0.05, 'sawtooth', 0.16, i * (0.11 + Math.random() * 0.06), filter, pitch * 0.9);
+      if (voice) voices.push(voice);
+    }
+    let remaining = voices.length;
+    const cleanup = () => { filter.disconnect(); pan.disconnect(); master.disconnect(); };
+    if (!remaining) cleanup();
+    voices.forEach((voice) => voice.addEventListener('ended', () => {
+      remaining -= 1;
+      if (remaining === 0) cleanup();
+    }, { once: true }));
+  }
+
   ui(confirm = false) {
     this.tone(confirm ? 660 : 440, 0.09, 'sine', 0.045, 0, this.effectsBus, confirm ? 880 : 520);
   }
@@ -322,6 +359,83 @@ export class AudioEngine {
     }
   }
 
+  // The "city is alive" bed: layered noise for traffic rumble and wind, plus a
+  // scheduler that fires distant honks and crowd murmurs on loose intervals.
+  setCityBed(active: boolean) {
+    if (!this.context || !this.ambientBus) return;
+    if (active && !this.citySources.length) {
+      const now = this.context.currentTime;
+      const rumbleBuffer = this.createNoiseBuffer(4);
+      if (rumbleBuffer) {
+        const source = this.context.createBufferSource();
+        const filter = this.context.createBiquadFilter();
+        const gain = this.context.createGain();
+        source.buffer = rumbleBuffer;
+        source.loop = true;
+        filter.type = 'lowpass';
+        filter.frequency.value = 130;
+        gain.gain.value = 0.055;
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ambientBus);
+        source.start(now);
+        this.citySources.push(source);
+        this.cityNodes.push(filter, gain);
+      }
+      const windBuffer = this.createNoiseBuffer(3);
+      if (windBuffer) {
+        const source = this.context.createBufferSource();
+        const filter = this.context.createBiquadFilter();
+        const gain = this.context.createGain();
+        source.buffer = windBuffer;
+        source.loop = true;
+        filter.type = 'bandpass';
+        filter.frequency.value = 820;
+        filter.Q.value = 0.35;
+        gain.gain.value = 0.014;
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ambientBus);
+        source.start(now);
+        this.citySources.push(source);
+        this.cityNodes.push(filter, gain);
+      }
+      if (!this.cityTimer) this.cityTimer = setInterval(() => this.cityEvent(), 900);
+      return;
+    }
+    if (!active) {
+      this.citySources.forEach((source) => {
+        try { source.stop(); } catch { /* Already stopped. */ }
+        source.disconnect();
+      });
+      this.cityNodes.forEach((node) => node.disconnect());
+      this.citySources = [];
+      this.cityNodes = [];
+      if (this.cityTimer) clearInterval(this.cityTimer);
+      this.cityTimer = null;
+    }
+  }
+
+  private cityEvent() {
+    if (!this.context || this.context.state !== 'running' || !this.ambientBus) return;
+    const roll = Math.random();
+    if (roll < 0.42) {
+      // Distant two-tone horn, heavily low-passed so it reads as far away.
+      const root = 260 + Math.random() * 120;
+      const delay = Math.random() * 0.6;
+      this.tone(root, 0.16, 'square', 0.012, delay, this.ambientBus, root * 0.92);
+      if (Math.random() > 0.5) this.tone(root * 0.81, 0.14, 'square', 0.01, delay + 0.18, this.ambientBus, root * 0.74);
+    } else if (roll < 0.72) {
+      // Crowd murmur swell — short bandpassed noise wobble.
+      this.noise(0.7 + Math.random() * 0.8, 0.008 + Math.random() * 0.01, 300 + Math.random() * 500, this.ambientBus);
+    } else if (roll < 0.86) {
+      // Skateboard/drone flyover — a filtered tone gliding upward.
+      const root = 180 + Math.random() * 160;
+      this.tone(root, 1.4, 'sine', 0.006, Math.random() * 0.4, this.ambientBus, root * 2.2);
+    }
+    // else: silence — gaps are part of the illusion.
+  }
+
   setEngine(speed: number, active: boolean) {
     if (!this.context || !this.engineBus) return;
     if (active && !this.engineOscillator) {
@@ -349,6 +463,7 @@ export class AudioEngine {
   dispose() {
     if (this.scoreTimer) clearInterval(this.scoreTimer);
     this.scoreTimer = null;
+    this.setCityBed(false);
     this.ambientSources.forEach((source) => {
       try { source.stop(); } catch { /* Already stopped. */ }
       source.disconnect();

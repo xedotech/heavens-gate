@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import {
   createNpcAiState,
   stepNpcAi,
@@ -86,6 +87,8 @@ interface Actor {
   aiState?: NpcAiState;
   damagePulse: number;
   lastDamageAmount: number;
+  vignette?: 'wander' | 'idle' | 'talk' | 'lean';
+  vignetteTimer?: number;
 }
 
 interface CharacterRig {
@@ -287,6 +290,27 @@ export class HeavensGateEngine {
   private flashCursor = 0;
   private impactPool: THREE.Group[] = [];
   private impactCursor = 0;
+  private litter: {
+    mesh: THREE.InstancedMesh;
+    items: Array<{ x: number; z: number; y: number; vx: number; vz: number; spin: number; phase: number }>;
+  } | null = null;
+  private litterMatrix = new THREE.Matrix4();
+  private litterPosition = new THREE.Vector3();
+  private litterQuaternion = new THREE.Quaternion();
+  private litterEuler = new THREE.Euler();
+  private litterScale = new THREE.Vector3(1, 1, 1);
+  private contactShadows: THREE.InstancedMesh | null = null;
+  private contactShadowMatrix = new THREE.Matrix4();
+  private contactShadowPosition = new THREE.Vector3();
+  private contactShadowQuaternion = new THREE.Quaternion();
+  private contactShadowScale = new THREE.Vector3();
+  private contactShadowSources: Array<{ object: THREE.Object3D; radius: number; visible: boolean }> = [];
+  private decalMesh: THREE.InstancedMesh | null = null;
+  private decalCursor = 0;
+  private decalNormal = new THREE.Vector3();
+  private decalQuaternion = new THREE.Quaternion();
+  private decalZ = new THREE.Vector3(0, 0, 1);
+  private decalMatrix = new THREE.Matrix4();
   private prevCameraYaw = 0;
   private prevCameraPitch = 0;
   private inspectionKey: THREE.PointLight | null = null;
@@ -525,6 +549,7 @@ export class HeavensGateEngine {
       this.bloomPass = new UnrealBloomPass(size, 0.6, 0.5, 0.82);
       composer.addPass(this.bloomPass);
       composer.addPass(new OutputPass());
+      composer.addPass(new SMAAPass());
       this.composer = composer;
       this.composer.setPixelRatio(this.dynamicPixelRatio);
       this.composer.setSize(this.canvas.clientWidth || window.innerWidth, this.canvas.clientHeight || window.innerHeight);
@@ -554,6 +579,7 @@ export class HeavensGateEngine {
       this.callbacks.onLoadProgress(0.76, 'Tuning the gates');
       this.createGatesAndEchoes();
       this.createObjectiveMarker();
+      this.createContactShadows();
       await this.nextFrame();
       this.callbacks.onLoadProgress(1, 'The city remembers');
       this.initialized = true;
@@ -846,6 +872,7 @@ export class HeavensGateEngine {
     this.createBillboards(buildingData);
     this.createRooftopProps(buildingData);
     this.createStreetProps();
+    this.createLitter();
 
     this.createLandmark(new THREE.Vector3(0, 0, -54), 0xd1ad61, 'Crown Basilica');
     this.createLandmark(new THREE.Vector3(90, 0, 76), 0x7fa7b0, 'Meridian Needle');
@@ -932,6 +959,36 @@ export class HeavensGateEngine {
     stripMesh.instanceMatrix.needsUpdate = true;
     if (stripMesh.instanceColor) stripMesh.instanceColor.needsUpdate = true;
     this.scene.add(stripMesh);
+
+    // Baked contact-AO skirts — soften every wall-to-ground seam so towers sit
+    // in the world instead of floating on it.
+    const aoCanvas = document.createElement('canvas');
+    aoCanvas.width = 128;
+    aoCanvas.height = 128;
+    const aoCtx = aoCanvas.getContext('2d');
+    if (aoCtx) {
+      const gradient = aoCtx.createRadialGradient(64, 64, 30, 64, 64, 64);
+      gradient.addColorStop(0, 'rgba(0,0,0,0.5)');
+      gradient.addColorStop(0.62, 'rgba(0,0,0,0.22)');
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');
+      aoCtx.fillStyle = gradient;
+      aoCtx.fillRect(0, 0, 128, 128);
+      const aoTexture = new THREE.CanvasTexture(aoCanvas);
+      const aoMaterial = new THREE.MeshBasicMaterial({ map: aoTexture, transparent: true, depthWrite: false });
+      const aoMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), aoMaterial, buildingData.length);
+      const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+      buildingData.forEach((building, index) => {
+        matrix.compose(
+          new THREE.Vector3(building.position.x, 0.025, building.position.z),
+          flat,
+          new THREE.Vector3(building.scale.x * 1.35, building.scale.z * 1.35, 1),
+        );
+        aoMesh.setMatrixAt(index, matrix);
+      });
+      aoMesh.instanceMatrix.needsUpdate = true;
+      aoMesh.renderOrder = 0;
+      this.scene.add(aoMesh);
+    }
   }
 
   private createStreetMarkings() {
@@ -1294,6 +1351,139 @@ export class HeavensGateEngine {
       mesh.castShadow = false;
       this.scene.add(mesh);
     });
+  }
+
+  private createLitter() {
+    // Wind-blown paper scraps — the ambient-motion detail that keeps streets
+    // from reading as sterile (GTA's classic "illusion of life" trick).
+    const count = 44;
+    const material = new THREE.MeshBasicMaterial({ color: 0x8d9391, side: THREE.DoubleSide });
+    const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.3, 0.22), material, count);
+    const items: Array<{ x: number; z: number; y: number; vx: number; vz: number; spin: number; phase: number }> = [];
+    const matrix = new THREE.Matrix4();
+    for (let i = 0; i < count; i += 1) {
+      const road = Math.floor(seeded(i, 140) * 9 - 4) * 30;
+      const along = (seeded(i, 141) - 0.5) * 280;
+      const horizontal = seeded(i, 142) > 0.5;
+      items.push({
+        x: horizontal ? along : road + (seeded(i, 143) - 0.5) * 9,
+        z: horizontal ? road + (seeded(i, 144) - 0.5) * 9 : along,
+        y: 0.045,
+        vx: 0,
+        vz: 0,
+        spin: 0,
+        phase: seeded(i, 145) * Math.PI * 2,
+      });
+      matrix.makeTranslation(items[i].x, items[i].y, items[i].z);
+      mesh.setMatrixAt(i, matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(mesh);
+    this.litter = { mesh, items };
+  }
+
+  private updateLitter(delta: number, time: number) {
+    if (!this.litter) return;
+    const { mesh, items } = this.litter;
+    const gust = 0.55 + Math.sin(time * 0.31) * 0.45 + Math.sin(time * 1.7) * 0.18;
+    const windX = Math.sin(time * 0.13) * gust;
+    const windZ = Math.cos(time * 0.09) * gust * 0.8;
+    const quaternion = this.litterQuaternion;
+    const scale = this.litterScale;
+    items.forEach((item, index) => {
+      // Traffic slipstream: passing cars shove litter aside and lift it.
+      this.trafficCars?.forEach((car) => {
+        if (car.wrecked || Math.abs(car.speed) < 2) return;
+        const dx = item.x - car.group.position.x;
+        const dz = item.z - car.group.position.z;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < 7.3) {
+          const dist = Math.max(0.4, Math.sqrt(distSq));
+          const push = (Math.abs(car.speed) * 0.16) / dist;
+          item.vx += (dx / dist) * push + (car.axis === 'x' ? car.direction * push * 0.6 : 0);
+          item.vz += (dz / dist) * push + (car.axis === 'z' ? car.direction * push * 0.6 : 0);
+          item.y = Math.min(0.5, item.y + push * 0.09);
+        }
+      });
+      item.vx += (windX - item.vx) * delta * 0.7;
+      item.vz += (windZ - item.vz) * delta * 0.7;
+      item.x += item.vx * delta;
+      item.z += item.vz * delta;
+      const speed = Math.hypot(item.vx, item.vz);
+      item.spin = damp(item.spin, clamp(speed * 1.6, 0, 3.4), 4, delta);
+      item.y = Math.max(0.045, item.y - delta * 0.22);
+      if (item.x < -160 || item.x > 160 || item.z < -160 || item.z > 160) {
+        const road = Math.floor(seeded(index, Math.floor(time) + 146) * 9 - 4) * 30;
+        const along = (seeded(index, Math.floor(time) + 147) - 0.5) * 280;
+        const horizontal = seeded(index, Math.floor(time) + 148) > 0.5;
+        item.x = horizontal ? along : road;
+        item.z = horizontal ? road : along;
+        item.vx = 0;
+        item.vz = 0;
+      }
+      quaternion.setFromEuler(this.litterEuler.set(
+        -Math.PI / 2 + Math.sin(time * item.spin + item.phase) * clamp(speed, 0, 1) * 0.9,
+        item.phase + time * item.spin * 0.4,
+        Math.sin(time * item.spin * 0.7 + item.phase) * 0.4,
+      ));
+      this.litterMatrix.compose(this.litterPosition.set(item.x, item.y + Math.sin(time * item.spin + item.phase) * 0.05 * clamp(speed, 0, 1), item.z), quaternion, scale);
+      mesh.setMatrixAt(index, this.litterMatrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private createContactShadows() {
+    // Soft radial blob shadows — the cheapest credible AO: anchors actors,
+    // vehicles, and the player to the ground instead of floating.
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const gradient = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+    gradient.addColorStop(0, 'rgba(0,0,0,0.55)');
+    gradient.addColorStop(0.55, 'rgba(0,0,0,0.28)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 128, 128);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    this.contactShadowSources = [
+      { object: this.player, radius: 1.15, visible: true },
+      ...this.actors.map((actor) => ({
+        object: actor.group,
+        radius: actor.kind === 'drone' ? 0.85 : actor.kind === 'boss' ? 2.4 : 1.05,
+        visible: true,
+      })),
+      ...this.vehicles.map((vehicle) => ({ object: vehicle.group, radius: 3.4, visible: true })),
+      ...this.trafficCars.map((car) => ({ object: car.group, radius: 3.4, visible: true })),
+    ];
+    const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), material, this.contactShadowSources.length);
+    mesh.renderOrder = 1;
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
+    this.contactShadows = mesh;
+    this.contactShadowQuaternion.setFromEuler(this.litterEuler.set(-Math.PI / 2, 0, 0));
+  }
+
+  private updateContactShadows() {
+    if (!this.contactShadows) return;
+    this.contactShadowSources.forEach((source, index) => {
+      const grounded = source.object.position.y;
+      const shrink = clamp(1 - grounded * 0.22, 0.35, 1);
+      this.contactShadowPosition.set(source.object.position.x, 0.035, source.object.position.z);
+      this.contactShadowScale.set(source.radius * shrink, source.radius * shrink, 1);
+      this.contactShadowMatrix.compose(this.contactShadowPosition, this.contactShadowQuaternion, this.contactShadowScale);
+      if (!source.object.visible) this.contactShadowMatrix.makeScale(0, 0, 0);
+      this.contactShadows!.setMatrixAt(index, this.contactShadowMatrix);
+    });
+    this.contactShadows.instanceMatrix.needsUpdate = true;
   }
 
   private createLandmark(position: THREE.Vector3, color: number, label: string) {
@@ -2208,11 +2398,12 @@ export class HeavensGateEngine {
     wardens.forEach(([x, z], index) => this.addActor(`warden-${index + 1}`, 'enemy', x, z, 0x302c2c, 0xd65b43, 78));
 
     const civilianColors = [0x35404a, 0x4a4035, 0x3d4738, 0x46384a, 0x4b4a3b, 0x2f3f46, 0x544134, 0x3a3d52];
+    const citizens: Actor[] = [];
     for (let i = 0; i < 34; i += 1) {
       const road = Math.floor(seeded(i, 70) * 9 - 4) * 30;
       const along = (seeded(i, 71) - 0.5) * 250;
       const horizontal = seeded(i, 72) > 0.5;
-      this.addActor(
+      const citizen = this.addActor(
         `citizen-${i + 1}`,
         'civilian',
         horizontal ? along : road + (seeded(i, 73) > 0.5 ? 5.6 : -5.6),
@@ -2221,6 +2412,27 @@ export class HeavensGateEngine {
         0x8c7a5a,
         42,
       );
+      citizens.push(citizen);
+      // Ambient-life vignettes: pairs face each other in conversation, loners
+      // idle or lean. Wanderers keep the original drift behavior.
+      const roll = seeded(i, 130);
+      if (i % 5 === 4 && citizens.length > 1) {
+        // Pair this citizen with the previous one as a talking duo.
+        const partner = citizens[citizens.length - 2];
+        partner.vignette = 'talk';
+        citizen.vignette = 'talk';
+        citizen.group.position.copy(partner.group.position).add(new THREE.Vector3(1.1, 0, 0.4));
+        citizen.spawn.copy(citizen.group.position);
+        partner.group.rotation.y = Math.atan2(1.1, 0.4);
+        citizen.group.rotation.y = Math.atan2(-1.1, -0.4);
+      } else if (roll < 0.22) {
+        citizen.vignette = 'idle';
+      } else if (roll < 0.32) {
+        citizen.vignette = 'lean';
+        citizen.group.rotation.x = -0.08;
+      } else {
+        citizen.vignette = 'wander';
+      }
     }
 
     [[62, 26], [-58, 4], [102, 95], [-110, 78], [8, -100], [88, -72]].forEach(([x, z], index) => {
@@ -2368,6 +2580,8 @@ export class HeavensGateEngine {
     if (!this.initialized) return;
     await this.audio.unlock();
     this.audio.setVolume(this.settings.volume);
+    this.audio.setCityBed(true);
+    this.audio.setRainBed(this.settings.quality !== 'low');
     this.resetCampaign(save ?? null);
     this.clearInput();
     this.mode = 'playing';
@@ -3242,6 +3456,19 @@ export class HeavensGateEngine {
           const away = actor.group.position.clone().sub(playerPosition).setY(0).normalize();
           this.moveActor(actor, away, actor.speed * 2.25, delta);
           actor.flee -= delta;
+        } else if (actor.vignette === 'talk') {
+          // Conversation loop: face partner, gesture sway, occasional blip.
+          actor.group.position.y = Math.sin(time * 1.6 + actorIndex) * 0.015;
+          actor.wanderAngle += delta * 0.1;
+          actor.vignetteTimer = (actor.vignetteTimer ?? seeded(actorIndex, 131) * 6) - delta;
+          if (actor.vignetteTimer <= 0) {
+            actor.vignetteTimer = 2.4 + seeded(actorIndex + Math.floor(time), 132) * 4.5;
+            if (distance < 42) this.audio.pedestrianBlip(actor.group.position, playerPosition, this.cameraYaw);
+          }
+        } else if (actor.vignette === 'idle' || actor.vignette === 'lean') {
+          // Standing life: weight-shift sway and head-look drift.
+          actor.group.position.x = actor.spawn.x + Math.sin(time * 0.4 + actorIndex) * 0.08;
+          actor.wanderAngle += delta * 0.06;
         } else {
           actor.wanderAngle += Math.sin(time * 0.18 + actorIndex) * delta * 0.12;
           this.moveActor(actor, new THREE.Vector3(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle)), actor.speed * 0.42, delta);
@@ -3469,6 +3696,10 @@ export class HeavensGateEngine {
       const obstruction = this.firstWorldObstruction(origin, end);
       this.createTracer(origin, obstruction ?? end, spec.tracerColor);
       this.createImpact(obstruction ?? end, !obstruction && Boolean(hit?.object.userData.actorId));
+      if (hit && !hit.object.userData.actorId && hit.face) {
+        const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+        this.placeDecal(hit.point, worldNormal);
+      }
       const trafficId = hit?.object.userData.trafficId as number | undefined;
       if (trafficId !== undefined && !obstruction) {
         const car = this.trafficCars[trafficId];
@@ -4027,7 +4258,7 @@ export class HeavensGateEngine {
   }
 
   private updateAmbientAnimation(delta: number, time: number) {
-    this.heroCharacter?.update(delta, time, clamp(this.heat / 75 + (this.mouseShootHeld ? 0.2 : 0), 0, 1));
+    this.heroCharacter?.update(delta, time, clamp(this.heat / 75 + (this.mouseShootHeld ? 0.2 : 0), 0, 1), this.cameraPitch);
     this.gates.forEach((gate, index) => {
       gate.ring.rotation.z += delta * (0.07 + index * 0.015);
       gate.veil.scale.setScalar(0.98 + Math.sin(time * 1.4 + index) * 0.018);
@@ -4056,6 +4287,8 @@ export class HeavensGateEngine {
       }
       mesh.instanceMatrix.needsUpdate = true;
     }
+    this.updateLitter(delta, time);
+    this.updateContactShadows();
     this.echoes.forEach((echo, index) => {
       if (echo.activated) return;
       echo.group.rotation.y += delta * (0.38 + index * 0.08);
@@ -4233,6 +4466,46 @@ export class HeavensGateEngine {
     material.opacity = 1;
     group.visible = true;
     this.pushEffect({ object: group, life: hostile ? 0.26 : 0.2, total: hostile ? 0.26 : 0.2, mode: 'pulse', pooled: true });
+  }
+
+  private placeDecal(point: THREE.Vector3, normal: THREE.Vector3) {
+    if (!this.scene) return;
+    if (!this.decalMesh) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const gradient = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
+      gradient.addColorStop(0, 'rgba(8,8,9,0.92)');
+      gradient.addColorStop(0.4, 'rgba(10,10,12,0.72)');
+      gradient.addColorStop(1, 'rgba(12,12,14,0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 64, 64);
+      const texture = new THREE.CanvasTexture(canvas);
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+      });
+      const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.16, 0.16), material, 96);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 2;
+      const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < 96; i += 1) mesh.setMatrixAt(i, zero);
+      this.scene.add(mesh);
+      this.decalMesh = mesh;
+    }
+    const index = this.decalCursor % 96;
+    this.decalCursor += 1;
+    this.decalNormal.copy(normal).normalize();
+    this.decalQuaternion.setFromUnitVectors(this.decalZ, this.decalNormal);
+    this.contactShadowPosition.copy(point).addScaledVector(this.decalNormal, 0.014);
+    this.decalMatrix.compose(this.contactShadowPosition, this.decalQuaternion, this.litterScale.set(1, 1, 1));
+    this.decalMesh.setMatrixAt(index, this.decalMatrix);
+    this.decalMesh.instanceMatrix.needsUpdate = true;
   }
 
   private createPulseEffect(position: THREE.Vector3) {

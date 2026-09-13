@@ -283,7 +283,10 @@ export class HeroCharacter {
   private readonly actions = new Map<CharacterMotion, THREE.AnimationAction>();
   private readonly morphs: MorphBinding[] = [];
   private readonly rightHand: THREE.Bone | null;
+  private readonly spineBones: THREE.Bone[] = [];
   private readonly rightGripBones: Array<{ bone: THREE.Bone; bind: THREE.Quaternion; curl: number }>;
+  private aimPitchTarget = 0;
+  private aimPitchCurrent = 0;
   private heldObject: THREE.Object3D | null = null;
   // `null` is intentional: the first call to setMotion('idle') must start the
   // authored idle clip instead of being treated as a no-op against the
@@ -311,6 +314,7 @@ export class HeroCharacter {
       if (child instanceof THREE.Bone) {
         bones += 1;
         if (child.name.toLowerCase() === 'hand_r') rightHand = child;
+        if (/^spine_0[23]$/i.test(child.name)) this.spineBones.push(child);
         const finger = child.name.match(/^(thumb|index|middle|ring|pinky)_0([1-3])_r$/i);
         if (finger) {
           const segment = Number(finger[2]);
@@ -426,9 +430,26 @@ export class HeroCharacter {
     return true;
   }
 
-  update(delta: number, elapsed: number, combatIntensity: number) {
+  setAimPitch(pitch: number) {
+    this.aimPitchTarget = pitch;
+  }
+
+  private applyAimPitch(delta: number) {
+    this.aimPitchCurrent = THREE.MathUtils.damp(this.aimPitchCurrent, this.aimPitchTarget, 9, delta);
+    if (Math.abs(this.aimPitchCurrent) < 0.001 || !this.spineBones.length) return;
+    // Positive camera pitch (looking up) leans the torso back: negative local
+    // X on the spine chain, per the rig's rotation convention.
+    const weights = [0.35, 0.45];
+    this.spineBones.forEach((bone, index) => {
+      bone.rotation.x += -this.aimPitchCurrent * (weights[index] ?? 0.3);
+    });
+  }
+
+  update(delta: number, elapsed: number, combatIntensity: number, aimPitch = 0) {
     if (this.disposed) return;
     this.mixer.update(delta);
+    this.aimPitchTarget = aimPitch;
+    this.applyAimPitch(delta);
     if (this.heldObject) this.applyGripPose();
     if (this.oneShotRemaining > 0) {
       this.oneShotRemaining = Math.max(0, this.oneShotRemaining - delta);
