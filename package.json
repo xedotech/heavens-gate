@@ -16,7 +16,7 @@
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "validate:characters": "node tools/characters/validate_characters.mjs",
-    "import:environment": "node tools/environment/import_pavement.mjs",
+    "import:environment": "node tools/environment/import_pavement.mjs && node tools/environment/import_surfaces.mjs",
     "validate:environment": "node tools/environment/validate_environment.mjs",
     "validate:release": "node tools/release/check_release.mjs"
   },

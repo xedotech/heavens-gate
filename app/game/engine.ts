@@ -56,7 +56,7 @@ import {
 import { FrameTimeSampler } from './performance';
 import { createCheckpoint, normalizeSave } from './persistence';
 import { UPGRADES, marksForActor } from './upgrades';
-import { ScannedGroundMaterial } from './scanned-materials';
+import { ScannedSurfaceMaterial } from './scanned-materials';
 import { visibleInScene, withoutSubtree } from './scene-lifecycle';
 import {
   INITIAL_HUD,
@@ -279,7 +279,10 @@ export class HeavensGateEngine {
   private phaseMaterials: THREE.MeshStandardMaterial[] = [];
   private collisionBoxes: THREE.Box3[] = [];
   private rayTargets: THREE.Object3D[] = [];
-  private scannedGround: ScannedGroundMaterial | null = null;
+  private scannedGround: ScannedSurfaceMaterial | null = null;
+  private scannedSurfaces: ScannedSurfaceMaterial[] = [];
+  private chapelStone: THREE.MeshStandardMaterial | null = null;
+  private chapelStoneDark: THREE.MeshStandardMaterial | null = null;
   private effects: TimedEffect[] = [];
   private objectiveMarker: THREE.Group | null = null;
   private dust: THREE.Points | null = null;
@@ -781,10 +784,48 @@ export class HeavensGateEngine {
   }
 
   private createCity() {
-    this.scannedGround = new ScannedGroundMaterial(WORLD_SIZE, this.renderer.capabilities.getMaxAnisotropy(), () => {
-      this.emitToast('Ground detail unavailable', 'The last working ground material is retained. You can keep playing.', 'info');
+    const anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    const surfaceFallback = (label: string) => () => {
+      this.emitToast(`${label} detail unavailable`, 'The last working material is retained. You can keep playing.', 'info');
+    };
+    this.scannedGround = new ScannedSurfaceMaterial('/assets/environment/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Ground'));
+    // Photo-scanned asphalt on the roads; albedo kept dark for the wet-noir look.
+    const scannedRoad = new ScannedSurfaceMaterial('/assets/environment/asphalt-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Road'), {
+      repeat: [WORLD_SIZE / 2, 4.2],
+      apply: { metalnessMap: false },
+      tint: 0x585c60,
+      metalness: 0.5,
+      aoIntensity: 0.5,
+      fallback: { color: 0x10171a, roughness: 0.19, metalness: 0.55, envMapIntensity: 1.5 },
     });
-    this.scannedGround.setQuality(this.settings.quality);
+    // Concrete-wall relief on the tower facades — normal only; the procedural
+    // canvas albedo already carries the lit-window grid.
+    const scannedFacade = new ScannedSurfaceMaterial('/assets/environment/concrete-wall-008/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
+      repeat: [3, 3],
+      apply: { albedo: false, arm: false },
+      normalScale: 1.1,
+      onApplied: (material) => {
+        buildingMaterial.normalMap = material.normalMap;
+        buildingMaterial.normalScale.setScalar(1.1);
+        buildingMaterial.needsUpdate = true;
+      },
+    });
+    const chapelFloor = new ScannedSurfaceMaterial('/assets/environment/stone-tiles-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Stone'), {
+      repeat: [8, 7],
+      tint: 0x6a6763,
+      aoIntensity: 0.8,
+      fallback: { color: 0x232120, roughness: 0.94 },
+    });
+    const chapelBrick = new ScannedSurfaceMaterial('/assets/environment/dark-brick-wall/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Brick'), {
+      repeat: [5, 3],
+      tint: 0x77706a,
+      aoIntensity: 0.8,
+      fallback: { color: 0x2e2c2a, roughness: 0.9, metalness: 0.05 },
+    });
+    this.chapelStoneDark = chapelFloor.material;
+    this.chapelStone = chapelBrick.material;
+    this.scannedSurfaces = [this.scannedGround, scannedRoad, scannedFacade, chapelFloor, chapelBrick];
+    this.scannedSurfaces.forEach((surface) => surface.setQuality(this.settings.quality));
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE), this.scannedGround.material);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
@@ -794,7 +835,7 @@ export class HeavensGateEngine {
 
     // Perpetual-storm noir: roads read as wet asphalt — low roughness and a
     // raised env response so neon and headlights smear across the surface.
-    const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x10171a, roughness: 0.19, metalness: 0.55, envMapIntensity: 1.5 });
+    const roadMaterial = scannedRoad.material;
     const laneMaterial = new THREE.MeshBasicMaterial({ color: 0x927b46, transparent: true, opacity: 0.5 });
     for (let line = -150; line <= 150; line += 30) {
       const roadX = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE, 8.4), roadMaterial);
@@ -802,8 +843,11 @@ export class HeavensGateEngine {
       roadX.position.set(0, 0.018, line);
       roadX.receiveShadow = true;
       this.scene.add(roadX);
-      const roadZ = new THREE.Mesh(new THREE.PlaneGeometry(8.4, WORLD_SIZE), roadMaterial);
-      roadZ.rotation.x = -Math.PI / 2;
+      // Same 340x8.4 UV span, spun in-plane — the asphalt grain runs along the street.
+      const roadZGeometry = new THREE.PlaneGeometry(WORLD_SIZE, 8.4);
+      roadZGeometry.rotateX(-Math.PI / 2);
+      roadZGeometry.rotateY(Math.PI / 2);
+      const roadZ = new THREE.Mesh(roadZGeometry, roadMaterial);
       roadZ.position.set(line, 0.019, 0);
       roadZ.receiveShadow = true;
       this.scene.add(roadZ);
@@ -2721,8 +2765,8 @@ export class HeavensGateEngine {
     const chapel = new THREE.Group();
     chapel.position.set(cx, 0, cz);
 
-    const stone = new THREE.MeshStandardMaterial({ color: 0x2e2c2a, roughness: 0.9, metalness: 0.05 });
-    const stoneDark = new THREE.MeshStandardMaterial({ color: 0x232120, roughness: 0.94 });
+    const stone = this.chapelStone ?? new THREE.MeshStandardMaterial({ color: 0x2e2c2a, roughness: 0.9, metalness: 0.05 });
+    const stoneDark = this.chapelStoneDark ?? new THREE.MeshStandardMaterial({ color: 0x232120, roughness: 0.94 });
     const wood = new THREE.MeshStandardMaterial({ color: 0x3d2f22, roughness: 0.82 });
     const glass = new THREE.MeshStandardMaterial({ color: 0x2a3550, emissive: 0x5a78c8, emissiveIntensity: 1.5, roughness: 0.2 });
     const glassWarm = new THREE.MeshStandardMaterial({ color: 0x503528, emissive: 0xc8864a, emissiveIntensity: 1.4, roughness: 0.2 });
@@ -2848,7 +2892,7 @@ export class HeavensGateEngine {
     }
     if (this.rain) this.rain.mesh.visible = this.settings.quality !== 'low';
     this.audio.setRainBed(this.settings.quality !== 'low');
-    this.scannedGround?.setQuality(this.settings.quality);
+    this.scannedSurfaces.forEach((surface) => surface.setQuality(this.settings.quality));
     this.resize();
   }
 
@@ -5505,7 +5549,8 @@ export class HeavensGateEngine {
       this.heroCharacter = null;
     }
     this.audio.dispose();
-    this.scannedGround?.dispose();
+    this.scannedSurfaces.forEach((surface) => surface.dispose());
+    this.scannedSurfaces = [];
     this.scannedGround = null;
     this.composer?.dispose();
     this.composer = null;

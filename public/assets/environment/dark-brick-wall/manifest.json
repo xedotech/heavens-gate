@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "dark-brick-wall",
+  "label": "Dark Brick Wall",
+  "author": "Poly Haven",
+  "source": "https://polyhaven.com/a/dark_brick_wall",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "sourceStandard": "https://docs.polyhaven.com/en/technical-standards/textures",
+  "acquisition": "Photo-based PBR material. Provider uses photogrammetry or photometric stereo; asset-specific capture method is not stated.",
+  "intendedUse": "Chapel exterior walls and Old Spine masonry",
+  "tileMeters": 2.2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "1k": {
+      "albedo": {
+        "file": "dark-brick-wall-albedo-1k-22e704c063ae.webp",
+        "sha256": "22e704c063aef39ee245ae84866118a6612289b6eda6509fc6cfe36d0e2f2a5e",
+        "bytes": 272546,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_brick_wall/dark_brick_wall_diff_1k.jpg",
+        "sourceMd5": "b1e82a72dddf31ae97c3b0b8fab0e690",
+        "sourceSha256": "5ec2718d497fadae9492d0b6977a1de3f0867c9ccbf65a835f9bbe48d632a228"
+      },
+      "normal": {
+        "file": "dark-brick-wall-normal-1k-7e59d4baf975.webp",
+        "sha256": "7e59d4baf97541699fe6e3c05ec9ff887b96d2f5aac3844089d39b578932c131",
+        "bytes": 2101766,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_brick_wall/dark_brick_wall_nor_gl_1k.jpg",
+        "sourceMd5": "656efc89b0c03084add1042cb77362ac",
+        "sourceSha256": "89b4b43655f87ca41734021986ff6261b41e624108eeb17ac24ea67593cb5858"
+      },
+      "arm": {
+        "file": "dark-brick-wall-arm-1k-8c628877dc41.webp",
+        "sha256": "8c628877dc412cb796c56766263fa3d0735dc37a4bee66d039a81c52a8cad012",
+        "bytes": 1389468,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_brick_wall/dark_brick_wall_arm_1k.jpg",
+        "sourceMd5": "301ab3e310ef00de8bc4556b7eba8246",
+        "sourceSha256": "3ede6bcc49287bb9ce7e7eeecbaf2178ba59126aa25024ca493f9b97fd3bb35c"
+      }
+    },
+    "2k": {
+      "albedo": {
+        "file": "dark-brick-wall-albedo-2k-bbd026bed311.webp",
+        "sha256": "bbd026bed3113b893e2c37358fd75daf71ef2c5c23d6003860df68f310780c89",
+        "bytes": 1100582,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_brick_wall/dark_brick_wall_diff_2k.jpg",
+        "sourceMd5": "5cbd713cf987defa543ae6a0ff803ef2",
+        "sourceSha256": "d51a040a960cbeb34c66b3768d1381e910c752d0f1825156b3f65abac81a55d4"
+      },
+      "normal": {
+        "file": "dark-brick-wall-normal-2k-1a578bbe3ec6.webp",
+        "sha256": "1a578bbe3ec64f8d353952e1e3e78287a4f6e64350011b5215c519db51ecb4a5",
+        "bytes": 5653164,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_brick_wall/dark_brick_wall_nor_gl_2k.jpg",
+        "sourceMd5": "43763045e4fd9b8123d727063e0ff17f",
+        "sourceSha256": "f56788cd891ac5a4d8f1a1cdabec7f3881454c77869f0c918afa97526e9dd428"
+      },
+      "arm": {
+        "file": "dark-brick-wall-arm-2k-50f34d56e61a.webp",
+        "sha256": "50f34d56e61a23c522908b4adcf25e235375a4e58f27173009690049935c7c97",
+        "bytes": 5302136,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_brick_wall/dark_brick_wall_arm_2k.jpg",
+        "sourceMd5": "e90d5acec1e8dc19197fc20575e4d8f1",
+        "sourceSha256": "4e8bccd2fc7083c81897c43a7e76ac30bc14ace38dba82ea2f7a61ce210d2060"
+      }
+    }
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "asphalt-02",
+  "label": "Asphalt 02",
+  "author": "Poly Haven",
+  "source": "https://polyhaven.com/a/asphalt_02",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "sourceStandard": "https://docs.polyhaven.com/en/technical-standards/textures",
+  "acquisition": "Photo-based PBR material. Provider uses photogrammetry or photometric stereo; asset-specific capture method is not stated.",
+  "intendedUse": "Road surfaces — worn asphalt read for all streets",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "1k": {
+      "albedo": {
+        "file": "asphalt-02-albedo-1k-ed86c9167c02.webp",
+        "sha256": "ed86c9167c024e5966cd4865d01bd001d328cc4b83d16569df54eb49bc412c79",
+        "bytes": 455162,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_diff_1k.jpg",
+        "sourceMd5": "fa19772d4817754c3efab708c651f5a8",
+        "sourceSha256": "1aa5ce99f58a625c71d48cfc3e68b65ca85ccb00f39e045c0a928608a0ea25ed"
+      },
+      "normal": {
+        "file": "asphalt-02-normal-1k-20ae1a383028.webp",
+        "sha256": "20ae1a383028d94516166a17ab23772d3a1f4a9a15152a3ab7c6280e85aca32c",
+        "bytes": 2232892,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_nor_gl_1k.jpg",
+        "sourceMd5": "338da8de636ea36133170578cac82e8e",
+        "sourceSha256": "42a1c381b53204e83a982db2864479a30bc127bbdeebb1006f8ee51bff099df3"
+      },
+      "arm": {
+        "file": "asphalt-02-arm-1k-6020d71bdfe6.webp",
+        "sha256": "6020d71bdfe6a1e7c6162719495fc0ee796be3d7749b6ef2443d3bb5e456d8e3",
+        "bytes": 1696100,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_arm_1k.jpg",
+        "sourceMd5": "33820445f43af5e5ee484674b6939271",
+        "sourceSha256": "56bd8e591a3db579846fcb5185f60b0651e0bd4ea85c3529c339e6746243c9cf"
+      }
+    },
+    "2k": {
+      "albedo": {
+        "file": "asphalt-02-albedo-2k-9316355e26eb.webp",
+        "sha256": "9316355e26ebbc6f061a364ffd0502e69dbe98471227bcb36961271f3c0cf8f4",
+        "bytes": 1887544,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/asphalt_02/asphalt_02_diff_2k.jpg",
+        "sourceMd5": "336af399fd98a39ab986d8b3bf73b4ff",
+        "sourceSha256": "28f5ba8690553f192c0e5e1a5ff40f34765b4b93f4cc7059b1a3e9c795b6c28c"
+      },
+      "normal": {
+        "file": "asphalt-02-normal-2k-bb53bdc945b6.webp",
+        "sha256": "bb53bdc945b68ef2ee75e694a6c5cd310667aed0efc3db8dadc11511243837c9",
+        "bytes": 6269202,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/asphalt_02/asphalt_02_nor_gl_2k.jpg",
+        "sourceMd5": "77ebd1cc0b020ccaa1c6b58f103d1f75",
+        "sourceSha256": "ffe49db71a0fd34c1e259625df66a302a237597d6ef655307987ec4e45bc6f21"
+      },
+      "arm": {
+        "file": "asphalt-02-arm-2k-6a28738c177a.webp",
+        "sha256": "6a28738c177aeb3e3cc4bf86879fb135e9f17d59281e83f5418a2d3050463666",
+        "bytes": 6944720,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/asphalt_02/asphalt_02_arm_2k.jpg",
+        "sourceMd5": "152c0fb79ad6f33040b79779fea98664",
+        "sourceSha256": "ed70e88640e4ed51cf1c3e57cb20db26983599b20b867c2526439e3a2c849fea"
+      }
+    }
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "stone-tiles-02",
+  "label": "Stone Tiles 02",
+  "author": "Poly Haven",
+  "source": "https://polyhaven.com/a/stone_tiles_02",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "sourceStandard": "https://docs.polyhaven.com/en/technical-standards/textures",
+  "acquisition": "Photo-based PBR material. Provider uses photogrammetry or photometric stereo; asset-specific capture method is not stated.",
+  "intendedUse": "Chapel interior floor and altar surfaces",
+  "tileMeters": 1.6,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "1k": {
+      "albedo": {
+        "file": "stone-tiles-02-albedo-1k-0d5f96fb36be.webp",
+        "sha256": "0d5f96fb36beb9a75f0432c8e7e8f8a8bbf57d847ef712745e9377ab04c24c24",
+        "bytes": 261932,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/stone_tiles_02/stone_tiles_02_diff_1k.jpg",
+        "sourceMd5": "8d2ebfc3505efbb610aa5010d38d2df8",
+        "sourceSha256": "687ef4a6cc07fb680352cf26b0a2a6256d4c18d8084dcd59ac739bc509296e18"
+      },
+      "normal": {
+        "file": "stone-tiles-02-normal-1k-320e0ab1b362.webp",
+        "sha256": "320e0ab1b362c0ba30004b3ba7fc96051b37a1f4457c03246b418cf4421729d0",
+        "bytes": 1545976,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/stone_tiles_02/stone_tiles_02_nor_gl_1k.jpg",
+        "sourceMd5": "cca5bd87964b755cc85c01322e8d1a0e",
+        "sourceSha256": "ab19cc9baacb0bc30a219f841254beb6837412ddad9bfc9c052b5aa805d1c3f0"
+      },
+      "arm": {
+        "file": "stone-tiles-02-arm-1k-7edbd12b6576.webp",
+        "sha256": "7edbd12b6576d10f68fbc7052cf62a0b41f5a92958d5c019e44c1885cf390f5e",
+        "bytes": 1100356,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/stone_tiles_02/stone_tiles_02_arm_1k.jpg",
+        "sourceMd5": "b7d6c503145f4b57cd6e4442739036f8",
+        "sourceSha256": "5f19b8f986ec3fcabf29b125e225140066beb8f3bc687d62364968ac540514a9"
+      }
+    },
+    "2k": {
+      "albedo": {
+        "file": "stone-tiles-02-albedo-2k-3b3a164353f3.webp",
+        "sha256": "3b3a164353f3f8b468df50fb7c71f9136c78cc06168327cf28737f272b9df3ec",
+        "bytes": 1268732,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/stone_tiles_02/stone_tiles_02_diff_2k.jpg",
+        "sourceMd5": "2e724b32ab8dd4db86f829cda244e567",
+        "sourceSha256": "02e056f5f5fbcbd90212bd4c7b8c1e979a10685a3291b6b25b19eeeb84f7d410"
+      },
+      "normal": {
+        "file": "stone-tiles-02-normal-2k-37c8a184f6ba.webp",
+        "sha256": "37c8a184f6ba93920eb6f2657463b50f3235f33fa960cf6dbb7ef2b41cfc601c",
+        "bytes": 6214892,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/stone_tiles_02/stone_tiles_02_nor_gl_2k.jpg",
+        "sourceMd5": "d0de6ee2144cc77331623c1a0aae4e51",
+        "sourceSha256": "badd9a55dbf1b53217408f49303286d8a93f5e7074c6869b6f53a9a547a6a6ce"
+      },
+      "arm": {
+        "file": "stone-tiles-02-arm-2k-983d89e35bb9.webp",
+        "sha256": "983d89e35bb9a7afe34a132449f6a4744552f4cb7f7c437702ecf1a98ca86f9e",
+        "bytes": 4721940,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/stone_tiles_02/stone_tiles_02_arm_2k.jpg",
+        "sourceMd5": "d20692ad610a07c029c496fe18803e30",
+        "sourceSha256": "af4417c7125bf49a78d6aa0bed4324d975048d1112f5b801bca7e54cb8e33517"
+      }
+    }
+  }
+}

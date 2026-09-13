@@ -12,7 +12,7 @@ export interface ScanMap {
 }
 export interface ScanManifest {
   schemaVersion: 1;
-  id: 'concrete-pavement-03';
+  id: string;
   license: 'CC0-1.0';
   tileMeters: number;
   normalConvention: 'OpenGL';

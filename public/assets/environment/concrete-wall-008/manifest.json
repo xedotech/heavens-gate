@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "concrete-wall-008",
+  "label": "Concrete Wall 008",
+  "author": "Poly Haven",
+  "source": "https://polyhaven.com/a/concrete_wall_008",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "sourceStandard": "https://docs.polyhaven.com/en/technical-standards/textures",
+  "acquisition": "Photo-based PBR material. Provider uses photogrammetry or photometric stereo; asset-specific capture method is not stated.",
+  "intendedUse": "Facade relief — normal/roughness on towers, crowns, parapets, curbs",
+  "tileMeters": 2.4,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "1k": {
+      "albedo": {
+        "file": "concrete-wall-008-albedo-1k-81f73ecd3486.webp",
+        "sha256": "81f73ecd3486b9e0e9cc13d6ff41229880e1d0e00c477a8628610ba1d31cba13",
+        "bytes": 139484,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_diff_1k.jpg",
+        "sourceMd5": "6a0f87fbfea261d797661c47e05b25ad",
+        "sourceSha256": "a203166d280d3cfc6a91bbc9ffdae406eb9555b4a4f658cd92619063eb17c147"
+      },
+      "normal": {
+        "file": "concrete-wall-008-normal-1k-ab0333a0ded4.webp",
+        "sha256": "ab0333a0ded499739395d712c9de71a45b63df7a323ede99e408d67936505550",
+        "bytes": 564070,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_nor_gl_1k.jpg",
+        "sourceMd5": "ea22029834a78f549981196b3263aa78",
+        "sourceSha256": "83cd3fa2c7cbf4c81402386065daf8fa6f72e1f1f77e02ccb1eedb28496909ae"
+      },
+      "arm": {
+        "file": "concrete-wall-008-arm-1k-722b079daea0.webp",
+        "sha256": "722b079daea0a7599dec23d5161c0434b7d270408d465c9778e46b37801e6a12",
+        "bytes": 695428,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_arm_1k.jpg",
+        "sourceMd5": "bebc69f0c73d251023abb9cb57545165",
+        "sourceSha256": "12b8b88bd0a9b303150f45cf0080371d78b7f04744d4ab14030b8958ec7dc2e3"
+      }
+    },
+    "2k": {
+      "albedo": {
+        "file": "concrete-wall-008-albedo-2k-08ee722e27c6.webp",
+        "sha256": "08ee722e27c69b1698067a49c96468b8aad59e5f944dad335c8ceb358ee10b5e",
+        "bytes": 713890,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_wall_008/concrete_wall_008_diff_2k.jpg",
+        "sourceMd5": "9e834dad5c07a3ba452a2ad0f1454c9f",
+        "sourceSha256": "a3eb7b24c5cf6f113ec9b3be8ab1715360ef3cbf4b1699979414e44341f54846"
+      },
+      "normal": {
+        "file": "concrete-wall-008-normal-2k-7825b3ab2bca.webp",
+        "sha256": "7825b3ab2bca6c4496e2334999010f92c08e2ecfd1044c734202303d17913b64",
+        "bytes": 2595114,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_wall_008/concrete_wall_008_nor_gl_2k.jpg",
+        "sourceMd5": "deca87f9fa074c7f041d23178f74ec95",
+        "sourceSha256": "58ce9b818772d37fe16e1154ea0278f3ab423ed34073357e786ef44f9ceef052"
+      },
+      "arm": {
+        "file": "concrete-wall-008-arm-2k-ecc15b914ff7.webp",
+        "sha256": "ecc15b914ff78e50726d32ff5efbd0e0f267a915c0fefc5eaaaa03fef8462841",
+        "bytes": 2669548,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_wall_008/concrete_wall_008_arm_2k.jpg",
+        "sourceMd5": "b2f992f83c82627c5e4a05ac0caff50d",
+        "sourceSha256": "98e5e8f447e2ce92bb0349cb0c8265ca0b67c6fe6f6a1be31c4be8e986aa47c7"
+      }
+    }
+  }
+}
