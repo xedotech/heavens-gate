@@ -90,6 +90,22 @@ the work below.
   split, game code ~164 kB); actor-loop scratch-vector allocation cleanup.
   Verified after this wave: `tsc` clean, 164/164 tests, `eslint` clean,
   `vinext build` succeeded.
+- Combat-feel wave (latest): cover peek/lean (aiming from cover slides the
+  camera along the wall tangent at 62% exposure); reload cancel via trigger,
+  re-press, or sprint start; pooled shell casings; shoulder-swap camera on
+  T / D-pad right with peek following the active shoulder; drive-by hip-fire
+  from vehicles with a heavy spread penalty and no ADS; death cam — a rising
+  orbit before the game-over screen plus a "Slain by" recap naming the killer
+  (Warden / sentry drone / False Archon); weapon draw-inspect flourish on
+  swap; enemy tracers carry per-kind signatures (hot-orange boss, cold-blue
+  drone); suppression model — per-shot burst bloom (+15% cone per shot,
+  1.9x cap, reset on reposition), hit and near-miss graze suppression (2x
+  cone, 1.5s linear recovery), ambush first-shot bonus, and exact shot
+  counting wired through `recordNpcShotFired`; near-miss whiz — a
+  spatialized supersonic snap when enemy rounds pass within ~2.2m of the
+  player's head; GTAOPass ground-truth AO on high quality (renders the scene
+  itself, RenderPass disabled while enabled). Verified after this wave:
+  `tsc` clean, 171/171 tests, `eslint` clean, `vinext build` succeeded.
 - Not closed by this wave: browser playthrough capture, sustained frame trace,
   any QUALITY_GATES score change, console/native builds, photogrammetry (no
   scan sources exist), multiplayer. MPFB is not installed in the local Blender

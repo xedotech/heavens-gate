@@ -45,9 +45,23 @@ The entire cheap-wins shortlist and the top [S]/[A] items are now live:
 - ✅ Pause map with legend, gamepad aim assist, large-subtitle option
 - ✅ three.js vendor chunk split (game code ~164 kB vs ~900 kB combined)
 - ✅ Actor-loop allocation cleanup (scratch vectors in the AI path)
+- ✅ Cover peek/lean: aiming from cover slides the camera along the wall
+  tangent and raises exposure to 62% instead of fully breaking cover
+- ✅ Reload cancel: fire, reload re-press, or sprint-start all drop the
+  reload; pooled brass shell casings arc, bounce, and rest
+- ✅ Shoulder-swap camera (T / D-pad right), peek follows active shoulder
+- ✅ Drive-by shooting: hip-fire from vehicles, heavy spread, no ADS
+- ✅ Death cam: rising orbit before game over + "Slain by" kill recap
+- ✅ Weapon draw/inspect flourish on every swap
+- ✅ Enemy suppression model: per-shot burst bloom (cone +15%/shot, cap
+  1.9x), hit/near-miss suppression (up to 2x cone, 1.5s recovery),
+  ambush first-shot bonus; player near-misses graze-pulse underFire
+- ✅ Near-miss whiz: spatialized supersonic snap on close enemy rounds
+- ✅ Enemy tracer signatures: hot orange boss, cold blue drone
+- ✅ GTAO pass on high quality (replaces RenderPass while enabled)
 
-Still open from the shortlist: full SSAO pass (ground AO shipped instead),
-drive-by shooting, death cam, gore, and the [C] honesty items below.
+Still open: gamepad button remapping, photogrammetry source assets,
+and the [C] honesty items below.
 
 ---
 
