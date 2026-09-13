@@ -791,7 +791,9 @@ export class HeavensGateEngine {
     this.scene.add(ground);
     this.rayTargets.push(ground);
 
-    const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x11191c, roughness: 0.34, metalness: 0.55 });
+    // Perpetual-storm noir: roads read as wet asphalt — low roughness and a
+    // raised env response so neon and headlights smear across the surface.
+    const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x10171a, roughness: 0.19, metalness: 0.55, envMapIntensity: 1.5 });
     const laneMaterial = new THREE.MeshBasicMaterial({ color: 0x927b46, transparent: true, opacity: 0.5 });
     for (let line = -150; line <= 150; line += 30) {
       const roadX = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE, 8.4), roadMaterial);
@@ -2480,6 +2482,15 @@ export class HeavensGateEngine {
     ring.rotation.x = Math.PI / 2;
     ring.userData.actorId = id;
     group.add(ring);
+    // Patrol-scan cone: a soft volumetric-looking shaft under the drone that
+    // brightens over civilians — the Choir reading the streets.
+    const scanMaterial = new THREE.MeshBasicMaterial({
+      color: 0xd65a45, transparent: true, opacity: 0.05,
+      side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const scan = new THREE.Mesh(new THREE.ConeGeometry(1.7, 7.5, 12, 1, true), scanMaterial);
+    scan.position.y = -3.9;
+    group.add(scan);
     group.position.set(x, 8 + seeded(id.length, 60) * 5, z);
     this.scene.add(group);
     this.rayTargets.push(core, lens, ring);
@@ -3818,13 +3829,17 @@ export class HeavensGateEngine {
       return;
     }
     const aiming = !this.currentVehicle && this.isAiming();
+    // Look-back: hold crouch (R3 / C) while driving to face the chase.
+    const lookBack = Boolean(this.currentVehicle) && this.isActionHeld('crouch');
+    const yaw = lookBack ? this.cameraYaw + Math.PI : this.cameraYaw;
     const distance = this.currentVehicle ? 10.5 + speed * 0.065 : aiming ? 3.15 : 4.55;
     const height = this.currentVehicle ? 4.4 : aiming ? 1.9 : 2.65;
-    const forward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
-    const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
+    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
     if (this.currentVehicle && Math.abs(this.gamepadAxes.lookX) < 0.1 && !this.pointerLocked) {
       this.cameraYaw = damp(this.cameraYaw, this.currentVehicle.heading, 1.8, delta);
-      forward.set(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
+      forward.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+      right.set(Math.cos(yaw), 0, -Math.sin(yaw));
     }
     const desiredCamera = targetPosition.clone().addScaledVector(forward, -distance);
     this.shoulderOffset = damp(this.shoulderOffset ?? 0.78, 0.78 * (this.shoulderSide ?? 1), 10, delta);
@@ -3969,6 +3984,21 @@ export class HeavensGateEngine {
           actor.wanderAngle += delta * 0.25;
           actor.group.position.x = actor.spawn.x + Math.cos(actor.wanderAngle) * 7;
           actor.group.position.z = actor.spawn.z + Math.sin(actor.wanderAngle) * 7;
+          // Scan pulse: brighter while a civilian is inside the cone radius.
+          const scan = actor.group.children[3] as THREE.Mesh | undefined;
+          const scanMaterial = scan?.material as THREE.MeshBasicMaterial | undefined;
+          if (scanMaterial) {
+            let nearestCivilian = 99;
+            for (const other of this.actors) {
+              if (other.kind !== 'civilian' || !other.alive) continue;
+              const dx = other.group.position.x - actor.group.position.x;
+              const dz = other.group.position.z - actor.group.position.z;
+              const d = Math.hypot(dx, dz);
+              if (d < nearestCivilian) nearestCivilian = d;
+            }
+            const target = nearestCivilian < 7 ? 0.16 : 0.045;
+            scanMaterial.opacity = target + Math.sin(time * 3.4 + actorIndex) * 0.018;
+          }
         }
         return;
       }
@@ -4292,7 +4322,12 @@ export class HeavensGateEngine {
   }
 
   private damageActor(actor: Actor, damage: number, critical = false) {
-    const boosted = this.ownedUpgrades?.has('coil') ? damage * 1.2 : damage;
+    const coilBoosted = this.ownedUpgrades?.has('coil') ? damage * 1.2 : damage;
+    // Veil sneak strike: an unaware target (calm/suspicious, not yet in
+    // combat) hit while the Veil is open takes a stealth multiplier.
+    const unaware = actor.aiState && actor.aiState.phase !== 'combat';
+    const sneak = this.veilActive && unaware && actor.kind !== 'civilian';
+    const boosted = coilBoosted * (sneak ? 1.7 : 1);
     actor.health -= boosted;
     if (this.hitDamageTimer <= 0) {
       this.hitDamagePool = 0;
@@ -4368,6 +4403,13 @@ export class HeavensGateEngine {
     if (marks > 0) {
       this.shards += marks;
       this.emitToast('Marks claimed', `+${marks} · spend in Pause → Attunements`, 'success');
+    }
+    // Sneak-kill flourish: a whisper and a doubled mark bounty when the
+    // target never reached combat while the Veil was open.
+    if (this.veilActive && actor.aiState && actor.aiState.phase !== 'combat' && actor.kind !== 'civilian') {
+      this.shards += 3;
+      this.audio.whisperBlip?.();
+      this.emitToast('Veil execution', '+3 marks — they never saw you', 'success');
     }
   }
 

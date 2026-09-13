@@ -20,74 +20,74 @@
     {
       "id": "seraph",
       "file": "aurel-seraph-hero.glb",
-      "bytes": 3690720,
-      "vertices": 24318,
+      "bytes": 3714256,
+      "vertices": 26467,
       "morphTargets": 67,
       "actions": 11,
       "bones": 53,
       "meshes": 9,
       "specSha256": "a3519a651612085ba39e6c9efc89e91ef96d48d2629085f18e40bce705bdbd37",
-      "sha256": "fc9c510110bd35dcc2e113f7a03cc2d7fe166e6d7839b6bd6dd9b3fdafbe4ed2"
+      "sha256": "2f335edaf4834916d65562a031630b0efafef3f22e0582bc7536e7181cf35ab9"
     },
     {
       "id": "relic",
       "file": "aurel-relic-hero.glb",
-      "bytes": 4152700,
-      "vertices": 19027,
+      "bytes": 4173140,
+      "vertices": 20958,
       "morphTargets": 67,
       "actions": 11,
       "bones": 53,
       "meshes": 9,
       "specSha256": "ca2cfcb05e3e21ba59426bffaf917e1e99c8215be8d0eb476f8aecd41fc84e21",
-      "sha256": "d8839e8d1127bdcc7f3ce07400dffee3d564a3c4d733038eb0e050dcd8df920b"
+      "sha256": "3f423aabc424d3af2dc4014f3172667a76c72b606077059942bb1c08c73c96ca"
     },
     {
       "id": "nocturne",
       "file": "aurel-nocturne-hero.glb",
-      "bytes": 3535240,
-      "vertices": 22529,
+      "bytes": 3558432,
+      "vertices": 24445,
       "morphTargets": 67,
       "actions": 11,
       "bones": 53,
       "meshes": 9,
       "specSha256": "b96ebc522c8d41a212f2094de84e938f78fa0aa5e5f789787e5f363af0101c0c",
-      "sha256": "710c0cf4854eb1a59d3c3f090c7210298a012188f1a66495d6509917c8baa422"
+      "sha256": "4e3a9eb4c2242d3eb19720e3b44b08a9d3a3e8192a2cf3d6a90b31fcaa63443d"
     },
     {
       "id": "ash",
       "file": "aurel-ash-hero.glb",
-      "bytes": 4619560,
-      "vertices": 23232,
+      "bytes": 4648256,
+      "vertices": 25185,
       "morphTargets": 67,
       "actions": 11,
       "bones": 53,
       "meshes": 9,
       "specSha256": "754710409fc1cba98c8e475d22ea01c5df8554d01884914b0cc464e0ab6febcc",
-      "sha256": "e65df1081ed59d48210351f2aab73ac5086f2de5938d95a613b3f8a9b52087bb"
+      "sha256": "dd2fb271e1ab435ae23160cd48b00371173b38383b2e17885dfbfdb76aec28ce"
     },
     {
       "id": "meridian",
       "file": "aurel-meridian-hero.glb",
-      "bytes": 3982456,
-      "vertices": 24531,
+      "bytes": 4005772,
+      "vertices": 26397,
       "morphTargets": 67,
       "actions": 11,
       "bones": 53,
       "meshes": 9,
       "specSha256": "4bb7245d3004220c22882dfaae23f46ef586d41bc6f8fe4470379e79db6266c5",
-      "sha256": "c5d753d756e104f9264334f75693d9d143d00401de9ab5eeb560f6a4a8c8fafb"
+      "sha256": "658950f6185d40ab13718541a48aa84da953334f7455a8af828ce4441d9bd73f"
     },
     {
       "id": "voidborn",
       "file": "aurel-voidborn-hero.glb",
-      "bytes": 3722264,
-      "vertices": 20072,
+      "bytes": 3744364,
+      "vertices": 21769,
       "morphTargets": 67,
       "actions": 11,
       "bones": 53,
       "meshes": 9,
       "specSha256": "ac6df6ee4f9691332395d3e92f3c3b59cc2c9fb7125c6bd747a6878261ded91c",
-      "sha256": "85086a31edee18b745a7c72bababe385ebd6affa328fe97ceb32585493ba0e93"
+      "sha256": "ae198afdb669b7dce790981debb02a87e8ead51f57982b52df393cf020a3ff32"
     }
   ]
 }

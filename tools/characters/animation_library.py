@@ -169,7 +169,7 @@ def add_animation_library(rig) -> None:
         # Left leg swings past the planted right leg: thigh near vertical,
         # knee flexed, toe pulled up to clear the ground.
         "thigh_l": (-0.06, 0.0, 0.0), "thigh_r": (0.04, 0.0, 0.0),
-        "calf_l": (0.45, 0.0, 0.0), "calf_r": (0.10, 0.0, 0.0),
+        "calf_l": (0.58, 0.0, 0.0), "calf_r": (0.10, 0.0, 0.0),
         "foot_l": (-0.12, 0.0, 0.0), "foot_r": (0.02, 0.0, 0.0),
         "upperarm_l": (-0.02, 0.0, 0.0), "upperarm_r": (0.02, 0.0, 0.0),
         "pelvis": (-0.035, 0.0, 0.0), "spine_02": (-0.02, 0.0, 0.0),
@@ -177,7 +177,7 @@ def add_animation_library(rig) -> None:
     walk_pass_r = {
         **walk_b,
         "thigh_r": (-0.06, 0.0, 0.0), "thigh_l": (0.04, 0.0, 0.0),
-        "calf_r": (0.45, 0.0, 0.0), "calf_l": (0.10, 0.0, 0.0),
+        "calf_r": (0.58, 0.0, 0.0), "calf_l": (0.10, 0.0, 0.0),
         "foot_r": (-0.12, 0.0, 0.0), "foot_l": (0.02, 0.0, 0.0),
         "upperarm_l": (0.02, 0.0, 0.0), "upperarm_r": (-0.02, 0.0, 0.0),
         "pelvis": (-0.035, 0.0, 0.0), "spine_02": (-0.02, 0.0, 0.0),
@@ -217,7 +217,7 @@ def add_animation_library(rig) -> None:
         # Left knee drives up and forward through the flight phase while the
         # right leg absorbs the stance.
         "thigh_l": (-0.18, 0.0, 0.0), "thigh_r": (0.12, 0.0, 0.0),
-        "calf_l": (1.05, 0.0, 0.0), "calf_r": (0.30, 0.0, 0.0),
+        "calf_l": (1.15, 0.0, 0.0), "calf_r": (0.30, 0.0, 0.0),
         "foot_l": (-0.28, 0.0, 0.0), "foot_r": (0.10, 0.0, 0.0),
         "upperarm_l": (-0.08, 0.0, 0.0), "upperarm_r": (0.08, 0.0, 0.0),
         "spine_01": (0.14, 0.0, 0.0), "pelvis": (-0.08, 0.0, 0.0),
@@ -226,7 +226,7 @@ def add_animation_library(rig) -> None:
     run_pass_r = {
         **run_b,
         "thigh_r": (-0.18, 0.0, 0.0), "thigh_l": (0.12, 0.0, 0.0),
-        "calf_r": (1.05, 0.0, 0.0), "calf_l": (0.30, 0.0, 0.0),
+        "calf_r": (1.15, 0.0, 0.0), "calf_l": (0.30, 0.0, 0.0),
         "foot_r": (-0.28, 0.0, 0.0), "foot_l": (0.10, 0.0, 0.0),
         "upperarm_l": (0.08, 0.0, 0.0), "upperarm_r": (-0.08, 0.0, 0.0),
         "spine_01": (0.14, 0.0, 0.0), "pelvis": (-0.08, 0.0, 0.0),
