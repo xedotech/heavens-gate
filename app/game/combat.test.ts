@@ -3,6 +3,7 @@ import {
   MORROW_SPEC,
   addShotRecoil,
   deterministicShotOffset,
+  effectiveHitChance,
   recoverShotRecoil,
   shotIntervalSeconds,
   shotSpreadRadians,
@@ -43,6 +44,17 @@ describe('Morrow weapon model', () => {
     expect(recoil).toBe(MORROW_SPEC.maximumRecoil);
     expect(recoverShotRecoil(recoil, 0.1, true)).toBeLessThan(recoverShotRecoil(recoil, 0.1, false));
     expect(recoverShotRecoil(0.1, 10, false)).toBe(0);
+  });
+
+  it('scales a fixed hit roll by aim quality without degenerating', () => {
+    // accuracyScale < 1 (bloomed/suppressed) cuts the hit chance; > 1 (an
+    // ambush opener) raises it, always inside a rollable range.
+    expect(effectiveHitChance(0.6)).toBeCloseTo(0.6, 6);
+    expect(effectiveHitChance(0.6, 0.5)).toBeCloseTo(0.3, 6);
+    expect(effectiveHitChance(0.6, 1.15)).toBeCloseTo(0.69, 6);
+    expect(effectiveHitChance(0.84, 4)).toBe(0.97);
+    expect(effectiveHitChance(0.6, 0)).toBe(0.02);
+    expect(effectiveHitChance(2, 1)).toBe(0.97);
   });
 
   it('transfers only available reserve ammunition', () => {

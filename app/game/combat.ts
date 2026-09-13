@@ -154,6 +154,19 @@ export function shotSpreadRadians(context: ShotContext, spec: WeaponSpec = MORRO
   return (base + movementPenalty + recoilPenalty) * Math.PI / 180;
 }
 
+/**
+ * Effective hit probability for a fixed-roll shot after an aim-quality
+ * multiplier (e.g. the AI's accuracyScale: < 1 while bloomed/suppressed,
+ * > 1 for an ambush opener). Clamped so the roll is never degenerate.
+ */
+export function effectiveHitChance(baseHitChance: number, accuracyScale = 1) {
+  return clamp(
+    clamp(baseHitChance, 0, 1) * clamp(accuracyScale, 0, 4),
+    0.02,
+    0.97,
+  );
+}
+
 export function deterministicShotOffset(shotIndex: number, radius: number) {
   if (radius <= 0) return { x: 0, y: 0 };
   const index = Math.max(0, Math.floor(shotIndex));

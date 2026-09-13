@@ -254,6 +254,32 @@ export class AudioEngine {
     }, { once: true }));
   }
 
+  // Supersonic snap of a round passing close by — a short bright crack
+  // spatialized to the bullet's closest-approach point. The audio cue that
+  // sells incoming fire you never saw.
+  bulletWhiz(point: SoundPosition, listener: SoundPosition, yaw: number) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(point, listener, yaw, false);
+    const gain = Math.min(mix.gain * 0.85, 0.06);
+    if (gain < 0.002) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    pan.pan.value = mix.pan;
+    master.gain.value = gain;
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const jitter = 0.92 + Math.random() * 0.18;
+    const voices = [this.noise(0.035, 0.5, 4200 * jitter, pan),
+      this.noise(0.08, 0.26, 5600 * jitter, pan)].filter((voice) => voice !== undefined);
+    let remaining = voices.length;
+    const cleanup = () => { pan.disconnect(); master.disconnect(); };
+    if (!remaining) cleanup();
+    voices.forEach((voice) => voice.addEventListener('ended', () => {
+      remaining -= 1;
+      if (remaining === 0) cleanup();
+    }, { once: true }));
+  }
+
   ui(confirm = false) {
     this.tone(confirm ? 660 : 440, 0.09, 'sine', 0.045, 0, this.effectsBus, confirm ? 880 : 520);
   }

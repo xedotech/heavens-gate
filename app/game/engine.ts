@@ -4,8 +4,12 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
+import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import {
   createNpcAiState,
+  npcAccuracyScale,
+  npcAimBloom,
+  recordNpcShotFired,
   stepNpcAi,
   type NpcAiState,
   type SquadRadioSignal,
@@ -20,6 +24,7 @@ import {
   WEAPON_ORDER,
   addShotRecoil,
   deterministicShotOffset,
+  effectiveHitChance,
   recoverShotRecoil,
   shotIntervalSeconds,
   shotSpreadRadians,
@@ -320,6 +325,7 @@ export class HeavensGateEngine {
   private tmpLosTo = new THREE.Vector3();
   private tmpMove = new THREE.Vector3();
   private tmpPrevPos = new THREE.Vector3();
+  private tmpShotSeg = new THREE.Vector3();
   private contactShadows: THREE.InstancedMesh | null = null;
   private contactShadowMatrix = new THREE.Matrix4();
   private contactShadowPosition = new THREE.Vector3();
@@ -337,6 +343,8 @@ export class HeavensGateEngine {
   private inspectionKey: THREE.PointLight | null = null;
   private skyOrb: THREE.Mesh | null = null;
   private composer: EffectComposer | null = null;
+  private renderPass: RenderPass | null = null;
+  private gtaoPass: GTAOPass | null = null;
   private bloomPass: UnrealBloomPass | null = null;
   private trafficCars: TrafficCar[] = [];
   private dynamicObstacles: Array<{ x: number; z: number; radius: number }> = [];
@@ -389,6 +397,7 @@ export class HeavensGateEngine {
   private shoulderSide = 1;
   private shoulderOffset = 0.78;
   private deathCamTimer = 0;
+  private whizCooldown = 0;
   private casings: Array<{ mesh: THREE.Mesh; velocity: THREE.Vector3; spin: number; timer: number; active: boolean }> = [];
   private pulseCooldown = 0;
   private reticleHit = 0;
@@ -577,7 +586,15 @@ export class HeavensGateEngine {
       );
       this.composer?.dispose();
       const composer = new EffectComposer(this.renderer, target);
-      composer.addPass(new RenderPass(this.scene, this.camera));
+      this.renderPass = new RenderPass(this.scene, this.camera);
+      composer.addPass(this.renderPass);
+      // Ground-truth AO on high quality — it renders the scene itself, so the
+      // plain RenderPass gets disabled while it's active. This is the pass
+      // that finally grounds actors, cars, and facades into the street.
+      this.gtaoPass = new GTAOPass(this.scene, this.camera, size.x, size.y);
+      this.gtaoPass.updateGtaoMaterial({ radius: 0.45, distanceExponent: 2.4, thickness: 1.2, scale: 1.4 });
+      this.gtaoPass.enabled = false;
+      composer.addPass(this.gtaoPass);
       this.bloomPass = new UnrealBloomPass(size, 0.6, 0.5, 0.82);
       composer.addPass(this.bloomPass);
       composer.addPass(new OutputPass());
@@ -2801,6 +2818,9 @@ export class HeavensGateEngine {
     this.dynamicPixelRatio = Math.min(window.devicePixelRatio, baseRatio);
     this.renderer.setPixelRatio(this.dynamicPixelRatio);
     this.renderer.shadowMap.enabled = this.settings.quality !== 'low';
+    const gtao = this.settings.quality === 'high' && Boolean(this.gtaoPass);
+    if (this.gtaoPass) this.gtaoPass.enabled = gtao;
+    if (this.renderPass) this.renderPass.enabled = !gtao;
     this.renderer.toneMappingExposure = this.settings.highContrast ? 1.28 : 1.16;
     if (this.bloomPass) {
       this.bloomPass.strength = this.settings.quality === 'high' ? 0.62 : 0.45;
@@ -3135,6 +3155,7 @@ export class HeavensGateEngine {
       if (this.reloading === 0) this.finishReload();
     }
     this.invulnerability = Math.max(0, this.invulnerability - delta);
+    this.whizCooldown = Math.max(0, (this.whizCooldown ?? 0) - delta);
     if (this.deathCamTimer > 0) {
       this.deathCamTimer -= delta;
       if (this.deathCamTimer <= 0) this.callbacks.onGameOver();
@@ -4071,11 +4092,16 @@ export class HeavensGateEngine {
     this.audio.enemyShot(origin, this.camera.position, this.cameraYaw, !this.hasLineOfSight(origin, this.camera.position));
     const target = (this.currentVehicle?.group.position ?? this.player.position).clone().add(new THREE.Vector3(0, 1.1, 0));
     const distance = origin.distanceTo(target);
-    const accuracy = actor.kind === 'boss' ? 0.84 : clamp(0.82 - distance / 140, 0.42, 0.78);
+    const baseAccuracy = actor.kind === 'boss' ? 0.84 : clamp(0.82 - distance / 140, 0.42, 0.78);
+    // Dynamic accuracy: ambush opener bonus, suppression penalty, and the
+    // per-shot burst bloom all ride on the AI state. The exact-shot hook
+    // keeps the burst counter honest for fast-firing bosses.
+    const accuracy = effectiveHitChance(baseAccuracy, npcAccuracyScale(actor.aiState));
+    if (actor.aiState) actor.aiState = recordNpcShotFired(actor.aiState);
     const hits = seeded(Math.floor(this.elapsed * 17) + actor.id.length, 112) < accuracy;
-    // Miss spread scales with range so long shots read as suppressing fire,
-    // not random teleports — and tracers get a per-kind signature color.
-    const spread = 4 + distance * 0.14;
+    // Miss spread scales with range and current aim bloom so long shots read
+    // as suppressing fire — and tracers get a per-kind signature color.
+    const spread = (4 + distance * 0.14) * npcAimBloom(actor.aiState);
     const end = hits ? target : target.clone().add(new THREE.Vector3((seeded(actor.id.length, 113) - 0.5) * spread, 1 + seeded(actor.id.length, 115) * 2.4, (seeded(actor.id.length, 114) - 0.5) * spread));
     const obstruction = this.firstWorldObstruction(origin, end);
     const muzzle = origin.clone().addScaledVector(end.clone().sub(origin).normalize(), 0.55);
@@ -4083,6 +4109,19 @@ export class HeavensGateEngine {
     const tracerColor = actor.kind === 'boss' ? 0xff7a3c : actor.kind === 'drone' ? 0x9fd0ff : 0xd65a45;
     this.createTracer(origin, obstruction ?? end, tracerColor);
     if (hits && !obstruction) this.takePlayerDamage(damage * difficultyDamage(this.settings.difficulty), origin);
+    // Near-miss snap: if the round's closest approach to the player's head is
+    // within ~2.2m, crack a whiz from that direction — sells suppression even
+    // when the shot never lands.
+    if (!hits && (this.whizCooldown ?? 0) <= 0) {
+      const head = (this.currentVehicle?.group.position ?? this.player.position).clone().add(new THREE.Vector3(0, 1.55, 0));
+      const segment = (obstruction ?? end).clone().sub(origin);
+      const t = clamp(head.clone().sub(origin).dot(segment) / Math.max(0.001, segment.lengthSq()), 0, 1);
+      const closest = origin.clone().addScaledVector(segment, t);
+      if (closest.distanceTo(head) < 2.2) {
+        this.audio.bulletWhiz?.(closest, this.camera.position, this.cameraYaw);
+        this.whizCooldown = 0.16;
+      }
+    }
   }
 
   private takePlayerDamage(amount: number, source?: THREE.Vector3) {
@@ -4216,6 +4255,24 @@ export class HeavensGateEngine {
           this.damageActor(actor, weaponDamage(origin.distanceTo(hit.point), critical, actor.kind === 'boss', spec), critical);
           landedHit = true;
           this.audio.hit(critical);
+        }
+      } else if (!actorId && this.actors) {
+        // Suppression graze: a round that snaps within ~1.4m of a hostile's
+        // chest spikes their underFire pulse — they flinch toward cover and
+        // their aim cone blooms even though the pellet missed.
+        const segEnd = obstruction ?? end;
+        this.tmpShotSeg.copy(segEnd).sub(origin);
+        const segLenSq = Math.max(0.001, this.tmpShotSeg.lengthSq());
+        for (const actor of this.actors) {
+          if (!actor.alive || actor.kind === 'civilian' || actor.damagePulse > 0.32) continue;
+          const chestX = actor.group.position.x - origin.x;
+          const chestY = actor.group.position.y + 1.3 - origin.y;
+          const chestZ = actor.group.position.z - origin.z;
+          const t = clamp((chestX * this.tmpShotSeg.x + chestY * this.tmpShotSeg.y + chestZ * this.tmpShotSeg.z) / segLenSq, 0, 1);
+          const dx = chestX - this.tmpShotSeg.x * t;
+          const dy = chestY - this.tmpShotSeg.y * t;
+          const dz = chestZ - this.tmpShotSeg.z * t;
+          if (dx * dx + dy * dy + dz * dz < 1.4 * 1.4) actor.damagePulse = Math.max(actor.damagePulse, 0.32);
         }
       }
     }

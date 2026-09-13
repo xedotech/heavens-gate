@@ -347,6 +347,86 @@ export function createNpcAiState(options: {
     radioCooldownRemainingSeconds: 0,
     outboundRadioSequence: 0,
     radioCursor: {},
+    burstFireSeconds: 0,
+    shotsInBurst: 0,
+    suppressionLevel: 0,
+    ambushShotAvailable: false,
+    aimBloom: 1,
+    accuracyScale: 1,
+  };
+}
+
+interface AimBloomEvaluation {
+  readonly shotsInBurst: number;
+  readonly aimBloom: number;
+}
+
+/**
+ * Combines burst bloom (cone growth per virtual shot, capped) with
+ * suppression bloom (up to suppressionBloomMax at full suppression).
+ * Pure and deterministic — no RNG; the engine layers its seeded roll on top.
+ */
+function resolveAimBloom(
+  burstFireSeconds: number,
+  suppressionLevel: number,
+  config: NpcAiConfig,
+): AimBloomEvaluation {
+  const interval = Math.max(0.000001, config.burstShotIntervalSeconds);
+  const shotsInBurst = Math.floor(nonNegative(burstFireSeconds) / interval);
+  const burstBloom = Math.min(
+    1 + config.burstBloomPerShot * shotsInBurst,
+    Math.max(1, config.burstBloomMax),
+  );
+  const suppressionBloom = 1 + Math.max(0, config.suppressionBloomMax - 1) * clamp(suppressionLevel, 0, 1);
+  return {
+    shotsInBurst,
+    aimBloom: clamp(burstBloom * suppressionBloom, 1, 8),
+  };
+}
+
+/** Combined aim-cone multiplier for this NPC (>= 1; 1 means base accuracy). */
+export function npcAimBloom(state: NpcAiState | undefined) {
+  return Math.max(1, finite(state?.aimBloom ?? 1, 1));
+}
+
+/**
+ * Multiplier the engine should apply to its base hit-chance roll in
+ * `enemyFire`: `accuracy = clamp(base * npcAccuracyScale(actor.aiState), 0.02, 0.97)`.
+ */
+export function npcAccuracyScale(state: NpcAiState | undefined) {
+  return clamp(finite(state?.accuracyScale ?? 1, 1), 0, 4);
+}
+
+/**
+ * Optional precise-shot hook for the engine: call it inside `enemyFire`
+ * (`actor.aiState = recordNpcShotFired(actor.aiState)`) so a real trigger
+ * pull counts as one burst shot even when the actual cadence beats the
+ * burstShotIntervalSeconds estimate. Step-based accumulation continues
+ * from the recorded count without double counting. Safe to omit — bloom
+ * still grows on the estimated cadence alone.
+ */
+export function recordNpcShotFired(
+  state: NpcAiState,
+  overrides: Partial<NpcAiConfig> = {},
+): NpcAiState {
+  const config = resolveNpcAiConfig(overrides);
+  const interval = Math.max(0.000001, config.burstShotIntervalSeconds);
+  const shotsInBurst = Math.max(
+    Math.floor(nonNegative(state.shotsInBurst ?? 0)),
+    Math.floor(nonNegative(state.burstFireSeconds ?? 0) / interval),
+  ) + 1;
+  const bloom = resolveAimBloom(
+    Math.max(nonNegative(state.burstFireSeconds ?? 0), shotsInBurst * interval),
+    state.suppressionLevel ?? 0,
+    config,
+  );
+  return {
+    ...state,
+    shotsInBurst,
+    burstFireSeconds: shotsInBurst * interval,
+    ambushShotAvailable: false,
+    aimBloom: bloom.aimBloom,
+    accuracyScale: clamp(1 / bloom.aimBloom, 0, 4),
   };
 }
 
@@ -691,7 +771,7 @@ export function stepNpcAi(
     radioCooldownRemainingSeconds = config.radioCooldownSeconds;
   }
 
-  const nextState: NpcAiState = {
+  const baseState: NpcAiState = {
     npcId: state.npcId,
     squadId: state.squadId,
     homePosition: copyVector(state.homePosition),
@@ -707,12 +787,71 @@ export function stepNpcAi(
     radioCursor: consumedRadio.cursor,
   };
   const decision = makeDecision(
-    nextState,
+    baseState,
     input,
     perception,
     Boolean(consumedRadio.signal),
     config,
   );
+
+  // Dynamic accuracy ("aim bloom") bookkeeping — fully deterministic, so the
+  // engine can keep its seeded hit roll and simply scale it by accuracyScale.
+  //
+  // Suppression: taking a hit (damage stimulus or the engine's underFire
+  // pulse) pins suppression to full and it eases back over
+  // suppressionRecoverySeconds, blooming the cone toward suppressionBloomMax.
+  let suppressionLevel = clamp(state.suppressionLevel ?? 0, 0, 1);
+  if (alive && (directDamage || input.underFire)) {
+    suppressionLevel = 1;
+  } else if (config.suppressionRecoverySeconds > 0) {
+    suppressionLevel = Math.max(0, suppressionLevel - deltaSeconds / config.suppressionRecoverySeconds);
+  } else {
+    suppressionLevel = 0;
+  }
+
+  // Burst bloom: only a stationary NPC with eyes on the target is actually
+  // cycling the trigger, so firing time accrues only while the 'engage'
+  // decision holds without repositioning — breaking contact, taking cover,
+  // reacting to damage, or strafing all reset the cone.
+  const engaging = alive && decision.action === 'engage' && perception.targetSeen;
+  const movedSpeed = deltaSeconds > 0 && state.previousPosition
+    ? planarDistance(state.previousPosition, input.position) / deltaSeconds
+    : 0;
+  const repositioned = movedSpeed > config.burstResetMoveSpeed;
+  const burstFireSeconds = engaging && !repositioned
+    ? nonNegative(state.burstFireSeconds ?? 0) + deltaSeconds
+    : 0;
+  const bloom = resolveAimBloom(burstFireSeconds, suppressionLevel, config);
+
+  // Ambush bonus: fresh contact (first sighting after losing track, or being
+  // damaged into combat) arms one tighter first shot; the first burst shot
+  // spends it, so breaking line of sight re-arms the bonus.
+  let ambushShotAvailable = alive && Boolean(state.ambushShotAvailable);
+  if (
+    directDamage
+    || (perception.targetSeen
+      && (state.secondsSinceTargetSeen === null || nonNegative(state.secondsSinceTargetSeen) > 0))
+  ) {
+    ambushShotAvailable = alive;
+  }
+  if (bloom.shotsInBurst > 0) ambushShotAvailable = false;
+
+  const accuracyScale = clamp(
+    (engaging && ambushShotAvailable ? config.ambushAccuracyBonus : 1) / bloom.aimBloom,
+    0,
+    4,
+  );
+
+  const nextState: NpcAiState = {
+    ...baseState,
+    burstFireSeconds,
+    shotsInBurst: bloom.shotsInBurst,
+    suppressionLevel,
+    ambushShotAvailable,
+    aimBloom: bloom.aimBloom,
+    accuracyScale,
+    previousPosition: copyVector(input.position),
+  };
 
   return {
     state: nextState,

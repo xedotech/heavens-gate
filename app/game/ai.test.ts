@@ -3,6 +3,9 @@ import {
   chooseBestCover,
   createNpcAiState,
   evaluatePerception,
+  npcAccuracyScale,
+  npcAimBloom,
+  recordNpcShotFired,
   stepNpcAi,
   type NpcAiInput,
   type NpcAiState,
@@ -243,5 +246,109 @@ describe('deterministic NPC awareness and combat decisions', () => {
     });
 
     expect(stepNpcAi(state, input)).toEqual(stepNpcAi(state, input));
+  });
+});
+
+describe('dynamic enemy accuracy (aim bloom and suppression)', () => {
+  function engaging(state: NpcAiState, overrides: Partial<NpcAiInput> = {}) {
+    return stepNpcAi(state, baseInput({ target: visibleTarget(), ...overrides }));
+  }
+
+  it('blooms the aim cone over a sustained stationary burst', () => {
+    let state = alertGuard();
+    const blooms: number[] = [];
+    for (let tick = 0; tick < 8; tick += 1) {
+      const result = engaging(state);
+      state = result.state;
+      expect(result.decision.action).toBe('engage');
+      blooms.push(npcAimBloom(state));
+    }
+
+    // ~1.5s per virtual shot: bloom should stair-step up ~15% per shot.
+    expect(state.shotsInBurst).toBeGreaterThanOrEqual(2);
+    expect(blooms[0]).toBe(1);
+    expect(blooms[blooms.length - 1]).toBeGreaterThan(blooms[0]);
+    expect(blooms[blooms.length - 1]).toBeLessThanOrEqual(1.9);
+    // Accuracy scale is the reciprocal: sustained fire is less accurate.
+    expect(npcAccuracyScale(state)).toBeCloseTo(1 / npcAimBloom(state), 6);
+  });
+
+  it('resets burst bloom after the NPC stops firing or repositions', () => {
+    let state = alertGuard();
+    for (let tick = 0; tick < 6; tick += 1) state = engaging(state).state;
+    expect(npcAimBloom(state)).toBeGreaterThan(1);
+
+    // Losing sight of the target breaks the burst entirely.
+    const paused = stepNpcAi(state, baseInput());
+    expect(paused.decision.action).not.toBe('engage');
+    expect(paused.state.burstFireSeconds).toBe(0);
+    expect(npcAimBloom(paused.state)).toBe(1);
+    expect(npcAccuracyScale(paused.state)).toBe(1);
+
+    // A big move between steps also counts as repositioning mid-engagement.
+    state = alertGuard();
+    state = engaging(state).state;
+    const strafed = engaging(state, { position: { x: 6, y: 0, z: 0 } });
+    expect(strafed.state.burstFireSeconds).toBe(0);
+    expect(strafed.state.shotsInBurst).toBe(0);
+  });
+
+  it('widens the cone under fire and recovers after the pressure fades', () => {
+    const suppressed = engaging(alertGuard(), { underFire: true });
+    expect(suppressed.state.suppressionLevel).toBe(1);
+    expect(npcAimBloom(suppressed.state)).toBeCloseTo(2, 6);
+    expect(npcAccuracyScale(suppressed.state)).toBeLessThanOrEqual(0.5 + 1e-9);
+
+    // A direct hit suppresses even harder than a near miss flag — and the
+    // recovery is linear over suppressionRecoverySeconds once clear.
+    const shot = stepNpcAi(alertGuard(), baseInput({
+      damage: { amount: 12, sourcePosition: target },
+    }));
+    expect(shot.state.suppressionLevel).toBe(1);
+    expect(npcAimBloom(shot.state)).toBeCloseTo(2, 6);
+
+    // While suppressed and unable to fire back (reacting, then searching),
+    // only suppression drives the cone — it should relax back to base.
+    let state = shot.state;
+    for (let tick = 0; tick < 5; tick += 1) {
+      state = stepNpcAi(state, baseInput()).state;
+    }
+    expect(state.suppressionLevel).toBe(0);
+    expect(npcAimBloom(state)).toBe(1);
+  });
+
+  it('gives the first shot after acquiring the target an ambush bonus', () => {
+    // A guard who lost the target (secondsSinceTargetSeen > 0) re-acquires it.
+    const reacquiring: NpcAiState = { ...alertGuard(), secondsSinceTargetSeen: 2 };
+    const opener = engaging(reacquiring);
+    expect(opener.state.ambushShotAvailable).toBe(true);
+    expect(npcAccuracyScale(opener.state)).toBeGreaterThan(1);
+
+    // The bonus is spent by the first burst shot (~1.5s in), so sustained
+    // fire drops back to the bloomed baseline.
+    let state = opener.state;
+    for (let tick = 0; tick < 4; tick += 1) state = engaging(state).state;
+    expect(state.ambushShotAvailable).toBe(false);
+    expect(npcAccuracyScale(state)).toBeLessThan(1);
+  });
+
+  it('lets the engine record real shots without double counting the estimate', () => {
+    let state = engaging(alertGuard()).state;
+    expect(state.ambushShotAvailable).toBe(false);
+
+    const armed: NpcAiState = { ...alertGuard(), secondsSinceTargetSeen: 2, ambushShotAvailable: true };
+    state = engaging(armed).state;
+    state = recordNpcShotFired(state);
+    expect(state.shotsInBurst).toBe(1);
+    expect(state.ambushShotAvailable).toBe(false);
+    expect(npcAimBloom(state)).toBeCloseTo(1.15, 6);
+
+    // Time-based accumulation resumes from the recorded count:
+    // 1.5s -> 2.0 -> 2.5 -> 3.0 crosses the second virtual shot.
+    state = engaging(state).state;
+    expect(state.shotsInBurst).toBe(1);
+    state = engaging(state).state;
+    state = engaging(state).state;
+    expect(state.shotsInBurst).toBe(2);
   });
 });
