@@ -124,6 +124,30 @@ export interface NpcAiConfig {
   readonly coverDistanceWeight: number;
   readonly coverRouteWeight: number;
   readonly coverFlankWeight: number;
+  /**
+   * Estimated seconds between an engaging NPC's shots. The AI never sees the
+   * trigger pull (the engine owns the cooldown), so burst bloom counts
+   * "virtual shots": one per this many seconds of stationary engagement.
+   */
+  readonly burstShotIntervalSeconds: number;
+  /** Aim-cone growth per shot in a burst: 0.15 widens the cone 15% per shot. */
+  readonly burstBloomPerShot: number;
+  /** Upper bound on burst-driven aim bloom. */
+  readonly burstBloomMax: number;
+  /** Aim-cone multiplier at full suppression: 2 doubles the cone. */
+  readonly suppressionBloomMax: number;
+  /** Seconds for suppression to decay from full back to zero. */
+  readonly suppressionRecoverySeconds: number;
+  /**
+   * Hit-chance multiplier applied to the first shot after acquiring the
+   * target: 1.15 makes the ambush opener 15% more likely to connect.
+   */
+  readonly ambushAccuracyBonus: number;
+  /**
+   * Own-movement speed (m/s) above which the NPC counts as repositioning,
+   * which resets the burst bloom back to its base cone.
+   */
+  readonly burstResetMoveSpeed: number;
 }
 
 export const DEFAULT_NPC_AI_CONFIG: Readonly<NpcAiConfig> = Object.freeze({
@@ -155,6 +179,13 @@ export const DEFAULT_NPC_AI_CONFIG: Readonly<NpcAiConfig> = Object.freeze({
   coverDistanceWeight: 0.16,
   coverRouteWeight: 0.14,
   coverFlankWeight: 0.14,
+  burstShotIntervalSeconds: 1.5,
+  burstBloomPerShot: 0.15,
+  burstBloomMax: 1.9,
+  suppressionBloomMax: 2,
+  suppressionRecoverySeconds: 1.5,
+  ambushAccuracyBonus: 1.15,
+  burstResetMoveSpeed: 1.4,
 });
 
 export interface NpcAiState {
@@ -171,6 +202,29 @@ export interface NpcAiState {
   readonly investigatePoint?: AiVector3;
   readonly outboundRadioSequence: number;
   readonly radioCursor: Readonly<Record<string, number>>;
+  /**
+   * Seconds spent in the current stationary firing burst. Resets when the
+   * NPC stops engaging or repositions; drives burst aim bloom.
+   */
+  readonly burstFireSeconds?: number;
+  /** Virtual shots fired in the current burst (derived from burstFireSeconds). */
+  readonly shotsInBurst?: number;
+  /** Suppression intensity in the inclusive range 0..1; 1 is fully suppressed. */
+  readonly suppressionLevel?: number;
+  /** True while the first-shot ambush bonus is still armed and unfired. */
+  readonly ambushShotAvailable?: boolean;
+  /**
+   * Output for the engine: combined aim-cone multiplier (>= 1). Multiply
+   * miss spread by this so suppressed/long bursts read as wider tracers.
+   */
+  readonly aimBloom?: number;
+  /**
+   * Output for the engine: multiplier on the base hit-chance roll
+   * (< 1 while bloomed/suppressed, > 1 for an armed ambush opener).
+   */
+  readonly accuracyScale?: number;
+  /** Position observed on the previous step; used to detect repositioning. */
+  readonly previousPosition?: AiVector3;
 }
 
 export interface NpcDecision {
@@ -266,6 +320,13 @@ export function resolveNpcAiConfig(overrides: Partial<NpcAiConfig> = {}): NpcAiC
     coverDistanceWeight: nonNegative(merged.coverDistanceWeight),
     coverRouteWeight: nonNegative(merged.coverRouteWeight),
     coverFlankWeight: nonNegative(merged.coverFlankWeight),
+    burstShotIntervalSeconds: nonNegative(merged.burstShotIntervalSeconds),
+    burstBloomPerShot: nonNegative(merged.burstBloomPerShot),
+    burstBloomMax: Math.max(1, finite(merged.burstBloomMax, 1)),
+    suppressionBloomMax: Math.max(1, finite(merged.suppressionBloomMax, 1)),
+    suppressionRecoverySeconds: nonNegative(merged.suppressionRecoverySeconds),
+    ambushAccuracyBonus: nonNegative(merged.ambushAccuracyBonus),
+    burstResetMoveSpeed: nonNegative(merged.burstResetMoveSpeed),
   };
 }
 

@@ -288,6 +288,7 @@ export class HeavensGateEngine {
   private pointerFallback = false;
   private weaponSway = { yaw: 0, pitch: 0 };
   private weaponKick = 0;
+  private weaponInspect = 0;
   private weaponSwayParentScale = new THREE.Vector3(1, 1, 1);
   private tracerPool: THREE.Line[] = [];
   private tracerCursor = 0;
@@ -387,6 +388,7 @@ export class HeavensGateEngine {
   private peekLean = 0;
   private shoulderSide = 1;
   private shoulderOffset = 0.78;
+  private deathCamTimer = 0;
   private casings: Array<{ mesh: THREE.Mesh; velocity: THREE.Vector3; spin: number; timer: number; active: boolean }> = [];
   private pulseCooldown = 0;
   private reticleHit = 0;
@@ -1905,6 +1907,7 @@ export class HeavensGateEngine {
     this.reloading = 0;
     this.weaponRecoil = 0;
     this.shotCooldown = Math.max(this.shotCooldown, spec.swapSeconds);
+    this.weaponInspect = 0.85;
     this.applyWeaponVisibility();
     this.heroCharacter?.playOnce('reload', 0.07);
     this.audio.swap();
@@ -3132,6 +3135,10 @@ export class HeavensGateEngine {
       if (this.reloading === 0) this.finishReload();
     }
     this.invulnerability = Math.max(0, this.invulnerability - delta);
+    if (this.deathCamTimer > 0) {
+      this.deathCamTimer -= delta;
+      if (this.deathCamTimer <= 0) this.callbacks.onGameOver();
+    }
     this.veilCooldown = Math.max(0, this.veilCooldown - delta);
     this.pulseCooldown = Math.max(0, this.pulseCooldown - delta);
     this.reticleHit = Math.max(0, this.reticleHit - delta * 5);
@@ -3267,6 +3274,7 @@ export class HeavensGateEngine {
   }
 
   private isAiming() {
+    if (this.currentVehicle) return false;
     return this.mouseAimHeld || this.gamepadAxes.aim > 0.2 || this.touchAim;
   }
 
@@ -3759,6 +3767,24 @@ export class HeavensGateEngine {
       }
       return;
     }
+    // Death cam: a slow rising orbit around the body before the game-over
+    // screen takes over.
+    if (this.deathCamTimer > 0) {
+      const body = this.currentVehicle?.group.position ?? this.player.position;
+      const t = 2.4 - this.deathCamTimer;
+      const angle = this.cameraYaw + 0.6 + t * 0.42;
+      const radius = 6.2 + t * 1.6;
+      const desiredDeath = new THREE.Vector3(
+        body.x + Math.sin(angle) * radius,
+        body.y + 2.6 + t * 1.9,
+        body.z + Math.cos(angle) * radius,
+      );
+      this.camera.position.lerp(desiredDeath, 1 - Math.exp(-4.5 * delta));
+      this.camera.lookAt(body.x, body.y + 1.1, body.z);
+      this.camera.fov = damp(this.camera.fov, 42, 3, delta);
+      this.camera.updateProjectionMatrix();
+      return;
+    }
     const aiming = !this.currentVehicle && this.isAiming();
     const distance = this.currentVehicle ? 10.5 + speed * 0.065 : aiming ? 3.15 : 4.55;
     const height = this.currentVehicle ? 4.4 : aiming ? 1.9 : 2.65;
@@ -3828,6 +3854,10 @@ export class HeavensGateEngine {
     this.weaponSway.yaw = damp(this.weaponSway.yaw, -lookYaw, 11, delta);
     this.weaponSway.pitch = damp(this.weaponSway.pitch, lookPitch, 11, delta);
     this.weaponKick = Math.max(0, this.weaponKick - delta * 7.5);
+    this.weaponInspect = Math.max(0, (this.weaponInspect ?? 0) - delta);
+    // Swap flourish: the gun raises and tilts inward for a beat — reads as a
+    // draw/inspect instead of an instant model pop.
+    const inspect = this.weaponInspect > 0 ? Math.sin((1 - this.weaponInspect / 0.85) * Math.PI) : 0;
     const speedFactor = clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 9.5, 0, 1);
     const aimFactor = this.isAiming() ? 0.28 : 1;
     const bob = Math.sin((this.walkPhase ?? 0) * 2) * 0.028 * speedFactor * aimFactor;
@@ -3837,14 +3867,14 @@ export class HeavensGateEngine {
     mount.parent?.getWorldScale(worldUnits);
     const localUnits = 1 / Math.max(0.001, Math.abs(worldUnits.x));
     mount.rotation.set(
-      rest.x + this.weaponSway.pitch * aimFactor + bob * 0.45 - kick * 0.16 + aimPitch,
-      rest.y + this.weaponSway.yaw * aimFactor,
-      rest.z + bob * 0.5 + kick * 0.05,
+      rest.x + (this.weaponSway.pitch * aimFactor + bob * 0.45 - kick * 0.16 + aimPitch) * (1 - inspect * 0.7) + inspect * 0.42,
+      rest.y + this.weaponSway.yaw * aimFactor * (1 - inspect * 0.7) + inspect * 0.5,
+      rest.z + (bob * 0.5 + kick * 0.05) * (1 - inspect * 0.7) + inspect * 0.34,
     );
     mount.position.set(
       restPosition.x + this.weaponSway.yaw * 0.05 * localUnits,
-      restPosition.y + bob * 0.05 * localUnits - kick * 0.028 * localUnits,
-      restPosition.z + kick * 0.09 * localUnits,
+      restPosition.y + (bob * 0.05 - kick * 0.028 + inspect * 0.055) * localUnits,
+      restPosition.z + (kick * 0.09 + inspect * 0.04) * localUnits,
     );
     this.prevCameraYaw = this.cameraYaw;
     this.prevCameraPitch = this.cameraPitch;
@@ -4043,11 +4073,15 @@ export class HeavensGateEngine {
     const distance = origin.distanceTo(target);
     const accuracy = actor.kind === 'boss' ? 0.84 : clamp(0.82 - distance / 140, 0.42, 0.78);
     const hits = seeded(Math.floor(this.elapsed * 17) + actor.id.length, 112) < accuracy;
-    const end = hits ? target : target.clone().add(new THREE.Vector3((seeded(actor.id.length, 113) - 0.5) * 8, 3, (seeded(actor.id.length, 114) - 0.5) * 8));
+    // Miss spread scales with range so long shots read as suppressing fire,
+    // not random teleports — and tracers get a per-kind signature color.
+    const spread = 4 + distance * 0.14;
+    const end = hits ? target : target.clone().add(new THREE.Vector3((seeded(actor.id.length, 113) - 0.5) * spread, 1 + seeded(actor.id.length, 115) * 2.4, (seeded(actor.id.length, 114) - 0.5) * spread));
     const obstruction = this.firstWorldObstruction(origin, end);
     const muzzle = origin.clone().addScaledVector(end.clone().sub(origin).normalize(), 0.55);
     this.createMuzzleFlash(muzzle);
-    this.createTracer(origin, obstruction ?? end, 0xd65a45);
+    const tracerColor = actor.kind === 'boss' ? 0xff7a3c : actor.kind === 'drone' ? 0x9fd0ff : 0xd65a45;
+    this.createTracer(origin, obstruction ?? end, tracerColor);
     if (hits && !obstruction) this.takePlayerDamage(damage * difficultyDamage(this.settings.difficulty), origin);
   }
 
@@ -4086,12 +4120,26 @@ export class HeavensGateEngine {
       this.mouseShootHeld = false;
       this.mouseAimHeld = false;
       this.audio.setEngine(0, false);
-      this.callbacks.onGameOver();
+      // Death cam: brief orbit before the game-over screen, with a recap line
+      // naming whatever fired the killing shot.
+      this.deathCamTimer = 2.4;
+      let killer = 'the city';
+      if (source) {
+        let best: Actor | null = null;
+        let bestDistance = 9;
+        for (const actor of this.actors ?? []) {
+          if (!actor.alive || actor.kind === 'civilian') continue;
+          const distance = actor.group.position.distanceTo(source);
+          if (distance < bestDistance) { best = actor; bestDistance = distance; }
+        }
+        killer = best ? (best.kind === 'boss' ? 'the False Archon' : best.kind === 'drone' ? 'a sentry drone' : 'a Warden') : 'the city';
+      }
+      this.emitToast('Aurel has fallen', `Slain by ${killer}`, 'danger');
     }
   }
 
   private tryShoot() {
-    if (this.shotCooldown > 0 || this.currentVehicle || this.paused) return;
+    if (this.shotCooldown > 0 || this.paused) return;
     // Reload cancel: pulling the trigger mid-reload with rounds left drops
     // the reload and fires — standard shooter behavior.
     if (this.reloading > 0) {
@@ -4118,14 +4166,21 @@ export class HeavensGateEngine {
     const mount = this.player.userData.weapon as THREE.Object3D | undefined;
     const activeModel = mount?.children.find((child) => child.visible) ?? mount;
     const muzzleOffset = (activeModel?.userData.muzzle as THREE.Vector3 | undefined) ?? new THREE.Vector3(0, 0, -0.47);
-    const origin = activeModel
-      ? activeModel.localToWorld(muzzleOffset.clone())
-      : this.player.position.clone().add(new THREE.Vector3(0, 1.6, 0));
+    // Drive-by: fire from the window line, hip-fire only with heavy spread.
+    const driveBy = Boolean(this.currentVehicle);
+    const origin = driveBy
+      ? this.player.position.clone().add(new THREE.Vector3(0, 1.35, 0))
+      : activeModel
+        ? activeModel.localToWorld(muzzleOffset.clone())
+        : this.player.position.clone().add(new THREE.Vector3(0, 1.6, 0));
     this.createMuzzleFlash(origin);
     this.spawnCasing(origin);
 
     const movement = clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 10.5, 0, 1);
-    const spread = shotSpreadRadians({ aiming: this.isAiming(), movement, recoil: this.weaponRecoil }, spec);
+    const spread = shotSpreadRadians(
+      { aiming: this.isAiming(), movement: Math.max(movement, driveBy ? 0.85 : 0), recoil: this.weaponRecoil },
+      spec,
+    ) * (driveBy ? 1.5 : 1);
     const ndcRadius = Math.tan(spread) / Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5));
     const raycaster = new THREE.Raycaster();
     raycaster.far = 130;
