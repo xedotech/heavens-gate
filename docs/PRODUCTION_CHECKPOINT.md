@@ -68,6 +68,28 @@ the work below.
   and the auto pixel-ratio adapter now runs on every quality tier with upward
   recovery. Architecture: instanced setback crowns, parapet rims, corner
   edge-light strips, sidewalk curbs, and crosswalks.
+- AAA-audit wave (latest): full genre-reference audit landed in
+  `docs/AAA_AUDIT.md`; the entire cheap-wins shortlist plus top [S]/[A]
+  items shipped. Added: ambient city soundscape + spatial pedestrian
+  chatter; civilian vignettes (talk pairs, leaners, idle sway) with
+  per-district archetype palettes and accessories; instanced wind-blown
+  litter pushed by traffic slipstreams; contact shadows + building
+  footprint AO; SMAA pass; procedural facade textures; player cover
+  (crouch-adjacent auto-attach, tangent slide, obstructed-fire damage
+  reduction, HUD stance); spine_01/02/03 torso aim layer; persistent
+  instanced bullet decals; melee strike (V / D-pad up) and throwable
+  resonance charges (G / D-pad left) with ballistic pool + AoE;
+  directional flinch reactions incl. idle NPCs; vehicle handbrake/drift/
+  screech, crash audio, staged damage + engine smoke; traffic yield +
+  car-following discipline; Veil pass with master lowpass muffle, whisper
+  bed, and a chromatic HUD overlay; progression economy (marks on kills,
+  five persisted Attunements in a pause-menu shop); the Chapel of the
+  Unburied — first enterable interior with real colliders and a
+  first-visit memory line; pause-screen city map with legend; gamepad aim
+  assist and large-subtitle options; rolldown codeSplitting (three vendor
+  split, game code ~164 kB); actor-loop scratch-vector allocation cleanup.
+  Verified after this wave: `tsc` clean, 164/164 tests, `eslint` clean,
+  `vinext build` succeeded.
 - Not closed by this wave: browser playthrough capture, sustained frame trace,
   any QUALITY_GATES score change, console/native builds, photogrammetry (no
   scan sources exist), multiplayer. MPFB is not installed in the local Blender

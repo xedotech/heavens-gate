@@ -19,6 +19,38 @@ Severity tiers:
 
 ---
 
+## Shipped since this audit (implementation pass)
+
+The entire cheap-wins shortlist and the top [S]/[A] items are now live:
+
+- ✅ Ambient city soundscape (rumble bed + honks + murmurs), pedestrian
+  chatter blips (spatial), whisper bed + blips while Veil is open
+- ✅ Civilian vignettes: talking pairs, wall-leaners, idle weight-shift;
+  per-district archetypes (palette + halo/hood/scarf/pack props)
+- ✅ Wind-blown litter instanced near roads, pushed by traffic slipstreams
+- ✅ Contact shadows under actors/vehicles/props + baked footprint AO
+- ✅ SMAA pass in the composer; facade procedural texture on all towers
+- ✅ Player cover: auto-attach while crouched against walls/vehicles,
+  tangent slide, cover damage reduction, HUD "cover" stance
+- ✅ Torso aim layer: spine_01/02/03 pitch follows camera after mixer
+- ✅ Persistent bullet decals (bounded instanced pool)
+- ✅ Melee strike (V / D-pad up) + throwable resonance charge (G / D-pad left)
+- ✅ Locational hit reactions: directional chest/head flinch, incl. idle NPCs
+- ✅ Vehicle handbrake/drift/screech, crash audio, staged damage + smoke
+- ✅ Traffic intersection discipline: yield to cross-traffic + follow distance
+- ✅ Veil pass: lowpass muffle, chromatic HUD overlay, shimmer/scanlines
+- ✅ Progression: marks currency on kills, 5 persisted Attunements in Pause
+- ✅ Chapel of the Unburied — first enterable interior (real colliders,
+  pews, altar, stained glass, candles, first-visit memory line)
+- ✅ Pause map with legend, gamepad aim assist, large-subtitle option
+- ✅ three.js vendor chunk split (game code ~164 kB vs ~900 kB combined)
+- ✅ Actor-loop allocation cleanup (scratch vectors in the AI path)
+
+Still open from the shortlist: full SSAO pass (ground AO shipped instead),
+drive-by shooting, death cam, gore, and the [C] honesty items below.
+
+---
+
 ## 1. Third-person combat (vs. Gears / Division / Uncharted)
 
 - [S] **No player cover system.** Enemies use cover; the player cannot snap,
