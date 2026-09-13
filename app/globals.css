@@ -375,6 +375,86 @@ button:disabled {
   gap: 8px;
 }
 
+.attunements {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.attunements-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.attunements-head h2 {
+  margin: 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #b9b4a6);
+}
+
+.attunements-head span {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: var(--gold, #d8b46a);
+}
+
+.attunement-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attunement {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 9px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.attunement:not(:disabled):hover {
+  border-color: var(--gold, #d8b46a);
+  background: rgba(216, 180, 106, 0.06);
+}
+
+.attunement:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.attunement.owned {
+  opacity: 1;
+  border-color: rgba(140, 200, 140, 0.4);
+}
+
+.attunement span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attunement small {
+  color: var(--text-secondary, #b9b4a6);
+  font-size: 0.74rem;
+}
+
+.attunement kbd {
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  color: var(--gold, #d8b46a);
+}
+
 .menu-button {
   display: grid;
   min-height: 68px;
@@ -1038,6 +1118,49 @@ kbd {
   inset: 0;
   pointer-events: none;
   background: radial-gradient(circle, transparent 48%, var(--danger-soft) 105%);
+}
+
+.veil-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  pointer-events: none;
+  /* Chromatic fringe: opposing warm/cool edges + a violet pull toward the
+     rim, like the world is being viewed through torn film. */
+  box-shadow:
+    inset 3vw 0 6vw -4vw rgba(255, 90, 160, 0.28),
+    inset -3vw 0 6vw -4vw rgba(80, 200, 255, 0.3),
+    inset 0 0 14vw rgba(80, 40, 160, 0.34);
+  background:
+    radial-gradient(ellipse at 50% 118%, rgba(90, 60, 200, 0.16), transparent 55%),
+    radial-gradient(ellipse at 50% -18%, rgba(160, 60, 140, 0.13), transparent 55%);
+  animation: veil-shimmer 3.4s ease-in-out infinite;
+}
+
+.veil-overlay i {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 3px,
+    rgba(140, 110, 255, 0.028) 3px 4px
+  );
+  mix-blend-mode: screen;
+}
+
+.veil-overlay i:last-child {
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(20, 8, 40, 0.5) 100%);
+  animation: veil-breathe 2.6s ease-in-out infinite alternate;
+}
+
+@keyframes veil-shimmer {
+  0%, 100% { opacity: 0.92; filter: hue-rotate(0deg); }
+  50% { opacity: 1; filter: hue-rotate(14deg); }
+}
+
+@keyframes veil-breathe {
+  from { opacity: 0.55; }
+  to { opacity: 0.95; }
 }
 
 .cinematic-frame {

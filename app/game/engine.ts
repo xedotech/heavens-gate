@@ -50,6 +50,7 @@ import {
 } from './movement';
 import { FrameTimeSampler } from './performance';
 import { createCheckpoint, normalizeSave } from './persistence';
+import { UPGRADES, marksForActor } from './upgrades';
 import { ScannedGroundMaterial } from './scanned-materials';
 import { visibleInScene, withoutSubtree } from './scene-lifecycle';
 import {
@@ -89,6 +90,8 @@ interface Actor {
   lastDamageAmount: number;
   vignette?: 'wander' | 'idle' | 'talk' | 'lean';
   vignetteTimer?: number;
+  hitReact?: number;
+  hitReactSide?: number;
 }
 
 interface CharacterRig {
@@ -120,6 +123,8 @@ interface Vehicle {
   heading: number;
   speed: number;
   occupied: boolean;
+  damage: number;
+  smoke?: THREE.Group;
   bodyMaterial: THREE.MeshStandardMaterial;
   wheels?: VehicleWheel[];
   tailMaterial?: THREE.MeshStandardMaterial;
@@ -299,6 +304,12 @@ export class HeavensGateEngine {
   private litterQuaternion = new THREE.Quaternion();
   private litterEuler = new THREE.Euler();
   private litterScale = new THREE.Vector3(1, 1, 1);
+  private screechTimer = 0;
+  private meleeCooldown = 0;
+  private chargeCooldown = 0;
+  private charges: Array<{ mesh: THREE.Mesh; light: THREE.PointLight; velocity: THREE.Vector3; timer: number; active: boolean }> = [];
+  private chargeVelocity = new THREE.Vector3();
+  private cameraForward = new THREE.Vector3();
   private contactShadows: THREE.InstancedMesh | null = null;
   private contactShadowMatrix = new THREE.Matrix4();
   private contactShadowPosition = new THREE.Vector3();
@@ -350,6 +361,8 @@ export class HeavensGateEngine {
 
   private health = 100;
   private armor = 50;
+  private shards = 0;
+  private ownedUpgrades = new Set<string>();
   private ammo = 18;
   private reserveAmmo = 126;
   private resonance = 100;
@@ -358,6 +371,7 @@ export class HeavensGateEngine {
   private veilActive = false;
   private veilTimer = 0;
   private veilCooldown = 0;
+  private veilWhisperTimer = 0;
   private pulseCooldown = 0;
   private reticleHit = 0;
   private hitDamagePool = 0;
@@ -812,6 +826,8 @@ export class HeavensGateEngine {
 
     const buildingMaterial = new THREE.MeshStandardMaterial({
       color: 0xffffff,
+      map: this.createFacadeTexture(false),
+      roughnessMap: this.createFacadeTexture(true),
       roughness: 0.47,
       metalness: 0.42,
       emissive: 0x0d1111,
@@ -877,6 +893,38 @@ export class HeavensGateEngine {
     this.createLandmark(new THREE.Vector3(0, 0, -54), 0xd1ad61, 'Crown Basilica');
     this.createLandmark(new THREE.Vector3(90, 0, 76), 0x7fa7b0, 'Meridian Needle');
     this.createLandmark(new THREE.Vector3(-94, 0, 78), 0x8e8264, 'The Archive');
+  }
+
+  // Procedural facade texture: vertical panel seams, horizontal floor bands,
+  // and per-panel value/roughness variation. Generated once on a canvas —
+  // keeps flat-color towers from reading as untextured blocks up close.
+  private createFacadeTexture(roughness: boolean) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = roughness ? '#8a8a8a' : '#b9bcbd';
+    ctx.fillRect(0, 0, 256, 256);
+    const rand = (i: number, salt: number) => seeded(i, salt + (roughness ? 500 : 0));
+    for (let panel = 0; panel < 8; panel += 1) {
+      for (let floor = 0; floor < 8; floor += 1) {
+        const v = Math.floor((roughness ? 100 : 168) + rand(panel * 8 + floor, 501) * (roughness ? 90 : 32));
+        ctx.fillStyle = `rgb(${v},${v},${v})`;
+        ctx.fillRect(panel * 32 + 1, floor * 32 + 1, 30, 30);
+      }
+    }
+    ctx.fillStyle = roughness ? '#4a4a4a' : '#7f8385';
+    for (let s = 0; s <= 256; s += 32) {
+      ctx.fillRect(s, 0, 2, 256);
+      ctx.fillRect(0, s, 256, 2);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(2, 3);
+    if (!roughness) texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
   }
 
   private createBuildingDetails(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
@@ -1947,6 +1995,7 @@ export class HeavensGateEngine {
       heading,
       speed: 0,
       occupied: false,
+      damage: 0,
       bodyMaterial,
       wheels,
       tailMaterial,
@@ -2015,8 +2064,29 @@ export class HeavensGateEngine {
         : Math.abs(playerPosition.x - position.x);
       const blocked = !car.wrecked && ahead > 0.5 && ahead < 10 && lateral < 3.4;
       car.panic = Math.max(0, car.panic - delta);
-      const target = car.wrecked || blocked ? 0 : car.cruise * (car.panic > 0 ? 1.8 : 1);
-      car.speed = damp(car.speed, target, blocked || car.wrecked ? 9 : 2.1, delta);
+      // Intersection yield: while approaching a crossing, give way to
+      // cross-traffic already inside the intersection box.
+      const crossings = car.axis === 'x' ? [-60, 30] : [-30, 60, 120];
+      let yielding = false;
+      for (const cross of crossings) {
+        const dist = (cross - car.progress) * car.direction;
+        if (dist > 1 && dist < 16) {
+          const conflict = this.trafficCars?.some((other) =>
+            other !== car && !other.wrecked && other.axis !== car.axis
+            && Math.abs(other.progress - car.lane) < 11
+            && Math.abs(other.lane - cross) < 11,
+          );
+          if (conflict) { yielding = true; break; }
+        }
+      }
+      // Car-following: hold distance behind a car ahead on the same lane.
+      const tailgating = this.trafficCars?.some((other) => {
+        if (other === car || other.axis !== car.axis || Math.abs(other.lane - car.lane) > 2) return false;
+        const gap = (other.progress - car.progress) * car.direction;
+        return gap > 0.5 && gap < 13;
+      }) ?? false;
+      const target = car.wrecked || blocked || yielding || tailgating ? 0 : car.cruise * (car.panic > 0 ? 1.8 : 1);
+      car.speed = damp(car.speed, target, blocked || yielding || tailgating || car.wrecked ? 9 : 2.1, delta);
       car.progress += car.speed * car.direction * delta;
       if (car.progress > 150) car.progress -= 300;
       else if (car.progress < -150) car.progress += 300;
@@ -2033,7 +2103,7 @@ export class HeavensGateEngine {
           mesh.position.y = 1.15 + index * 0.55 + Math.sin(this.elapsed * 1.4 + index * 2.2) * 0.08;
         });
       }
-      const braking = car.wrecked || blocked || car.speed < target * 0.55;
+      const braking = car.wrecked || blocked || yielding || tailgating || car.speed < target * 0.55;
       car.tailMaterial.emissiveIntensity = damp(
         car.tailMaterial.emissiveIntensity,
         car.wrecked ? 0.06 : braking ? 3.4 : 0.95,
@@ -2393,25 +2463,75 @@ export class HeavensGateEngine {
     this.actors.push(actor);
   }
 
+  private civilianArchetype(x: number, z: number, index: number) {
+    const district = DISTRICTS.find((d) => d.test(x, z))?.name ?? 'The Outer Choir';
+    const pick = (colors: number[]) => colors[index % colors.length];
+    switch (district) {
+      case 'Crown District':
+        return { coat: pick([0x8a7a54, 0xa89a70, 0x6e6450, 0x958a68]), accessory: 'halo' as const, accent: 0xd8b46a };
+      case 'Old Spine':
+        return { coat: pick([0x544134, 0x4a3c30, 0x5c4636, 0x46382c]), accessory: 'pack' as const, accent: 0x7a5c40 };
+      case 'Gilded Docks':
+        return { coat: pick([0x2f4a50, 0x35555a, 0x2c4248, 0x3a5058]), accessory: 'scarf' as const, accent: 0x6a9aa4 };
+      case 'Ash Gardens':
+        return { coat: pick([0x3a3d40, 0x44474a, 0x36383c, 0x4a4c50]), accessory: 'hood' as const, accent: 0x565a60 };
+      case 'Meridian':
+        return { coat: pick([0x46384a, 0x50425a, 0x3e3448, 0x4a3e54]), accessory: 'pack' as const, accent: 0x8a76a0 };
+      default:
+        return { coat: pick([0x35404a, 0x4a4035, 0x3d4738, 0x4b4a3b]), accessory: 'none' as const, accent: 0x8c7a5a };
+    }
+  }
+
+  private addCivilianAccessory(actor: Actor, kind: 'halo' | 'hood' | 'pack' | 'scarf' | 'none', accent: number) {
+    if (kind === 'none' || !actor.rig) return;
+    const mat = new THREE.MeshStandardMaterial({ color: accent, roughness: 0.72, metalness: 0.08 });
+    let prop: THREE.Mesh;
+    if (kind === 'halo') {
+      prop = new THREE.Mesh(
+        new THREE.TorusGeometry(0.22, 0.02, 6, 18),
+        new THREE.MeshStandardMaterial({ color: 0xd8b46a, emissive: 0x8a6a2f, emissiveIntensity: 0.9, roughness: 0.4 }),
+      );
+      prop.position.y = 0.46;
+      prop.rotation.x = Math.PI / 2;
+      actor.rig.head.add(prop);
+    } else if (kind === 'hood') {
+      prop = new THREE.Mesh(new THREE.ConeGeometry(0.36, 0.52, 8), mat);
+      prop.position.y = 0.26;
+      actor.rig.head.add(prop);
+    } else if (kind === 'scarf') {
+      prop = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.07, 6, 14), mat);
+      prop.position.y = -0.16;
+      prop.rotation.x = Math.PI / 2;
+      actor.rig.head.add(prop);
+    } else {
+      prop = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.52, 0.2), mat);
+      prop.position.set(0, 1.5, 0.3);
+      actor.group.add(prop);
+    }
+  }
+
   private createActors() {
     const wardens: Array<[number, number]> = [[-10, -48], [10, -48], [-13, -61], [13, -61], [0, -67]];
     wardens.forEach(([x, z], index) => this.addActor(`warden-${index + 1}`, 'enemy', x, z, 0x302c2c, 0xd65b43, 78));
 
-    const civilianColors = [0x35404a, 0x4a4035, 0x3d4738, 0x46384a, 0x4b4a3b, 0x2f3f46, 0x544134, 0x3a3d52];
     const citizens: Actor[] = [];
     for (let i = 0; i < 34; i += 1) {
       const road = Math.floor(seeded(i, 70) * 9 - 4) * 30;
       const along = (seeded(i, 71) - 0.5) * 250;
       const horizontal = seeded(i, 72) > 0.5;
+      const x = horizontal ? along : road + (seeded(i, 73) > 0.5 ? 5.6 : -5.6);
+      const z = horizontal ? road + (seeded(i, 74) > 0.5 ? 5.6 : -5.6) : along;
+      const archetype = this.civilianArchetype(x, z, i);
       const citizen = this.addActor(
         `citizen-${i + 1}`,
         'civilian',
-        horizontal ? along : road + (seeded(i, 73) > 0.5 ? 5.6 : -5.6),
-        horizontal ? road + (seeded(i, 74) > 0.5 ? 5.6 : -5.6) : along,
-        civilianColors[i % civilianColors.length],
+        x,
+        z,
+        archetype.coat,
         0x8c7a5a,
         42,
       );
+      this.addCivilianAccessory(citizen, archetype.accessory, archetype.accent);
       citizens.push(citizen);
       // Ambient-life vignettes: pairs face each other in conversation, loners
       // idle or lean. Wanderers keep the original drift behavior.
@@ -2601,6 +2721,8 @@ export class HeavensGateEngine {
     this.lastSave = save;
     this.health = save?.health ?? 100;
     this.armor = save?.armor ?? 50;
+    this.shards = save?.shards ?? 0;
+    this.ownedUpgrades = new Set(save?.upgrades ?? []);
     this.ammo = save?.ammo ?? 18;
     this.reserveAmmo = save?.reserveAmmo ?? 126;
     this.resonance = save?.resonance ?? 100;
@@ -2672,6 +2794,12 @@ export class HeavensGateEngine {
       vehicle.group.position.copy(vehicle.spawn);
       vehicle.speed = 0;
       vehicle.occupied = false;
+      vehicle.damage = 0;
+      if (vehicle.smoke) {
+        vehicle.group.remove(vehicle.smoke);
+        this.disposeObject(vehicle.smoke);
+        vehicle.smoke = undefined;
+      }
       vehicle.group.visible = true;
       vehicle.group.rotation.x = 0;
       vehicle.group.rotation.z = 0;
@@ -2892,6 +3020,7 @@ export class HeavensGateEngine {
     this.updateTraffic(delta);
     this.updateCorpses(delta);
     this.updateDrops(delta, time);
+    this.updateCharges(delta);
     this.updateVeil(delta);
     this.updateWeaponSway(delta);
     this.updateEffects(delta);
@@ -2917,6 +3046,8 @@ export class HeavensGateEngine {
     if (this.wasActionPressed('veil')) this.toggleVeil();
     if (this.wasActionPressed('pulse')) this.usePulse();
     if (this.wasActionPressed('weaponSwap')) this.cycleWeapon();
+    if (this.wasActionPressed('melee')) this.tryMelee();
+    if (this.wasActionPressed('throwCharge')) this.throwCharge();
     if (this.wasActionPressed('interact')) this.interact();
   }
 
@@ -3043,6 +3174,9 @@ export class HeavensGateEngine {
 
     const crouchPressed = this.wasActionPressed('crouch');
     const planarSpeed = Math.hypot(this.playerVelocity.x, this.playerVelocity.z);
+    // Cover: crouching beside a collision face or wrecked car attaches you to
+    // it — movement slides along the wall, and holding fire peeks over it.
+    this.coverFace = this.crouching && this.slideRemaining <= 0 ? this.findCoverFace() : null;
     if (crouchPressed && this.slideRemaining <= 0 && this.dodgeRemaining <= 0) {
       if (sprintIntent && canStartSlide(this.stamina, this.grounded, planarSpeed)) {
         this.slideRemaining = MOVEMENT_SPEC.slideSeconds;
@@ -3080,6 +3214,16 @@ export class HeavensGateEngine {
     this.playerSprinting = sprinting;
     this.stamina = updateStamina(this.stamina, delta, sprinting);
     const desired = desiredDirection.multiplyScalar(movementSpeed({ aiming, crouching: this.crouching, sprinting }) * Math.min(1, inputLength));
+    if (this.coverFace) {
+      // Strip the into-wall/out-of-wall component so cover movement is pure
+      // tangent slide; leaving is just walking away while crouched.
+      const into = desired.x * this.coverFace.x + desired.z * this.coverFace.z;
+      desired.x -= this.coverFace.x * into;
+      desired.z -= this.coverFace.z * into;
+      // Gentle press against the face keeps spacing consistent.
+      desired.x += this.coverFace.x * -0.4;
+      desired.z += this.coverFace.z * -0.4;
+    }
     if (this.slideRemaining > 0) {
       desired.copy(this.slideDirection).multiplyScalar(slideSpeed(this.slideRemaining));
       this.slideRemaining = Math.max(0, this.slideRemaining - delta);
@@ -3186,11 +3330,22 @@ export class HeavensGateEngine {
     const throttle = clamp((this.isActionHeld('moveForward') ? 1 : 0) - (this.isActionHeld('moveBackward') ? 1 : 0) - this.gamepadAxes.moveY - (this.touchMove?.y ?? 0), -1, 1);
     const steering = clamp((this.isActionHeld('moveLeft') ? 1 : 0) - (this.isActionHeld('moveRight') ? 1 : 0) - this.gamepadAxes.moveX - (this.touchMove?.x ?? 0), -1, 1);
     const boost = this.isActionHeld('sprint');
-    const maxSpeed = boost ? 48 : 38;
+    const handbrake = this.isActionHeld('jump');
+    const maxSpeed = (boost ? 48 : 38) * (vehicle.damage > 80 ? 0.45 : vehicle.damage > 40 ? 0.8 : 1);
     const targetSpeed = throttle >= 0 ? throttle * maxSpeed : throttle * 18;
     vehicle.speed = damp(vehicle.speed, targetSpeed, throttle ? 2.7 : 1.8, delta);
-    if (this.isActionHeld('jump')) vehicle.speed = damp(vehicle.speed, 0, 8, delta);
-    const steerStrength = clamp(Math.abs(vehicle.speed) / 9, 0.15, 1);
+    if (handbrake) {
+      vehicle.speed = damp(vehicle.speed, 0, 9.5, delta);
+      if (Math.abs(vehicle.speed) > 9 && this.screechTimer <= 0) {
+        this.audio.tireScreech?.(clamp(Math.abs(vehicle.speed) / 40, 0.2, 1));
+        this.screechTimer = 0.22;
+      }
+    }
+    this.screechTimer = Math.max(0, this.screechTimer - delta);
+    // Handbrake loosens the rear: steering gains authority while the body
+    // leans further, reading as a slide without a full slip sim.
+    const steerAuthority = handbrake ? 1.75 : 1;
+    const steerStrength = clamp(Math.abs(vehicle.speed) / 9, 0.15, 1) * steerAuthority;
     vehicle.heading += steering * steerStrength * delta * 1.42 * Math.sign(vehicle.speed || 1);
     const previous = vehicle.group.position.clone();
     vehicle.group.position.x += -Math.sin(vehicle.heading) * vehicle.speed * delta;
@@ -3202,13 +3357,18 @@ export class HeavensGateEngine {
     if (vehicleSweep.swept) {
       vehicle.group.position.x = vehicleSweep.x;
       vehicle.group.position.z = vehicleSweep.z;
-      if (Math.abs(vehicle.speed) > 16) {
-        this.takePlayerDamage(Math.abs(vehicle.speed) * 0.34);
+      const impact = Math.abs(vehicle.speed);
+      if (impact > 8) {
+        this.audio.crash?.(clamp(impact / 34, 0.2, 1));
+        vehicle.damage = (vehicle.damage ?? 0) + impact * 1.1;
+      }
+      if (impact > 16) {
+        this.takePlayerDamage(impact * 0.34);
         this.audio.explosion();
       }
       vehicle.speed *= -0.22;
     }
-    const braking = this.isActionHeld('jump') || (throttle < 0 && vehicle.speed > 4);
+    const braking = handbrake || (throttle < 0 && vehicle.speed > 4);
     const steerVisual = steering * clamp(Math.abs(vehicle.speed) / 12, 0, 1);
     vehicle.wheels?.forEach((wheel) => {
       wheel.pivot.rotation.y = wheel.front ? -steerVisual * 0.42 : 0;
@@ -3217,10 +3377,35 @@ export class HeavensGateEngine {
     if (vehicle.tailMaterial) {
       vehicle.tailMaterial.emissiveIntensity = damp(vehicle.tailMaterial.emissiveIntensity, braking ? 3.4 : 0.95, 10, delta);
     }
-    const targetLean = -steering * clamp(Math.abs(vehicle.speed) / 38, 0, 1) * 0.055;
+    const targetLean = -steering * clamp(Math.abs(vehicle.speed) / 38, 0, 1) * (handbrake ? 0.095 : 0.055);
     const targetPitch = braking ? -0.035 : clamp(throttle, 0, 1) * (boost ? 0.035 : 0.02);
     vehicle.group.rotation.z = damp(vehicle.group.rotation.z, targetLean, 6, delta);
     vehicle.group.rotation.x = damp(vehicle.group.rotation.x, targetPitch, 6, delta);
+    // Staged damage: past 40 the engine bay smokes, past 80 the car limps.
+    if (vehicle.damage > 40 && !vehicle.smoke) {
+      const smoke = new THREE.Group();
+      for (let i = 0; i < 3; i += 1) {
+        const puff = new THREE.Mesh(
+          new THREE.SphereGeometry(0.4 + i * 0.26, 8, 6),
+          new THREE.MeshBasicMaterial({ color: 0x14161a, transparent: true, opacity: 0.12, depthWrite: false }),
+        );
+        puff.position.set(0, 1.05 + i * 0.5, 2.4);
+        puff.scale.y = 1.3;
+        smoke.add(puff);
+      }
+      vehicle.smoke = smoke;
+      vehicle.group.add(smoke);
+      this.emitToast('Seraph damaged', 'Collision impact registered — watch the engine.', 'danger');
+    }
+    if (vehicle.smoke) {
+      const time = this.elapsed;
+      vehicle.smoke.children.forEach((puff, index) => {
+        puff.position.y = 1.05 + index * 0.5 + Math.sin(time * 2.4 + index * 1.7) * 0.14;
+        const severity = clamp(vehicle.damage / 110, 0.3, 1);
+        (puff as THREE.Mesh).scale.setScalar(1 + Math.sin(time * 3.1 + index) * 0.12);
+        ((puff as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.1 + severity * 0.1;
+      });
+    }
     this.player.position.copy(vehicle.group.position);
     this.audio.setEngine(vehicle.speed, true);
   }
@@ -3229,6 +3414,46 @@ export class HeavensGateEngine {
     const edge = WORLD_SIZE / 2 - margin;
     position.x = clamp(position.x, -edge, edge);
     position.z = clamp(position.z, -edge, edge);
+  }
+
+  private coverFaceVector = new THREE.Vector3();
+  private coverFace: THREE.Vector3 | null = null;
+
+  // Nearest collision face within arm's reach, as a unit normal pointing from
+  // the surface toward the player. Axis-aligned boxes give axis normals;
+  // dynamic obstacles (cars) give radial normals.
+  private findCoverFace() {
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    let best = 1.6;
+    let nx = 0;
+    let nz = 0;
+    for (const box of this.collisionBoxes) {
+      const cx = clamp(px, box.min.x, box.max.x);
+      const cz = clamp(pz, box.min.z, box.max.z);
+      const dx = px - cx;
+      const dz = pz - cz;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 0.01 && dist < best) {
+        best = dist;
+        nx = dx / dist;
+        nz = dz / dist;
+      }
+    }
+    for (const obstacle of this.dynamicObstacles ?? []) {
+      const dx = px - obstacle.x;
+      const dz = pz - obstacle.z;
+      const dist = Math.hypot(dx, dz) - obstacle.radius;
+      if (dist > 0.01 && dist < best) {
+        best = dist;
+        const radial = Math.hypot(dx, dz) || 1;
+        nx = dx / radial;
+        nz = dz / radial;
+      }
+    }
+    if (!best || best >= 1.6) return null;
+    this.coverFaceVector.set(nx, 0, nz).normalize();
+    return this.coverFaceVector;
   }
 
   private collides(x: number, z: number, radius: number) {
@@ -3448,6 +3673,7 @@ export class HeavensGateEngine {
       const distance = actor.group.position.distanceTo(playerPosition);
       actor.cooldown -= delta;
       actor.damagePulse = Math.max(0, actor.damagePulse - delta);
+      actor.hitReact = Math.max(0, (actor.hitReact ?? 0) - delta * 2.6);
 
       if (actor.kind === 'civilian') {
         const threatened = actor.flee > 0 || (this.heat > 12 && distance < 22);
@@ -3465,10 +3691,12 @@ export class HeavensGateEngine {
             actor.vignetteTimer = 2.4 + seeded(actorIndex + Math.floor(time), 132) * 4.5;
             if (distance < 42) this.audio.pedestrianBlip(actor.group.position, playerPosition, this.cameraYaw);
           }
+          this.animateActor(actor, 0, delta);
         } else if (actor.vignette === 'idle' || actor.vignette === 'lean') {
           // Standing life: weight-shift sway and head-look drift.
           actor.group.position.x = actor.spawn.x + Math.sin(time * 0.4 + actorIndex) * 0.08;
           actor.wanderAngle += delta * 0.06;
+          this.animateActor(actor, 0, delta);
         } else {
           actor.wanderAngle += Math.sin(time * 0.18 + actorIndex) * delta * 0.12;
           this.moveActor(actor, new THREE.Vector3(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle)), actor.speed * 0.42, delta);
@@ -3545,6 +3773,7 @@ export class HeavensGateEngine {
           const ideal = actor.kind === 'boss' ? 13 : 10;
           if (distance > ideal) this.moveActor(actor, direction, actor.speed, delta);
           else if (distance < ideal * 0.7) this.moveActor(actor, direction, -actor.speed * 0.45, delta);
+          else this.animateActor(actor, 0, delta);
           actor.group.rotation.y = Math.atan2(direction.x, direction.z);
           if (actor.cooldown <= 0 && aiStep.perception.targetSeen && distance < (actor.kind === 'boss' ? 42 : 31)) {
             this.enemyFire(actor, actor.kind === 'boss' ? 18 : 10);
@@ -3607,6 +3836,14 @@ export class HeavensGateEngine {
     rig.chest.rotation.y = Math.sin(rig.phase) * amplitude * 0.08;
     rig.chest.rotation.x = -0.08 + Math.sin(this.elapsed * 1.7 + rig.phase * 0.04) * 0.018;
     rig.head.rotation.y = Math.sin(this.elapsed * 0.55 + rig.phase * 0.1) * (actor.kind === 'civilian' ? 0.12 : 0.045);
+    // Locational hit reaction: chest snaps back and twists away from the
+    // shot's side, decaying over a third of a second.
+    if (actor.hitReact && actor.hitReact > 0) {
+      const snap = Math.sin(Math.min(1, actor.hitReact * 2.4) * Math.PI) * 0.55;
+      rig.chest.rotation.x -= snap * 0.42;
+      rig.chest.rotation.y += snap * (actor.hitReactSide ?? 0) * 0.5;
+      rig.head.rotation.x = -snap * 0.3;
+    }
   }
 
   private enemyFire(actor: Actor, damage: number) {
@@ -3627,6 +3864,16 @@ export class HeavensGateEngine {
   private takePlayerDamage(amount: number, source?: THREE.Vector3) {
     if (this.invulnerability > 0 || this.gameOverSent) return;
     this.invulnerability = 0.16;
+    // Cover blocks most fire arriving from beyond the held face while you
+    // aren't aiming — peeking exposes you fully.
+    if (source && this.coverFace && !this.isAiming()) {
+      const position = this.currentVehicle?.group.position ?? this.player.position;
+      const toSource = Math.hypot(source.x - position.x, source.z - position.z) || 1;
+      const exposure = ((source.x - position.x) / toSource) * -this.coverFace.x
+        + ((source.z - position.z) / toSource) * -this.coverFace.z;
+      if (exposure > 0.35) amount *= 0.35;
+    }
+    if (this.ownedUpgrades?.has('plating')) amount *= 0.78;
     if (source) {
       const position = this.currentVehicle?.group.position ?? this.player.position;
       const bearing = Math.atan2(source.x - position.x, source.z - position.z);
@@ -3725,15 +3972,26 @@ export class HeavensGateEngine {
   }
 
   private damageActor(actor: Actor, damage: number, critical = false) {
-    actor.health -= damage;
+    const boosted = this.ownedUpgrades?.has('coil') ? damage * 1.2 : damage;
+    actor.health -= boosted;
     if (this.hitDamageTimer <= 0) {
       this.hitDamagePool = 0;
       this.hitDamageSeq += 1;
     }
-    this.hitDamagePool += damage;
+    this.hitDamagePool += boosted;
     this.hitDamageTimer = 0.85;
-    actor.lastDamageAmount = Math.max(actor.lastDamageAmount, damage);
+    actor.lastDamageAmount = Math.max(actor.lastDamageAmount, boosted);
     actor.damagePulse = Math.max(actor.damagePulse, critical ? 0.75 : 0.48);
+    // Directional flinch: which side of the actor the hit came from.
+    const toActor = Math.atan2(
+      actor.group.position.x - this.player.position.x,
+      actor.group.position.z - this.player.position.z,
+    );
+    let rel = toActor - actor.group.rotation.y;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    actor.hitReactSide = Math.sin(rel);
+    actor.hitReact = Math.max(actor.hitReact ?? 0, critical ? 0.5 : 0.3);
     actor.materials.forEach((material) => {
       const original = material.emissive.clone();
       material.emissive.setHex(critical ? 0xffd98a : 0xa9382d);
@@ -3784,6 +4042,11 @@ export class HeavensGateEngine {
     } else if (actor.kind === 'boss') {
       this.emitSubtitle('Archon', 'If the door opens… you will miss the cage.');
       this.beginCinematic(actor.group.position.clone());
+    }
+    const marks = marksForActor(actor.id, actor.kind);
+    if (marks > 0) {
+      this.shards += marks;
+      this.emitToast('Marks claimed', `+${marks} · spend in Pause → Attunements`, 'success');
     }
   }
 
@@ -3903,6 +4166,8 @@ export class HeavensGateEngine {
   private setVeil(active: boolean, silent = false) {
     this.veilActive = active;
     this.veilTimer = active ? 8 : 0;
+    this.audio.setVeilBed(active);
+    this.veilWhisperTimer = 1.2;
     if (!active && !silent) this.veilCooldown = 7.5;
     if (active) {
       this.resonance = Math.max(0, this.resonance - 18);
@@ -3934,9 +4199,18 @@ export class HeavensGateEngine {
     if (this.veilActive) {
       this.veilTimer -= delta;
       this.resonance = Math.max(0, this.resonance - delta * 1.4);
+      this.veilWhisperTimer = Math.max(0, (this.veilWhisperTimer ?? 2) - delta);
+      if (this.veilWhisperTimer === 0) {
+        this.audio.whisperBlip();
+        this.veilWhisperTimer = 1.6 + seeded(Math.floor(this.elapsed * 10), 500) * 3.4;
+      }
       if (this.veilTimer <= 0 || this.resonance <= 0) this.setVeil(false);
     } else {
-      this.resonance = Math.min(100, this.resonance + delta * 2.1);
+      const regen = this.ownedUpgrades?.has('flow') ? 3.15 : 2.1;
+      this.resonance = Math.min(100, this.resonance + delta * regen);
+      if (this.ownedUpgrades?.has('aegis')) {
+        this.armor = Math.min(90, this.armor + delta * 1.1);
+      }
     }
   }
 
@@ -3959,6 +4233,115 @@ export class HeavensGateEngine {
         actor.group.position.addScaledVector(knock, Math.max(1, 7 - distance * 0.3));
       }
     });
+  }
+
+  private tryMelee() {
+    this.meleeCooldown = Math.max(0, (this.meleeCooldown ?? 0));
+    if (this.meleeCooldown > 0 || this.currentVehicle || this.paused || this.photoMode) return;
+    this.meleeCooldown = 0.78;
+    this.audio.meleeSwing();
+    this.weaponKick = Math.min(1.6, this.weaponKick + 0.9);
+    this.camera.getWorldDirection(this.cameraForward);
+    let landed = false;
+    this.actors.forEach((actor) => {
+      if (!actor.alive) return;
+      const dx = actor.group.position.x - this.player.position.x;
+      const dz = actor.group.position.z - this.player.position.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance > 3.1 || distance < 0.001) return;
+      const dot = (dx * this.cameraForward.x + dz * this.cameraForward.z) / distance;
+      if (dot < 0.35) return;
+      landed = true;
+      actor.group.position.x += (dx / distance) * 0.6;
+      actor.group.position.z += (dz / distance) * 0.6;
+      actor.hitReact = Math.max(actor.hitReact ?? 0, 0.65);
+      this.damageActor(actor, actor.kind === 'civilian' ? 24 : 42);
+    });
+    if (landed) {
+      this.audio.meleeHit();
+      if (!this.settings.reducedMotion) this.hitStop = Math.max(this.hitStop, 0.05);
+    }
+  }
+
+  private throwCharge() {
+    this.chargeCooldown = Math.max(0, this.chargeCooldown ?? 0);
+    if (this.currentVehicle || this.paused || this.photoMode || this.chargeCooldown > 0) return;
+    if (this.resonance < 18) {
+      this.emitToast('Resonance charge unavailable', 'Need 18 resonance', 'danger');
+      return;
+    }
+    if (!this.charges.length) {
+      for (let i = 0; i < 4; i += 1) {
+        const mesh = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.16, 0),
+          new THREE.MeshStandardMaterial({ color: 0x9fd8ff, emissive: 0x4fa8ff, emissiveIntensity: 2.6, roughness: 0.3 }),
+        );
+        mesh.visible = false;
+        const light = new THREE.PointLight(0x6ab8ff, 0, 9);
+        mesh.add(light);
+        this.scene.add(mesh);
+        this.charges.push({ mesh, light, velocity: new THREE.Vector3(), timer: 0, active: false });
+      }
+    }
+    const charge = this.charges.find((candidate) => !candidate.active);
+    if (!charge) {
+      this.emitToast('Charges in flight', 'Wait for a charge to detonate', 'info');
+      return;
+    }
+    this.chargeCooldown = 0.9;
+    this.resonance -= 18;
+    this.camera.getWorldDirection(this.cameraForward);
+    charge.mesh.position.copy(this.camera.position).addScaledVector(this.cameraForward, 1.1);
+    charge.mesh.position.y = Math.max(0.5, charge.mesh.position.y - 0.25);
+    charge.velocity.copy(this.cameraForward).multiplyScalar(24);
+    charge.velocity.y += 5.5;
+    charge.timer = 2.4;
+    charge.active = true;
+    charge.mesh.visible = true;
+    charge.light.intensity = 8;
+    this.audio.chargeThrow();
+  }
+
+  private updateCharges(delta: number) {
+    this.meleeCooldown = Math.max(0, (this.meleeCooldown ?? 0) - delta);
+    this.chargeCooldown = Math.max(0, (this.chargeCooldown ?? 0) - delta);
+    if (!this.charges?.length) return;
+    this.charges.forEach((charge) => {
+      if (!charge.active) return;
+      charge.timer -= delta;
+      charge.velocity.y -= 21 * delta;
+      charge.mesh.position.addScaledVector(charge.velocity, delta);
+      charge.mesh.rotation.x += delta * 9;
+      charge.mesh.rotation.y += delta * 7;
+      const pos = charge.mesh.position;
+      const grounded = pos.y <= 0.18;
+      const obstructed = this.collides(pos.x, pos.z, 0.24);
+      const hitActor = this.actors.some((actor) => actor.alive && actor.group.position.distanceToSquared(pos) < 1.1);
+      if (grounded || obstructed || hitActor || charge.timer <= 0) {
+        charge.active = false;
+        charge.mesh.visible = false;
+        charge.light.intensity = 0;
+        this.explodeCharge(pos);
+      }
+    });
+  }
+
+  private explodeCharge(position: THREE.Vector3) {
+    this.audio.explosion();
+    this.createImpact(position, false);
+    this.createShockwave?.(position);
+    this.heat = clamp(this.heat + 9, 0, 100);
+    this.actors.forEach((actor) => {
+      if (!actor.alive) return;
+      const distance = actor.group.position.distanceTo(position);
+      if (distance > 6.5) return;
+      const falloff = 1 - distance / 6.5;
+      this.damageActor(actor, (actor.kind === 'boss' ? 34 : 62) * falloff + 8);
+      const knock = actor.group.position.clone().sub(position).setY(0).normalize();
+      actor.group.position.addScaledVector(knock, falloff * 2.4);
+    });
+    const playerDistance = this.player.position.distanceTo(position);
+    if (playerDistance < 4 && !this.currentVehicle) this.takePlayerDamage(12 * (1 - playerDistance / 4));
   }
 
   private interact() {
@@ -4193,13 +4576,17 @@ export class HeavensGateEngine {
         ? 'dodging'
         : this.slideRemaining > 0
           ? 'sliding'
-          : this.crouching
-            ? 'crouched'
-            : 'standing',
+          : this.coverFace
+            ? 'cover'
+            : this.crouching
+              ? 'crouched'
+              : 'standing',
       ammo: this.ammo,
       reserveAmmo: this.reserveAmmo,
       weapon: this.activeWeaponSpec().hudLabel,
       resonance: this.resonance,
+      shards: this.shards,
+      upgrades: [...(this.ownedUpgrades ?? [])],
       heat: this.heat,
       heatTier: this.heatTierValue(),
       vehicleSpeed: this.currentVehicle ? Math.abs(this.currentVehicle.speed) * 3.6 : 0,
@@ -4583,6 +4970,23 @@ export class HeavensGateEngine {
     this.callbacks.onToast({ id: ++this.toastId, title, detail, tone });
   }
 
+  buyUpgrade(id: string): boolean {
+    const def = UPGRADES.find((upgrade) => upgrade.id === id);
+    if (!def || this.ownedUpgrades.has(id)) return false;
+    if (this.shards < def.cost) {
+      this.emitToast('Attunement declined', `${def.name} needs ${def.cost} marks`, 'danger');
+      return false;
+    }
+    this.shards -= def.cost;
+    this.ownedUpgrades.add(id);
+    if (id === 'vitals') this.health = 130;
+    if (id === 'aegis') this.armor = Math.max(this.armor, 60);
+    this.audio.ui(true);
+    this.emitToast(`${def.name} attuned`, def.detail, 'success');
+    this.saveCheckpoint();
+    return true;
+  }
+
   private saveCheckpoint(ending?: 'open' | 'seal') {
     const save = createCheckpoint({
       version: SAVE_VERSION,
@@ -4592,6 +4996,8 @@ export class HeavensGateEngine {
       ammo: this.ammo,
       reserveAmmo: this.reserveAmmo,
       resonance: Math.round(this.resonance),
+      shards: this.shards,
+      upgrades: [...this.ownedUpgrades],
       defeatedWardens: this.defeatedWardens,
       echoesActivated: [...this.echoesActivated],
       elapsed: this.elapsed,

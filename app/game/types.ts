@@ -17,6 +17,8 @@ export type KeybindAction =
   | 'veil'
   | 'pulse'
   | 'weaponSwap'
+  | 'melee'
+  | 'throwCharge'
   | 'interact'
   | 'inspect';
 
@@ -33,6 +35,8 @@ export interface Keybinds {
   veil: string;
   pulse: string;
   weaponSwap: string;
+  melee: string;
+  throwCharge: string;
   interact: string;
   inspect: string;
 }
@@ -67,6 +71,8 @@ export interface SaveState {
   missionIndex: number;
   health: number;
   armor: number;
+  shards?: number;
+  upgrades?: string[];
   ammo: number;
   reserveAmmo: number;
   weaponId?: WeaponId;
@@ -83,11 +89,13 @@ export interface HUDState {
   health: number;
   armor: number;
   stamina: number;
-  stance: 'standing' | 'crouched' | 'sliding' | 'dodging';
+  stance: 'standing' | 'crouched' | 'sliding' | 'dodging' | 'cover';
   ammo: number;
   reserveAmmo: number;
   weapon: string;
   resonance: number;
+  shards: number;
+  upgrades: string[];
   heat: number;
   heatTier: number;
   vehicleSpeed: number;
@@ -196,6 +204,8 @@ export const DEFAULT_KEYBINDS: Keybinds = {
   veil: 'q',
   pulse: 'f',
   weaponSwap: 'x',
+  melee: 'v',
+  throwCharge: 'g',
   interact: 'e',
   inspect: 'p',
 };
@@ -223,6 +233,8 @@ export const INITIAL_HUD: HUDState = {
   reserveAmmo: 126,
   weapon: 'Morrow / 9mm smart',
   resonance: 100,
+  shards: 0,
+  upgrades: [],
   heat: 0,
   heatTier: 0,
   vehicleSpeed: 0,

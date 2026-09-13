@@ -118,7 +118,7 @@ describe('checkpoint validation and repair', () => {
       reserveAmmo: Infinity, resonance: 'empty', defeatedWardens: 500,
       elapsed: -10, updatedAt: 'yesterday', echoesActivated: ['echo-truth', 'echo-truth', {}, 'unknown', 'echo-name'],
     });
-    expect(save).toMatchObject({ missionIndex: 4, health: 100, armor: 50, ammo: 0, reserveAmmo: 126,
+    expect(save).toMatchObject({ missionIndex: 4, health: 100, armor: 90, ammo: 0, reserveAmmo: 126,
       resonance: 100, defeatedWardens: 5, elapsed: 0, updatedAt: 0, echoesActivated: ['echo-truth', 'echo-name'] });
     expect(normalizeSave({ version: 1, missionIndex: 3 })).toMatchObject({ missionIndex: 3, health: 100 });
   });

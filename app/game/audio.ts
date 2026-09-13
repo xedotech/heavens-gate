@@ -6,6 +6,8 @@ type Wave = OscillatorType;
 export class AudioEngine {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
+  private masterFilter: BiquadFilterNode | null = null;
+  private veilBed: { source: AudioBufferSourceNode; gain: GainNode; lfo: OscillatorNode; lfoGain: GainNode } | null = null;
   private ambientBus: GainNode | null = null;
   private effectsBus: GainNode | null = null;
   private engineBus: GainNode | null = null;
@@ -37,10 +39,14 @@ export class AudioEngine {
       this.engineBus.gain.value = 0;
       this.master.gain.value = this.muted ? 0 : this.volume;
 
+      this.masterFilter = this.context.createBiquadFilter();
+      this.masterFilter.type = 'lowpass';
+      this.masterFilter.frequency.value = 19000;
       this.ambientBus.connect(this.master);
       this.effectsBus.connect(this.master);
       this.engineBus.connect(this.master);
-      this.master.connect(this.context.destination);
+      this.master.connect(this.masterFilter);
+      this.masterFilter.connect(this.context.destination);
       this.startAmbient();
     }
     if (this.context.state !== 'running') await this.context.resume();
@@ -320,6 +326,90 @@ export class AudioEngine {
     this.noise(0.28, 0.09, 920);
   }
 
+  setVeilBed(active: boolean) {
+    if (!this.context || !this.ambientBus) return;
+    const now = this.context.currentTime;
+    if (this.masterFilter) {
+      this.masterFilter.frequency.setTargetAtTime(active ? 900 : 19000, now, 0.28);
+    }
+    if (active && !this.veilBed) {
+      const source = this.context.createBufferSource();
+      source.buffer = this.createNoiseBuffer(3.5);
+      source.loop = true;
+      const filter = this.context.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 520;
+      filter.Q.value = 1.5;
+      const gain = this.context.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.setTargetAtTime(0.055, now, 0.6);
+      const lfo = this.context.createOscillator();
+      lfo.frequency.value = 0.14;
+      const lfoGain = this.context.createGain();
+      lfoGain.gain.value = 260;
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ambientBus);
+      source.start();
+      lfo.start();
+      this.veilBed = { source, gain, lfo, lfoGain };
+    } else if (!active && this.veilBed) {
+      const bed = this.veilBed;
+      this.veilBed = null;
+      bed.gain.gain.setTargetAtTime(0, now, 0.4);
+      setTimeout(() => {
+        try { bed.source.stop(); bed.lfo.stop(); } catch { /* already stopped */ }
+        bed.source.disconnect();
+        bed.lfo.disconnect();
+        bed.lfoGain.disconnect();
+        bed.gain.disconnect();
+      }, 1600);
+    }
+  }
+
+  whisperBlip() {
+    // Two detuned descending tones + hiss — a voice that almost forms words.
+    const base = 340 + Math.random() * 260;
+    this.tone(base, 0.5, 'sine', 0.028, 0, this.ambientBus, base * 0.62);
+    this.tone(base * 1.007, 0.55, 'sine', 0.024, 0.04, this.ambientBus, base * 0.58);
+    this.noise(0.4, 0.02, 1600);
+  }
+
+  meleeSwing() {
+    this.noise(0.14, 0.09, 1400);
+    this.tone(180, 0.1, 'triangle', 0.04, 0.02, this.effectsBus, 90);
+  }
+
+  meleeHit() {
+    this.noise(0.1, 0.2, 700);
+    this.tone(85, 0.22, 'sine', 0.2, 0, this.effectsBus, 40);
+    this.tone(300, 0.08, 'square', 0.05, 0.01, this.effectsBus, 140);
+  }
+
+  chargeThrow() {
+    const jitter = 0.95 + Math.random() * 0.1;
+    this.tone(620 * jitter, 0.18, 'sine', 0.06, 0, this.effectsBus, 940 * jitter);
+    this.noise(0.12, 0.05, 2200);
+  }
+
+  crash(intensity = 1) {
+    const amount = clamp(intensity, 0.2, 1);
+    // Metal crunch + low thud + glass scatter.
+    this.noise(0.22, 0.2 * amount, 900);
+    this.tone(68, 0.3, 'sine', 0.16 * amount, 0, this.effectsBus, 30);
+    this.noise(0.45, 0.06 * amount, 3200);
+    this.tone(240, 0.12, 'square', 0.05 * amount, 0.02, this.effectsBus, 110);
+  }
+
+  tireScreech(gripLoss = 0.5) {
+    // High bandpass noise wail — short, so it can be re-triggered while held.
+    const jitter = 0.94 + Math.random() * 0.12;
+    this.noise(0.16, 0.045 * clamp(gripLoss, 0.2, 1), 2600 * jitter);
+    this.tone(1180 * jitter, 0.14, 'sawtooth', 0.012 * gripLoss, 0, this.effectsBus, 980 * jitter);
+  }
+
   explosion() {
     this.noise(0.75, 0.24, 110);
     this.tone(55, 0.8, 'sine', 0.14, 0, this.effectsBus, 24);
@@ -464,6 +554,15 @@ export class AudioEngine {
     if (this.scoreTimer) clearInterval(this.scoreTimer);
     this.scoreTimer = null;
     this.setCityBed(false);
+    if (this.veilBed) {
+      const bed = this.veilBed;
+      this.veilBed = null;
+      try { bed.source.stop(); bed.lfo.stop(); } catch { /* Already stopped. */ }
+      bed.source.disconnect();
+      bed.lfo.disconnect();
+      bed.lfoGain.disconnect();
+      bed.gain.disconnect();
+    }
     this.ambientSources.forEach((source) => {
       try { source.stop(); } catch { /* Already stopped. */ }
       source.disconnect();

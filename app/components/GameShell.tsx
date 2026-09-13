@@ -29,6 +29,7 @@ import {
 import type { HeavensGateEngine } from '../game/engine';
 import { TouchControls } from './TouchControls';
 import { assignKeybind, mergeKeybinds } from '../game/keybinds';
+import { UPGRADES } from '../game/upgrades';
 import { formatDistance } from '../game/mechanics';
 import { eraseSaves, normalizeSettings, readSave, readSettings, retrySettings, saveReadNotice, saveWriteNotice, writeSave, writeSettings } from '../game/persistence';
 import {
@@ -71,6 +72,9 @@ const KEYBIND_ACTIONS: Array<{ id: KeybindAction; label: string }> = [
   { id: 'reload', label: 'Reload' },
   { id: 'veil', label: 'Veil' },
   { id: 'pulse', label: 'Pulse' },
+  { id: 'weaponSwap', label: 'Swap weapon' },
+  { id: 'melee', label: 'Melee strike' },
+  { id: 'throwCharge', label: 'Throw charge' },
   { id: 'interact', label: 'Interact' },
   { id: 'inspect', label: 'Inspect character' },
 ];
@@ -552,7 +556,7 @@ export default function GameShell() {
               <div className={hud.veilActive ? 'active' : ''}><Eye aria-hidden="true" /><span><strong>Veil</strong><small>{formatBinding(settings.keybinds.veil)} / LB</small></span><i>{hud.veilActive ? 'OPEN' : hud.veilCooldown > 0 ? `${Math.ceil(hud.veilCooldown)}s` : 'READY'}</i></div>
               <div><Zap aria-hidden="true" /><span><strong>Pulse</strong><small>{formatBinding(settings.keybinds.pulse)} / RB</small></span><i>{hud.pulseCooldown > 0 ? `${Math.ceil(hud.pulseCooldown)}s` : 'READY'}</i></div>
             </div>
-            <div className="resonance-track"><span style={{ width: `${hud.resonance}%` }} /><small>{Math.round(hud.resonance)} resonance</small></div>
+            <div className="resonance-track"><span style={{ width: `${hud.resonance}%` }} /><small>{Math.round(hud.resonance)} resonance · {hud.shards} marks</small></div>
           </div>
 
           {hud.bossHealth !== null && (
@@ -566,6 +570,7 @@ export default function GameShell() {
               <button type="button" onClick={() => setTutorial(false)} aria-label="Dismiss controls"><Check aria-hidden="true" /></button>
             </div>
           )}
+          {hud.veilActive && <div className="veil-overlay" aria-hidden="true"><i /><i /></div>}
           <div className="damage-vignette" style={{ opacity: hud.damageFlash }} aria-hidden="true" />
           {hud.damageDirection !== null && (
             <div
@@ -605,6 +610,30 @@ export default function GameShell() {
             <MenuButton icon={<RotateCcw />} title="Restart checkpoint" detail={save ? MISSIONS[save.missionIndex]?.title : 'The Bell Below'} onClick={() => { engineRef.current?.retryCheckpoint(); setScreen('playing'); void engineRef.current?.resume(); }} />
             <MenuButton icon={<ArrowLeft />} title="Return to title" detail="Progress is saved automatically" onClick={() => { engineRef.current?.returnToTitle(); setScreen('title'); }} />
           </nav>
+          <div className="attunements" aria-label="Attunements">
+            <div className="attunements-head">
+              <h2>Attunements</h2>
+              <span>{hud.shards} marks</span>
+            </div>
+            <div className="attunement-list">
+              {UPGRADES.map((upgrade) => {
+                const owned = hud.upgrades.includes(upgrade.id);
+                const affordable = hud.shards >= upgrade.cost;
+                return (
+                  <button
+                    type="button"
+                    key={upgrade.id}
+                    className={owned ? 'attunement owned' : 'attunement'}
+                    disabled={owned || !affordable}
+                    onClick={() => engineRef.current?.buyUpgrade(upgrade.id)}
+                  >
+                    <span><strong>{upgrade.name}</strong><small>{upgrade.detail}</small></span>
+                    <kbd>{owned ? 'ATTUNED' : `${upgrade.cost} marks`}</kbd>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </section>
       )}
 
@@ -639,7 +668,7 @@ export default function GameShell() {
         <section className="menu-screen codex-screen" aria-labelledby="codex-title">
           <div className="panel-header"><button className="back-button" type="button" onClick={() => setScreen(returnScreen)}><ArrowLeft aria-hidden="true" /> Back</button><div><p className="eyebrow">Field manual // Version 1.0</p><h1 id="codex-title">How to survive heaven</h1></div></div>
           <div className="codex-grid">
-            <article><Keyboard aria-hidden="true" /><h2>On foot</h2><dl><div><dt>Move</dt><dd>WASD / left stick</dd></div><div><dt>Sprint</dt><dd>Shift / L3</dd></div><div><dt>Crouch / slide</dt><dd>C or Ctrl / R3</dd></div><div><dt>Dodge</dt><dd>Alt / B</dd></div><div><dt>Aim</dt><dd>Right mouse / LT</dd></div><div><dt>Look</dt><dd>Mouse / right stick</dd></div><div><dt>Fire</dt><dd>Left mouse / RT</dd></div><div><dt>Jump / vault</dt><dd>Space / A</dd></div><div><dt>Reload</dt><dd>R / X</dd></div><div><dt>Swap weapon</dt><dd>X / wheel / D-pad down</dd></div><div><dt>Character inspection</dt><dd>P</dd></div></dl><p className="codex-note">Keyboard bindings and HUD scale can be changed in Settings.</p></article>
+            <article><Keyboard aria-hidden="true" /><h2>On foot</h2><dl><div><dt>Move</dt><dd>WASD / left stick</dd></div><div><dt>Sprint</dt><dd>Shift / L3</dd></div><div><dt>Crouch / slide</dt><dd>C or Ctrl / R3</dd></div><div><dt>Dodge</dt><dd>Alt / B</dd></div><div><dt>Aim</dt><dd>Right mouse / LT</dd></div><div><dt>Look</dt><dd>Mouse / right stick</dd></div><div><dt>Fire</dt><dd>Left mouse / RT</dd></div><div><dt>Jump / vault</dt><dd>Space / A</dd></div><div><dt>Reload</dt><dd>R / X</dd></div><div><dt>Swap weapon</dt><dd>X / wheel / D-pad down</dd></div><div><dt>Melee strike</dt><dd>V / D-pad up</dd></div><div><dt>Throw charge</dt><dd>G / D-pad left</dd></div><div><dt>Character inspection</dt><dd>P</dd></div></dl><p className="codex-note">Keyboard bindings and HUD scale can be changed in Settings.</p></article>
             <article><Keyboard aria-hidden="true" /><h2>Touch &amp; tablet</h2><p>On coarse-pointer devices a virtual layout appears in play: left stick to move, drag the right half to look, and labeled buttons for fire, aim, jump, run, interact, reload, swap, Veil, and Pulse. Pair a standard gamepad for console-style play.</p></article>
             <article><Car aria-hidden="true" /><h2>Vehicles</h2><dl><div><dt>Enter / exit</dt><dd>E / Y</dd></div><div><dt>Accelerate</dt><dd>W / RT stick axis</dd></div><div><dt>Steer</dt><dd>A D / left stick</dd></div><div><dt>Handbrake</dt><dd>Space</dd></div><div><dt>Overdrive</dt><dd>Shift</dd></div></dl></article>
             <article><Eye aria-hidden="true" /><h2>The Veil</h2><p>Press Q or LB to cross into memory-space for eight seconds. Echoes become tangible and hostiles remain visible through fog. It costs resonance and then enters cooldown.</p></article>

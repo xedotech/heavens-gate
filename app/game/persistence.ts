@@ -1,5 +1,6 @@
 import { MORROW_SPEC, WEAPONS, WEAPON_ORDER } from './combat';
 import { mergeKeybinds } from './keybinds';
+import { UPGRADE_IDS } from './upgrades';
 import { DEFAULT_SETTINGS, MISSIONS, type GameSettings, type SaveState, type WeaponId } from './types';
 
 export const SAVE_KEY = 'heavens-gate-save-v1';
@@ -79,8 +80,14 @@ export function normalizeSave(value: unknown): SaveState | null {
   return {
     version: 1,
     missionIndex,
-    health: finite(value.health, 100, 1, 100, true),
-    armor: finite(value.armor, 50, 0, 50, true),
+    health: finite(value.health, 100, 1, 130, true),
+    armor: finite(value.armor, 50, 0, 90, true),
+    ...(value.shards !== undefined ? { shards: finite(value.shards, 0, 0, Number.MAX_SAFE_INTEGER, true) } : {}),
+    ...(value.upgrades !== undefined ? {
+      upgrades: Array.isArray(value.upgrades)
+        ? [...new Set(value.upgrades.filter((id): id is string => typeof id === 'string' && UPGRADE_IDS.has(id)))]
+        : [],
+    } : {}),
     ammo: finite(value.ammo, magazine, 0, magazine, true),
     reserveAmmo: finite(value.reserveAmmo, 126, 0, Number.MAX_SAFE_INTEGER, true),
     ...(value.weaponId !== undefined ? { weaponId } : {}),
