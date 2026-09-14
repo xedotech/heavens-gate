@@ -4775,7 +4775,17 @@ export class HeavensGateEngine {
         });
         actor.aiState = aiStep.state;
         actor.lastDamageAmount = 0;
-        if (aiStep.emittedRadio) frameRadio.push(aiStep.emittedRadio);
+        if (aiStep.emittedRadio) {
+          frameRadio.push(aiStep.emittedRadio);
+          // The squad net audible: a bark when a warden calls in contact.
+          if (distance < 48) {
+            const occluded = this.firstWorldObstruction(
+              this.tmpMove.copy(actorPosition).setY(1.5),
+              this.tmpLosTo.copy(playerPosition).setY(1.6),
+            ) !== null;
+            this.audio.radioBark?.(actorPosition, playerPosition, this.cameraYaw, occluded);
+          }
+        }
 
         const destination = aiStep.decision.destination
           ? this.tmpDestination.set(aiStep.decision.destination.x, actorPosition.y, aiStep.decision.destination.z)
@@ -5131,7 +5141,12 @@ export class HeavensGateEngine {
       this.reticleKill = 0.55;
       this.statKills += 1;
     }
-    if (actor.kind !== 'civilian' && !this.settings.reducedMotion) this.hitStop = Math.max(this.hitStop, actor.kind === 'boss' ? 0.22 : 0.085);
+    if (actor.kind !== 'civilian' && !this.settings.reducedMotion) {
+      // Crit kills and the boss get a longer beat — the frame hangs so
+      // the directional fall and kill-flash read before motion resumes.
+      const beat = actor.kind === 'boss' ? 0.22 : actor.lastHitCritical ? 0.15 : 0.085;
+      this.hitStop = Math.max(this.hitStop, beat);
+    }
     const total = actor.kind === 'boss' ? 2.6 : actor.kind === 'drone' ? 1.15 : 1.6;
     actor.materials.forEach((material) => { material.transparent = true; });
     // Directional fall: align the body so the Z-tip carries it along the

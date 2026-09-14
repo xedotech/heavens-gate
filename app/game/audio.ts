@@ -372,6 +372,42 @@ export class AudioEngine {
     }, { once: true }));
   }
 
+  // Warden radio bark — a squelch click then two low mutter syllables, the
+  // sound of a squad sharing your position. Spatialized like chatter.
+  radioBark(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(source, listener, yaw, occluded);
+    const gain = Math.min(mix.gain * 0.7, 0.04);
+    if (gain < 0.002) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan * 0.75;
+    master.gain.value = gain;
+    filter.type = 'bandpass';
+    filter.frequency.value = Math.min(520, mix.cutoff);
+    filter.Q.value = 2.6;
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const voices: AudioScheduledSourceNode[] = [];
+    const squelch = this.noise(0.03, 0.4, 2400, filter);
+    if (squelch) voices.push(squelch);
+    const syllables = 2 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < syllables; i += 1) {
+      const pitch = 96 + Math.random() * 50;
+      const voice = this.tone(pitch, 0.06 + Math.random() * 0.04, 'sawtooth', 0.14, 0.04 + i * (0.09 + Math.random() * 0.05), filter, pitch * 0.86);
+      if (voice) voices.push(voice);
+    }
+    let remaining = voices.length;
+    const cleanup = () => { filter.disconnect(); pan.disconnect(); master.disconnect(); };
+    if (!remaining) cleanup();
+    voices.forEach((voice) => voice.addEventListener('ended', () => {
+      remaining -= 1;
+      if (remaining === 0) cleanup();
+    }, { once: true }));
+  }
+
   // Low-health heartbeat — a lub-dub pair of deep sine thumps routed through
   // the ambient bus so it sits under the mix like a pulse, not an effect.
   heartbeat(intensity = 0.5) {
