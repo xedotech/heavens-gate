@@ -65,6 +65,7 @@ export interface GameSettings {
   subtitles: boolean;
   subtitleSize: 'standard' | 'large';
   aimAssist: boolean;
+  rotateMinimap: boolean;
   reducedMotion: boolean;
   highContrast: boolean;
   difficulty: Difficulty;
@@ -144,7 +145,7 @@ export interface HUDState {
 export interface MapPoint {
   x: number;
   z: number;
-  kind: 'player' | 'objective' | 'hostile' | 'civilian' | 'vehicle' | 'gate';
+  kind: 'player' | 'objective' | 'hostile' | 'civilian' | 'vehicle' | 'gate' | 'sigil';
   rotation?: number;
 }
 
@@ -239,6 +240,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   subtitles: true,
   subtitleSize: 'standard',
   aimAssist: true,
+  rotateMinimap: false,
   reducedMotion: false,
   highContrast: false,
   difficulty: 'normal',

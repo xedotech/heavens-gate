@@ -72,10 +72,34 @@ The entire cheap-wins shortlist and the top [S]/[A] items are now live:
 - ✅ **Gait fixed at the asset level**: all six GLBs regenerated with
   real knee flex (30-34° walk, 55-61° run), foot pitch channels added,
   loop seams intact — the "sliding walk" defect is closed
+- ✅ Real scanned PBR surfaces (Poly Haven CC0, checksum-pinned,
+  self-hosted): asphalt roads, concrete facades, chapel stone + brick,
+  metal plate props, corrugated rooftop tanks — 6 materials, 2 tiers
+- ✅ Working CPU photogrammetry pipeline (COLMAP + OpenMVS + Blender):
+  photos → GLB, proven end-to-end on a synthetic 36-shot obelisk set,
+  memorial placed in-world — real capture now unblocked for user photos
+- ✅ Three vehicle archetypes (Seraph / Hauler / Vesper) with distinct
+  handling, silhouettes, and enter-toasts
+- ✅ Eight hidden sigils (persistent collectibles, +marks), pause-menu
+  lifetime record panel, lifetime stat tracking
+- ✅ Directional death falls (corpse tips along the shot), ambient
+  runner civilians, scrolling storm-shelf cloud layer
+- ✅ Turn-in-place walk shuffle, Veil dust motes, objective breadcrumb
+  trail with a travelling pulse
+- ✅ Hurt camera kick (directional, reduced-motion aware), traffic
+  honks when blocked (with cooldowns), civilian idle glances,
+  shockwave ground-scorch decals
+- ✅ Street-level wall decals (posters / stencil sigils / spray tags),
+  heat-tier searchlight cordon that tracks the player at tier 4,
+  per-wheel suspension travel (road jitter + lean compression + impact)
+- ✅ Minimap route line to objective, occlusion raycast for honks +
+  chatter, adaptive music stems (combat kick at 0.55, hats at 0.78,
+  calm shimmer below 0.18)
 
-Still open: photogrammetry source assets (none exist), sustained
-hardware frame trace, browser playthrough capture, and the [C]
-honesty items below.
+Still open: real-world photogrammetry source photos (pipeline ready,
+needs captures), sustained hardware frame trace, browser playthrough
+capture, foot IK, NPC facial morphs, landing-roll clip, mantle/climb
+(no verticality yet), recorded foley, and the [C] honesty items below.
 
 ---
 

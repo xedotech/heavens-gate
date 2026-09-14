@@ -88,7 +88,7 @@ function formatBinding(binding: string) {
   return binding.toUpperCase();
 }
 
-function MiniMap({ snapshot, label, size = 164 }: { snapshot: MapSnapshot; label: string; size?: number }) {
+function MiniMap({ snapshot, label, size = 164, rotate = false }: { snapshot: MapSnapshot; label: string; size?: number; rotate?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -112,6 +112,16 @@ function MiniMap({ snapshot, label, size = 164 }: { snapshot: MapSnapshot; label
     context.arc(center, center, center - 5, 0, Math.PI * 2);
     context.clip();
 
+    // Rotating mode: spin the world so the player's heading faces up.
+    const playerAnchor = snapshot.points.find((point) => point.kind === 'player');
+    if (rotate && playerAnchor) {
+      const anchorX = ((playerAnchor.x + snapshot.worldSize / 2) / snapshot.worldSize) * size;
+      const anchorY = ((playerAnchor.z + snapshot.worldSize / 2) / snapshot.worldSize) * size;
+      context.translate(anchorX, anchorY);
+      context.rotate(playerAnchor.rotation ?? 0);
+      context.translate(-anchorX, -anchorY);
+    }
+
     context.strokeStyle = 'rgba(214, 192, 127, 0.14)';
     context.lineWidth = 1;
     for (let line = -150; line <= 150; line += 30) {
@@ -133,6 +143,7 @@ function MiniMap({ snapshot, label, size = 164 }: { snapshot: MapSnapshot; label
       civilian: '#8fa6a7',
       vehicle: '#7fb9c1',
       gate: '#c49b42',
+      sigil: '#e8c96f',
     };
     // Route line: a dashed gold thread from the player to the objective.
     const playerPoint = snapshot.points.find((point) => point.kind === 'player');
@@ -174,6 +185,9 @@ function MiniMap({ snapshot, label, size = 164 }: { snapshot: MapSnapshot; label
       } else if (point.kind === 'objective') {
         context.rotate(Math.PI / 4);
         context.fillRect(-4, -4, 8, 8);
+      } else if (point.kind === 'sigil') {
+        context.rotate(Math.PI / 4);
+        context.fillRect(-2.6, -2.6, 5.2, 5.2);
       } else if (point.kind === 'gate') {
         context.lineWidth = 1.5;
         context.beginPath();
@@ -192,7 +206,7 @@ function MiniMap({ snapshot, label, size = 164 }: { snapshot: MapSnapshot; label
     context.beginPath();
     context.arc(center, center, center - 2.5, 0, Math.PI * 2);
     context.stroke();
-  }, [snapshot, size]);
+  }, [snapshot, size, rotate]);
 
   return <canvas ref={ref} className="mini-map" role="img" aria-label={`Tactical map of ${label}`} />;
 }
@@ -606,7 +620,7 @@ export default function GameShell() {
           )}
 
           <div className="vitals-panel">
-            <MiniMap snapshot={map} label={hud.district} />
+            <MiniMap snapshot={map} label={hud.district} rotate={settings.rotateMinimap} />
             <div className="vitals-bars">
               <div className="vital"><span><Heart aria-hidden="true" /> Vital</span><strong>{Math.round(hud.health)}</strong><i><b style={{ width: `${hud.health}%` }} /></i></div>
               <div className="vital armor"><span><Shield aria-hidden="true" /> Aegis</span><strong>{Math.round(hud.armor)}</strong><i><b style={{ width: `${hud.armor}%` }} /></i></div>
@@ -679,7 +693,7 @@ export default function GameShell() {
             <MenuButton icon={<ArrowLeft />} title="Return to title" detail="Progress is saved automatically" onClick={() => { engineRef.current?.returnToTitle(); setScreen('title'); }} />
           </nav>
           <div className="pause-map" aria-label="City map">
-            <MiniMap snapshot={map} label={hud.district} size={240} />
+            <MiniMap snapshot={map} label={hud.district} size={240} rotate={settings.rotateMinimap} />
             <div className="pause-map-legend">
               <span><i className="dot dot-player" /> You</span>
               <span><i className="dot dot-objective" /> Objective</span>
@@ -753,6 +767,7 @@ export default function GameShell() {
               <label><span><strong>Subtitles</strong><small>All narrative dialogue and radio calls</small></span><input type="checkbox" checked={settings.subtitles} onChange={(event) => updateSettings({ subtitles: event.target.checked })} /></label>
               <label><span><strong>Large subtitles</strong><small>Bigger caption text for readability</small></span><input type="checkbox" checked={settings.subtitleSize === 'large'} onChange={(event) => updateSettings({ subtitleSize: event.target.checked ? 'large' : 'standard' })} /></label>
               <label><span><strong>Aim assist</strong><small>Gamepad reticle eases toward hostiles while aiming</small></span><input type="checkbox" checked={settings.aimAssist} onChange={(event) => updateSettings({ aimAssist: event.target.checked })} /></label>
+              <label><span><strong>Rotating minimap</strong><small>Map spins so your heading always points up</small></span><input type="checkbox" checked={settings.rotateMinimap} onChange={(event) => updateSettings({ rotateMinimap: event.target.checked })} /></label>
               <label><span><strong>Reduced motion</strong><small>Static title camera and instant menu transitions</small></span><input type="checkbox" checked={settings.reducedMotion} onChange={(event) => updateSettings({ reducedMotion: event.target.checked })} /></label>
               <label><span><strong>High contrast HUD</strong><small>Stronger panels, borders, and objective signals</small></span><input type="checkbox" checked={settings.highContrast} onChange={(event) => updateSettings({ highContrast: event.target.checked })} /></label>
             </fieldset>

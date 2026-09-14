@@ -273,6 +273,7 @@ export class HeavensGateEngine {
   private cameraYaw = 0.12;
   private cameraPitch = 0.18;
   private photoMode = false;
+  private photoFilterIndex = 0;
   private readonly inspectionCenter = new THREE.Vector3(0, 2.05, 0);
   private inspectionHeight = 3.7;
   private grounded = true;
@@ -2682,6 +2683,14 @@ export class HeavensGateEngine {
     mesh.instanceMatrix.needsUpdate = true;
   }
 
+  private static readonly PHOTO_FILTERS: Array<{ name: string; css: string; hint: string }> = [
+    { name: 'Untouched', css: '', hint: 'The city as it is.' },
+    { name: 'Noir', css: 'grayscale(1) contrast(1.18) brightness(0.94)', hint: 'Black rain, white muzzle flashes.' },
+    { name: 'Ember', css: 'sepia(0.55) saturate(1.35) contrast(1.1)', hint: 'Warm ash over the Old Spine.' },
+    { name: 'Veil-light', css: 'hue-rotate(200deg) saturate(1.45) brightness(0.9)', hint: 'The world as the Veil sees it.' },
+    { name: 'Chrome', css: 'saturate(0.4) contrast(1.32) brightness(1.06)', hint: 'Cold meridian steel.' },
+  ];
+
   private static readonly VEHICLE_SPECS: Record<string, VehicleSpec> = {
     // Seraph sedan — the baseline: balanced speed and forgiveness.
     seraph: { name: 'Seraph sedan', top: 38, boost: 48, accel: 2.7, steer: 1.42, damageScale: 1 },
@@ -3806,11 +3815,18 @@ export class HeavensGateEngine {
     if (this.wasActionPressed('inspect') && !this.currentVehicle) {
       this.photoMode = !this.photoMode;
       if (this.photoMode && document.pointerLockElement) void document.exitPointerLock();
+      if (!this.photoMode && this.renderer?.domElement) this.renderer.domElement.style.filter = '';
       this.emitToast(
         this.photoMode ? 'Character inspection active' : 'Character inspection closed',
-        this.photoMode ? `The camera will orbit Aurel. Press ${this.bindingLabel('inspect')} / View again to return.` : 'Third-person camera restored.',
+        this.photoMode ? `The camera will orbit Aurel. ${this.bindingLabel('weaponSwap')} cycles color grades. Press ${this.bindingLabel('inspect')} / View again to return.` : 'Third-person camera restored.',
         'success',
       );
+    }
+    if (this.photoMode && this.wasActionPressed('weaponSwap')) {
+      this.photoFilterIndex = ((this.photoFilterIndex ?? 0) + 1) % HeavensGateEngine.PHOTO_FILTERS.length;
+      const grade = HeavensGateEngine.PHOTO_FILTERS[this.photoFilterIndex];
+      if (this.renderer?.domElement) this.renderer.domElement.style.filter = grade.css;
+      this.emitToast(`Photo grade: ${grade.name}`, grade.hint, 'info');
     }
     if (this.wasActionPressed('reload')) this.startReload();
     if (this.wasActionPressed('veil')) this.toggleVeil();
@@ -5736,6 +5752,9 @@ export class HeavensGateEngine {
       if (!vehicle.occupied) points.push({ x: vehicle.group.position.x, z: vehicle.group.position.z, kind: 'vehicle' });
     });
     this.gates.forEach((gate) => points.push({ x: gate.group.position.x, z: gate.group.position.z, kind: 'gate' }));
+    this.sigils?.forEach((sigil) => {
+      if (sigil.collected) points.push({ x: sigil.group.position.x, z: sigil.group.position.z, kind: 'sigil' });
+    });
     return { points, worldSize: WORLD_SIZE };
   }
 
