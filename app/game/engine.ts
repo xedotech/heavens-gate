@@ -428,6 +428,7 @@ export class HeavensGateEngine {
   private chapelZone: THREE.Box3 | null = null;
   private chapelVisited = false;
   private chapelInterior = false;
+  private lastAltarAt = -99;
   private chapelCandles: THREE.PointLight[] = [];
   private memorialZone: THREE.Box3 | null = null;
   private memorialMesh: THREE.Object3D | null = null;
@@ -2510,6 +2511,8 @@ export class HeavensGateEngine {
     }
     car.smoke = smoke;
     car.group.add(smoke);
+    // The street keeps the scar — a wide scorch under the wreck.
+    this.placeDecal(car.group.position, this.tmpMove.set(0, 1, 0), 15);
     this.heat = clamp(this.heat + 8, 0, 100);
     this.emitToast('Vehicle disabled', 'Choir response escalating', 'danger');
     this.audio.explosion();
@@ -5600,6 +5603,20 @@ export class HeavensGateEngine {
       this.enterVehicle(nearbyVehicle);
       return;
     }
+    // The chapel altar is a resonance shrine — a quiet moment that refills
+    // the meter and flares the candles.
+    if (this.chapelZone?.containsPoint(this.player.position) && this.elapsed - this.lastAltarAt > 12) {
+      const altar = this.chapelZone.getCenter(this.tmpMove).add(new THREE.Vector3(-4.4, 0, 0));
+      if (Math.hypot(this.player.position.x - altar.x, this.player.position.z - altar.z) < 2.8) {
+        this.lastAltarAt = this.elapsed;
+        this.resonance = Math.min(100, this.resonance + 45);
+        this.chapelCandles.forEach((flame) => { flame.intensity = 14; });
+        this.audio.gate();
+        this.emitSubtitle('The Altar of the Unburied', 'The candles lean toward you. For a moment the storm forgets your name.');
+        this.emitToast('Resonance restored', '+45 resonance — the shrine remembers', 'success');
+        return;
+      }
+    }
     if (this.veilActive) {
       const echo = this.echoes.find((candidate) => !candidate.activated && candidate.group.position.distanceTo(this.player.position) < 5);
       if (echo) {
@@ -5896,6 +5913,11 @@ export class HeavensGateEngine {
       if (!vehicle.occupied) points.push({ x: vehicle.group.position.x, z: vehicle.group.position.z, kind: 'vehicle' });
     });
     this.gates.forEach((gate) => points.push({ x: gate.group.position.x, z: gate.group.position.z, kind: 'gate' }));
+    this.echoes?.forEach((echo) => {
+      if (!echo.activated && echo.group.position.distanceTo(position) < 55) {
+        points.push({ x: echo.group.position.x, z: echo.group.position.z, kind: 'echo' });
+      }
+    });
     this.sigils?.forEach((sigil) => {
       if (sigil.collected) points.push({ x: sigil.group.position.x, z: sigil.group.position.z, kind: 'sigil' });
     });

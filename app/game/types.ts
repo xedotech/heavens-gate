@@ -145,7 +145,7 @@ export interface HUDState {
 export interface MapPoint {
   x: number;
   z: number;
-  kind: 'player' | 'objective' | 'hostile' | 'civilian' | 'vehicle' | 'gate' | 'sigil';
+  kind: 'player' | 'objective' | 'hostile' | 'civilian' | 'vehicle' | 'gate' | 'sigil' | 'echo';
   rotation?: number;
 }
 

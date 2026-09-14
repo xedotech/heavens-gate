@@ -144,6 +144,7 @@ function MiniMap({ snapshot, label, size = 164, rotate = false }: { snapshot: Ma
       vehicle: '#7fb9c1',
       gate: '#c49b42',
       sigil: '#e8c96f',
+      echo: '#5eead4',
     };
     // Route line: a dashed gold thread from the player to the objective.
     const playerPoint = snapshot.points.find((point) => point.kind === 'player');
