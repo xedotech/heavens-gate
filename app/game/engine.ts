@@ -100,6 +100,10 @@ interface Actor {
   hitReactSide?: number;
   lastHitAngle?: number;
   lastHitCritical?: boolean;
+  /** Distance to the player this frame — drives animation LOD. */
+  lod?: number;
+  /** Accumulated delta between throttled animation steps. */
+  animBudget?: number;
 }
 
 interface CharacterRig {
@@ -2423,24 +2427,29 @@ export class HeavensGateEngine {
       else if (car.progress < -150) car.progress += 300;
       if (car.axis === 'x') position.set(car.progress, 0, car.lane + car.offset);
       else position.set(car.lane + car.offset, 0, car.progress);
-      car.wheels.forEach((wheel) => {
-        wheel.pivot.rotation.x += (car.speed * delta) / 0.52;
-      });
-      if (car.wrecked && car.smoke) {
-        const pulse = 0.55 + Math.sin(this.elapsed * 3.1 + car.lane) * 0.2;
-        car.smoke.children.forEach((child, index) => {
-          const mesh = child as THREE.Mesh;
-          (mesh.material as THREE.MeshBasicMaterial).opacity = pulse * (0.16 - index * 0.045);
-          mesh.position.y = 1.15 + index * 0.55 + Math.sin(this.elapsed * 1.4 + index * 2.2) * 0.08;
+      // LOD: beyond ~110 m the car still moves along its route but skips
+      // wheel spin, smoke pulsing, and tail-light damping.
+      const farAway = position.distanceToSquared(playerPosition) > 12100;
+      if (!farAway) {
+        car.wheels.forEach((wheel) => {
+          wheel.pivot.rotation.x += (car.speed * delta) / 0.52;
         });
+        if (car.wrecked && car.smoke) {
+          const pulse = 0.55 + Math.sin(this.elapsed * 3.1 + car.lane) * 0.2;
+          car.smoke.children.forEach((child, index) => {
+            const mesh = child as THREE.Mesh;
+            (mesh.material as THREE.MeshBasicMaterial).opacity = pulse * (0.16 - index * 0.045);
+            mesh.position.y = 1.15 + index * 0.55 + Math.sin(this.elapsed * 1.4 + index * 2.2) * 0.08;
+          });
+        }
+        const braking = car.wrecked || blocked || yielding || tailgating || car.speed < target * 0.55;
+        car.tailMaterial.emissiveIntensity = damp(
+          car.tailMaterial.emissiveIntensity,
+          car.wrecked ? 0.06 : braking ? 3.4 : 0.95,
+          9,
+          delta,
+        );
       }
-      const braking = car.wrecked || blocked || yielding || tailgating || car.speed < target * 0.55;
-      car.tailMaterial.emissiveIntensity = damp(
-        car.tailMaterial.emissiveIntensity,
-        car.wrecked ? 0.06 : braking ? 3.4 : 0.95,
-        9,
-        delta,
-      );
     });
     this.dynamicObstacles = this.trafficCars?.map((car) => ({
       x: car.group.position.x,
@@ -4560,6 +4569,7 @@ export class HeavensGateEngine {
     this.actors.forEach((actor, actorIndex) => {
       if (!actor.alive || !actor.group.visible) return;
       const distance = actor.group.position.distanceTo(playerPosition);
+      actor.lod = distance;
       actor.cooldown -= delta;
       actor.damagePulse = Math.max(0, actor.damagePulse - delta);
       actor.hitReact = Math.max(0, (actor.hitReact ?? 0) - delta * 2.6);
@@ -4586,7 +4596,7 @@ export class HeavensGateEngine {
               this.audio.pedestrianBlip(actor.group.position, playerPosition, this.cameraYaw, occluded);
             }
           }
-          this.animateActor(actor, 0, delta);
+          this.animateActorLod(actor, 0, delta);
         } else if (actor.vignette === 'run') {
           // Street event: a citizen hurrying somewhere — or from something.
           // Bursts of speed, periodic heading changes, occasional look-backs.
@@ -4613,7 +4623,7 @@ export class HeavensGateEngine {
           // Ease toward the occasional glance direction.
           const glance = Math.max(0, 1 - (actor.vignetteTimer ?? 0) / 1.2);
           actor.group.rotation.y += (actor.hitReactSide ?? 0) * glance * 0.45 * delta;
-          this.animateActor(actor, 0, delta);
+          this.animateActorLod(actor, 0, delta);
         } else {
           actor.wanderAngle += Math.sin(time * 0.18 + actorIndex) * delta * 0.12;
           this.moveActor(actor, this.tmpMove.set(Math.sin(actor.wanderAngle), 0, Math.cos(actor.wanderAngle)), actor.speed * 0.42, delta);
@@ -4708,7 +4718,7 @@ export class HeavensGateEngine {
           const ideal = actor.kind === 'boss' ? 13 : 10;
           if (distance > ideal) this.moveActor(actor, direction, actor.speed, delta);
           else if (distance < ideal * 0.7) this.moveActor(actor, direction, -actor.speed * 0.45, delta);
-          else this.animateActor(actor, 0, delta);
+          else this.animateActorLod(actor, 0, delta);
           actor.group.rotation.y = Math.atan2(direction.x, direction.z);
           if (actor.cooldown <= 0 && aiStep.perception.targetSeen && distance < (actor.kind === 'boss' ? 42 : 31)) {
             this.enemyFire(actor, actor.kind === 'boss' ? 18 : 10);
@@ -4749,7 +4759,23 @@ export class HeavensGateEngine {
       actor.group.position.copy(previous);
       actor.wanderAngle += Math.PI * 0.63;
     }
-    this.animateActor(actor, Math.abs(speed), delta);
+    this.animateActorLod(actor, Math.abs(speed), delta);
+  }
+
+  // Animation LOD: distant actors animate at a reduced rate. The mixer
+  // accepts arbitrary dt, so stepping with the accumulated delta keeps
+  // the pose advancing smoothly at ~8 fps beyond 110 m, ~20 fps beyond 62 m.
+  private animateActorLod(actor: Actor, speed: number, delta: number) {
+    const distance = actor.lod ?? 0;
+    const interval = distance > 110 ? 0.13 : distance > 62 ? 0.05 : 0;
+    if (interval <= 0) {
+      this.animateActor(actor, speed, delta);
+      return;
+    }
+    actor.animBudget = (actor.animBudget ?? 0) + delta;
+    if (actor.animBudget < interval) return;
+    this.animateActor(actor, speed, actor.animBudget);
+    actor.animBudget = 0;
   }
 
   private animateActor(actor: Actor, speed: number, delta: number) {
