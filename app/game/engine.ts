@@ -162,6 +162,8 @@ interface TrafficCar {
   speed: number;
   panic: number;
   damage: number;
+  honkTimer: number;
+  blockedFor: number;
   wrecked: boolean;
   smoke?: THREE.Group;
   wheels: VehicleWheel[];
@@ -377,6 +379,7 @@ export class HeavensGateEngine {
   private drops: DropPickup[] = [];
   private envMapTexture: THREE.Texture | null = null;
   private landDip = 0;
+  private hurtKick = 0;
   private damageDirection: number | null = null;
   private damageDirectionTimer = 0;
   private touchMove = { x: 0, y: 0 };
@@ -2182,6 +2185,8 @@ export class HeavensGateEngine {
         speed: 0,
         panic: 0,
         damage: 0,
+        honkTimer: seeded(index, 95) * 5,
+        blockedFor: 0,
         wrecked: false,
         wheels,
         tailMaterial,
@@ -2201,6 +2206,18 @@ export class HeavensGateEngine {
         : Math.abs(playerPosition.x - position.x);
       const blocked = !car.wrecked && ahead > 0.5 && ahead < 10 && lateral < 3.4;
       car.panic = Math.max(0, car.panic - delta);
+      car.honkTimer -= delta;
+      // A driver held up by the player honks after a beat — rarely twice.
+      if (blocked && car.speed < 2.5) {
+        car.blockedFor += delta;
+        if (car.blockedFor > 0.85 && car.honkTimer <= 0) {
+          car.honkTimer = 3.5 + seeded(Math.floor(this.elapsed * 10) + Math.round(car.lane * 7), 96) * 4.5;
+          car.blockedFor = 0;
+          this.audio.honk?.(position, playerPosition, this.cameraYaw);
+        }
+      } else {
+        car.blockedFor = Math.max(0, car.blockedFor - delta * 2);
+      }
       // Intersection yield: while approaching a crossing, give way to
       // cross-traffic already inside the intersection box.
       const crossings = car.axis === 'x' ? [-60, 30] : [-30, 60, 120];
@@ -4233,6 +4250,7 @@ export class HeavensGateEngine {
       desiredCamera.addScaledVector(tangent, this.peekLean * 0.62);
     }
     this.landDip = damp(this.landDip ?? 0, 0, 9.5, delta);
+    this.hurtKick = damp(this.hurtKick ?? 0, 0, 8, delta);
     const bob = !this.settings?.reducedMotion && !this.currentVehicle && this.grounded && this.slideRemaining <= 0
       ? Math.sin((this.walkPhase ?? 0) * 2) * 0.026 * clamp(speed / 9, 0, 1)
       : 0;
@@ -4247,6 +4265,10 @@ export class HeavensGateEngine {
     }
     lookTarget.addScaledVector(forward, (aiming ? 7 : 3.25) + this.cameraPitch * 2);
     lookTarget.y += bob * 0.6 - this.landDip * 0.4;
+    if (this.hurtKick > 0.01) {
+      lookTarget.addScaledVector(right, Math.sin(this.damageDirection ?? 0) * this.hurtKick * 1.15);
+      lookTarget.y -= this.hurtKick * 0.4;
+    }
     this.camera.lookAt(lookTarget);
     const baseFov = clamp(this.settings?.fov ?? 56, 48, 78);
     const sprintKick = !this.currentVehicle && !aiming && (this.playerSprinting ?? false) ? 3.2 : 0;
@@ -4350,9 +4372,18 @@ export class HeavensGateEngine {
             Math.cos(actor.wanderAngle + (glance ? 0.4 : 0)),
           ), actor.speed * (glance ? 1.35 : 1.9), delta);
         } else if (actor.vignette === 'idle' || actor.vignette === 'lean') {
-          // Standing life: weight-shift sway and head-look drift.
+          // Standing life: weight-shift sway, head-look drift, and occasional
+          // full-body glances — a slow noisy turn instead of a frozen stance.
           actor.group.position.x = actor.spawn.x + Math.sin(time * 0.4 + actorIndex) * 0.08;
           actor.wanderAngle += delta * 0.06;
+          actor.vignetteTimer = (actor.vignetteTimer ?? seeded(actorIndex, 141) * 7) - delta;
+          if (actor.vignetteTimer <= 0) {
+            actor.vignetteTimer = 4.5 + seeded(actorIndex + Math.floor(time * 0.4), 142) * 6;
+            actor.hitReactSide = (seeded(actorIndex + Math.floor(time), 143) - 0.5) * 2;
+          }
+          // Ease toward the occasional glance direction.
+          const glance = Math.max(0, 1 - (actor.vignetteTimer ?? 0) / 1.2);
+          actor.group.rotation.y += (actor.hitReactSide ?? 0) * glance * 0.45 * delta;
           this.animateActor(actor, 0, delta);
         } else {
           actor.wanderAngle += Math.sin(time * 0.18 + actorIndex) * delta * 0.12;
@@ -4580,6 +4611,8 @@ export class HeavensGateEngine {
       while (relative < -Math.PI) relative += Math.PI * 2;
       this.damageDirection = relative;
       this.damageDirectionTimer = 1.15;
+      // Physical jolt — the camera snaps a touch toward the hit side.
+      if (!this.settings?.reducedMotion) this.hurtKick = Math.min(0.6, this.hurtKick + amount * 0.017);
     }
     const armorAbsorb = Math.min(this.armor, amount * 0.62);
     this.armor -= armorAbsorb;
@@ -5712,7 +5745,7 @@ export class HeavensGateEngine {
     this.pushEffect({ object: group, life: hostile ? 0.26 : 0.2, total: hostile ? 0.26 : 0.2, mode: 'pulse', pooled: true });
   }
 
-  private placeDecal(point: THREE.Vector3, normal: THREE.Vector3) {
+  private placeDecal(point: THREE.Vector3, normal: THREE.Vector3, scale = 1) {
     if (!this.scene) return;
     if (!this.decalMesh) {
       const canvas = document.createElement('canvas');
@@ -5747,7 +5780,7 @@ export class HeavensGateEngine {
     this.decalNormal.copy(normal).normalize();
     this.decalQuaternion.setFromUnitVectors(this.decalZ, this.decalNormal);
     this.contactShadowPosition.copy(point).addScaledVector(this.decalNormal, 0.014);
-    this.decalMatrix.compose(this.contactShadowPosition, this.decalQuaternion, this.litterScale.set(1, 1, 1));
+    this.decalMatrix.compose(this.contactShadowPosition, this.decalQuaternion, this.litterScale.set(scale, scale, scale));
     this.decalMesh.setMatrixAt(index, this.decalMatrix);
     this.decalMesh.instanceMatrix.needsUpdate = true;
   }
@@ -5771,6 +5804,9 @@ export class HeavensGateEngine {
     ring.position.copy(position).add(new THREE.Vector3(0, 0.16, 0));
     this.scene.add(ring);
     this.effects.push({ object: ring, life: 0.62, total: 0.62, mode: 'pulse' });
+    // The shockwave scorches the street — a wide ground decal that outlives
+    // the ring and reads as a burn scar.
+    this.placeDecal(position, this.tmpMove.set(0, 1, 0), 26);
     const playerPosition = this.currentVehicle?.group.position ?? this.player.position;
     if (playerPosition.distanceTo(position) < 13) this.takePlayerDamage(16 * difficultyDamage(this.settings.difficulty), position);
   }

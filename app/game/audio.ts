@@ -316,6 +316,43 @@ export class AudioEngine {
     this.tone(confirm ? 660 : 440, 0.09, 'sine', 0.045, 0, this.effectsBus, confirm ? 880 : 520);
   }
 
+  // Traffic horn — the classic two-tone square blare, spatialized like
+  // pedestrian chatter. Sometimes a double-tap when the driver is angry.
+  honk(source: SoundPosition, listener: SoundPosition, yaw: number) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(source, listener, yaw, false);
+    const gain = Math.min(mix.gain * 0.9, 0.055);
+    if (gain < 0.002) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan * 0.8;
+    master.gain.value = gain;
+    filter.type = 'lowpass';
+    filter.frequency.value = 1600;
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const base = 340 + Math.random() * 60;
+    const blasts = Math.random() < 0.35 ? 2 : 1;
+    const voices: AudioScheduledSourceNode[] = [];
+    for (let i = 0; i < blasts; i += 1) {
+      const at = i * 0.42;
+      const length = i === blasts - 1 ? 0.3 : 0.16;
+      const low = this.tone(base, length, 'square', 0.11, at, filter);
+      const high = this.tone(base * 1.26, length, 'square', 0.08, at, filter);
+      if (low) voices.push(low);
+      if (high) voices.push(high);
+    }
+    let remaining = voices.length;
+    const cleanup = () => { filter.disconnect(); pan.disconnect(); master.disconnect(); };
+    if (!remaining) cleanup();
+    voices.forEach((voice) => voice.addEventListener('ended', () => {
+      remaining -= 1;
+      if (remaining === 0) cleanup();
+    }, { once: true }));
+  }
+
   // Low-health heartbeat — a lub-dub pair of deep sine thumps routed through
   // the ambient bus so it sits under the mix like a pulse, not an effect.
   heartbeat(intensity = 0.5) {
