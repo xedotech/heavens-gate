@@ -429,6 +429,7 @@ export class HeavensGateEngine {
   private chapelVisited = false;
   private chapelInterior = false;
   private lastAltarAt = -99;
+  private replays = 0;
   private chapelCandles: THREE.PointLight[] = [];
   private memorialZone: THREE.Box3 | null = null;
   private memorialMesh: THREE.Object3D | null = null;
@@ -3519,6 +3520,7 @@ export class HeavensGateEngine {
     this.defeatedWardens = save?.defeatedWardens ?? 0;
     this.echoesActivated = new Set(save?.echoesActivated ?? []);
     this.sigilsCollected = new Set(save?.sigilsCollected ?? []);
+    this.replays = save?.replays ?? 0;
     (this.sigils ?? []).forEach((sigil) => {
       sigil.collected = this.sigilsCollected.has(sigil.id);
       sigil.group.visible = !sigil.collected;
@@ -3694,8 +3696,9 @@ export class HeavensGateEngine {
   replayMission(missionIndex: number) {
     if (!Number.isInteger(missionIndex) || missionIndex < 0 || missionIndex > 6) return;
     const base = this.lastSave;
+    const replays = (base?.replays ?? 0) + 1;
     this.resetCampaign(base
-      ? { ...base, missionIndex, ending: undefined, echoesActivated: missionIndex === 4 ? [] : base.echoesActivated }
+      ? { ...base, missionIndex, ending: undefined, echoesActivated: missionIndex === 4 ? [] : base.echoesActivated, replays }
       : {
           version: 1,
           missionIndex,
@@ -3706,12 +3709,16 @@ export class HeavensGateEngine {
           resonance: 100,
           defeatedWardens: 0,
           echoesActivated: [],
+          replays,
           elapsed: 0,
           updatedAt: Date.now(),
         });
     this.clearInput();
     this.mode = 'playing';
     this.paused = false;
+    if (replays > 0) {
+      this.emitToast(`NG+${replays > 1 ? ` +${replays - 1}` : ''}`, 'The Choir remembers you — patrols fire faster.', 'danger');
+    }
     this.emitMissionBriefing();
     this.updateObjectiveMarker();
     this.beginCinematic();
@@ -4746,7 +4753,7 @@ export class HeavensGateEngine {
           actor.group.lookAt(playerPosition.x, actor.group.position.y, playerPosition.z);
           if (actor.cooldown <= 0 && distance < 48) {
             this.enemyFire(actor, 7);
-            actor.cooldown = 1.45 + seeded(actorIndex + Math.floor(time), 90) * 0.7;
+            actor.cooldown = (1.45 + seeded(actorIndex + Math.floor(time), 90) * 0.7) * this.ngFireScale();
           }
         } else {
           actor.wanderAngle += delta * 0.25;
@@ -4785,7 +4792,7 @@ export class HeavensGateEngine {
             this.tmpLosFrom.copy(actorPosition).setY(actorPosition.y + 1.55),
             this.tmpLosTo.copy(playerPosition).setY(playerPosition.y + 1.4),
           ),
-          visibility: this.veilActive && distance > 8 ? 0.18 : 1,
+          visibility: (this.veilActive && distance > 8 ? 0.18 : 1) * (this.crouching ? 0.45 : 1),
           movement: clamp(Math.hypot(this.playerVelocity.x, this.playerVelocity.z) / 10.5, 0, 1),
         } : undefined;
         const sound = hostile && this.elapsed - this.lastCombat < 1.35 ? {
@@ -4837,7 +4844,7 @@ export class HeavensGateEngine {
           actor.group.rotation.y = Math.atan2(direction.x, direction.z);
           if (actor.cooldown <= 0 && aiStep.perception.targetSeen && distance < (actor.kind === 'boss' ? 42 : 31)) {
             this.enemyFire(actor, actor.kind === 'boss' ? 18 : 10);
-            actor.cooldown = actor.kind === 'boss' ? 0.72 : 1.2 + seeded(actorIndex + Math.floor(time), 91) * 0.9;
+            actor.cooldown = (actor.kind === 'boss' ? 0.72 : 1.2 + seeded(actorIndex + Math.floor(time), 91) * 0.9) * this.ngFireScale();
             if (actor.kind === 'boss' && Math.floor(time) % 4 === 0) this.createShockwave(actor.group.position);
           }
         } else if (aiStep.decision.action === 'take-cover' && destination) {
@@ -4920,6 +4927,11 @@ export class HeavensGateEngine {
       rig.chest.rotation.y += snap * (actor.hitReactSide ?? 0) * 0.5;
       rig.head.rotation.x = -snap * 0.3;
     }
+  }
+
+  /** Replayed missions tighten the Choir's trigger finger — up to 28% faster. */
+  private ngFireScale() {
+    return Math.max(0.72, 1 - this.replays * 0.08);
   }
 
   private enemyFire(actor: Actor, damage: number) {
@@ -6300,6 +6312,7 @@ export class HeavensGateEngine {
       defeatedWardens: this.defeatedWardens,
       echoesActivated: [...this.echoesActivated],
       sigilsCollected: [...this.sigilsCollected],
+      replays: this.replays,
       elapsed: this.elapsed,
       weaponId: this.weaponId,
       weaponAmmo: {

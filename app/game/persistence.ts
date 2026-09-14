@@ -111,6 +111,7 @@ export function normalizeSave(value: unknown): SaveState | null {
         ? [...new Set(value.sigilsCollected.filter((id): id is string => typeof id === 'string' && SIGIL_IDS.has(id)))]
         : [],
     } : {}),
+    ...(value.replays !== undefined ? { replays: finite(value.replays, 0, 0, 9, true) } : {}),
     elapsed: finite(value.elapsed, 0, 0, Number.MAX_SAFE_INTEGER / 1000),
     ...(ending ? { ending } : {}),
     updatedAt: finite(value.updatedAt, 0, 0, 8.64e15, true),

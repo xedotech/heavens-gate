@@ -90,6 +90,7 @@ export interface SaveState {
   defeatedWardens: number;
   echoesActivated: string[];
   sigilsCollected?: string[];
+  replays?: number;
   elapsed: number;
   ending?: 'open' | 'seal';
   updatedAt: number;
