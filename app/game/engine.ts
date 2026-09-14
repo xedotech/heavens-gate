@@ -141,6 +141,7 @@ interface Vehicle {
   speed: number;
   occupied: boolean;
   damage: number;
+  bumpDip: number;
   spec: VehicleSpec;
   smoke?: THREE.Group;
   bodyMaterial: THREE.MeshStandardMaterial;
@@ -375,6 +376,7 @@ export class HeavensGateEngine {
   private cloudLayer: { mesh: THREE.Mesh; texture: THREE.CanvasTexture } | null = null;
   private veilMotes: { mesh: THREE.InstancedMesh; seeds: Float32Array; count: number } | null = null;
   private breadcrumb: { mesh: THREE.InstancedMesh; count: number } | null = null;
+  private searchlight: { pivot: THREE.Group; coneMat: THREE.MeshBasicMaterial; lampMat: THREE.MeshBasicMaterial } | null = null;
   private corpses: Corpse[] = [];
   private drops: DropPickup[] = [];
   private envMapTexture: THREE.Texture | null = null;
@@ -1021,7 +1023,9 @@ export class HeavensGateEngine {
     this.createNeonStrips(buildingData);
     this.createStreetlamps();
     this.createBillboards(buildingData);
+    this.createStreetDecals(buildingData);
     this.createRooftopProps(buildingData);
+    this.createSearchlight(buildingData);
     this.createStreetProps();
     this.createLitter();
 
@@ -1393,6 +1397,173 @@ export class HeavensGateEngine {
       }
       this.scene.add(board);
     });
+  }
+
+  // Street-level wall life: pasted posters, stencil sigils, spray tags —
+  // instanced quads flush against building faces so the whole pass costs
+  // three draw calls. The mark of a lived-in city.
+  private createStreetDecals(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
+    const variants = [
+      this.streetDecalTexture('poster'),
+      this.streetDecalTexture('sigil'),
+      this.streetDecalTexture('tag'),
+    ].filter((texture): texture is THREE.CanvasTexture => Boolean(texture));
+    if (!variants.length) return;
+    const perVariant = this.settings.quality === 'low' ? 10 : 22;
+    const dummy = new THREE.Object3D();
+    variants.forEach((texture, variantIndex) => {
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+      });
+      const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), material, perVariant);
+      mesh.renderOrder = 1;
+      for (let i = 0; i < perVariant; i += 1) {
+        const salt = 150 + variantIndex * 7;
+        const building = buildingData[Math.floor(seeded(i, salt) * buildingData.length)];
+        const roadX = Math.round(building.position.x / 30) * 30;
+        const roadZ = Math.round(building.position.z / 30) * 30;
+        const faceX = Math.abs(roadX - building.position.x) < Math.abs(roadZ - building.position.z);
+        const width = variantIndex === 0 ? 1.05 : variantIndex === 1 ? 1.35 : 1.8;
+        const height = variantIndex === 0 ? 1.5 : variantIndex === 1 ? 1.35 : 1.1;
+        const y = variantIndex === 0 ? 1.6 + seeded(i, salt + 1) * 1.1 : 1.15 + seeded(i, salt + 1) * 1.5;
+        const lateral = (seeded(i, salt + 2) - 0.5) * Math.max(0, (faceX ? building.scale.z : building.scale.x) - 2.4);
+        if (faceX) {
+          const side = roadX < building.position.x ? -1 : 1;
+          dummy.position.set(
+            building.position.x + side * (building.scale.x * 0.5 + 0.05),
+            y,
+            building.position.z + lateral,
+          );
+          dummy.rotation.set(0, side > 0 ? Math.PI / 2 : -Math.PI / 2, 0);
+        } else {
+          const side = roadZ < building.position.z ? -1 : 1;
+          dummy.position.set(
+            building.position.x + lateral,
+            y,
+            building.position.z + side * (building.scale.z * 0.5 + 0.05),
+          );
+          dummy.rotation.set(0, side > 0 ? 0 : Math.PI, 0);
+        }
+        const scale = 0.75 + seeded(i, salt + 3) * 0.6;
+        dummy.scale.set(width * scale, height * scale, 1);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      this.scene.add(mesh);
+    });
+  }
+
+  private streetDecalTexture(kind: 'poster' | 'sigil' | 'tag') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.clearRect(0, 0, 128, 128);
+    if (kind === 'poster') {
+      // Weathered paper notice: torn edges, bold header mark, print lines.
+      ctx.fillStyle = 'rgba(226,216,196,0.92)';
+      ctx.beginPath();
+      ctx.moveTo(14, 8);
+      ctx.lineTo(114, 12);
+      ctx.lineTo(118, 116);
+      ctx.lineTo(20, 120);
+      ctx.lineTo(10, 60);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(30,28,26,0.85)';
+      ctx.fillRect(24, 22, 80, 26);
+      ctx.fillStyle = 'rgba(226,216,196,0.95)';
+      ctx.font = 'bold 18px serif';
+      ctx.fillText('ASCEND', 30, 41);
+      ctx.fillStyle = 'rgba(30,28,26,0.7)';
+      for (let line = 0; line < 5; line += 1) ctx.fillRect(24, 56 + line * 12, 70 + (line % 2) * 14, 4);
+      ctx.fillStyle = 'rgba(140,60,50,0.6)';
+      ctx.beginPath();
+      ctx.arc(92, 96, 12, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (kind === 'sigil') {
+      // The game's mark sprayed as a stencil — an eye inside a broken ring.
+      ctx.strokeStyle = 'rgba(196,168,110,0.85)';
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.arc(64, 64, 40, 0.5, Math.PI * 2 - 0.5);
+      ctx.stroke();
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.ellipse(64, 64, 26, 13, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(196,168,110,0.9)';
+      ctx.beginPath();
+      ctx.arc(64, 64, 8, 0, Math.PI * 2);
+      ctx.fill();
+      // Overspray ghosting.
+      ctx.fillStyle = 'rgba(196,168,110,0.12)';
+      for (let i = 0; i < 40; i += 1) {
+        ctx.fillRect(30 + Math.random() * 68, 30 + Math.random() * 68, 2, 2);
+      }
+    } else {
+      // Spray tag — a fast scrawl with drips.
+      ctx.strokeStyle = 'rgba(126,196,216,0.8)';
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(16, 84);
+      ctx.bezierCurveTo(34, 34, 52, 96, 70, 48);
+      ctx.bezierCurveTo(80, 26, 96, 74, 114, 42);
+      ctx.stroke();
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 5; i += 1) {
+        const x = 26 + i * 18;
+        ctx.beginPath();
+        ctx.moveTo(x, 80);
+        ctx.lineTo(x + 2, 96 + Math.random() * 18);
+        ctx.stroke();
+      }
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    this.billboardTextures.push(texture);
+    return texture;
+  }
+
+  // Heat cordon: at high heat the tallest tower wakes a sweeping
+  // searchlight — the wanted-level made visible on the skyline.
+  private createSearchlight(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
+    if (!buildingData.length) return;
+    const tallest = buildingData.reduce((best, building) => (building.scale.y > best.scale.y ? building : best));
+    const pivot = new THREE.Group();
+    pivot.position.set(tallest.position.x, tallest.scale.y + 2.2, tallest.position.z);
+    const beamLength = tallest.scale.y * 1.35;
+    const tilt = new THREE.Group();
+    tilt.rotation.x = 0.46;
+    const coneMat = new THREE.MeshBasicMaterial({
+      color: 0xffeec2,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.4, 5.2, beamLength, 12, 1, true),
+      coneMat,
+    );
+    beam.position.y = -beamLength / 2;
+    tilt.add(beam);
+    const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff6d8, transparent: true, opacity: 0 });
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), lampMat);
+    pivot.add(tilt);
+    pivot.add(lamp);
+    const group = new THREE.Group();
+    group.add(pivot);
+    this.scene.add(group);
+    this.searchlight = { pivot, coneMat, lampMat };
   }
 
   private createRooftopProps(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
@@ -2135,6 +2306,7 @@ export class HeavensGateEngine {
       speed: 0,
       occupied: false,
       damage: 0,
+      bumpDip: 0,
       spec: this.vehicleSpecFor(id),
       bodyMaterial,
       wheels,
@@ -2452,6 +2624,28 @@ export class HeavensGateEngine {
       mesh.setMatrixAt(i, m);
     }
     mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  // The cordon sweeps the streets while heat is high; at tier 4 it
+  // periodically drifts toward the player before resuming its patrol arc.
+  private updateSearchlight(delta: number, time: number) {
+    if (!this.searchlight) return;
+    const tier = this.heatTierValue();
+    const on = tier >= 3;
+    const targetCone = on ? 0.16 : 0;
+    this.searchlight.coneMat.opacity = damp(this.searchlight.coneMat.opacity, targetCone, 2.5, delta);
+    this.searchlight.lampMat.opacity = damp(this.searchlight.lampMat.opacity, on ? 0.9 : 0, 2.5, delta);
+    if (this.searchlight.coneMat.opacity < 0.004) return;
+    let yaw = time * 0.34 + Math.sin(time * 0.11) * 0.7;
+    if (tier >= 4) {
+      const toPlayer = Math.atan2(this.player.position.x - this.searchlight.pivot.position.x, this.player.position.z - this.searchlight.pivot.position.z);
+      const linger = (Math.sin(time * 0.21) * 0.5 + 0.5) ** 2;
+      let diff = toPlayer - yaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      yaw += diff * linger * 0.75;
+    }
+    this.searchlight.pivot.rotation.y = yaw;
   }
 
   private updateBreadcrumb(time: number) {
@@ -3982,6 +4176,7 @@ export class HeavensGateEngine {
       if (impact > 8) {
         this.audio.crash?.(clamp(impact / 34, 0.2, 1));
         vehicle.damage = (vehicle.damage ?? 0) + impact * 1.1 * spec.damageScale;
+        vehicle.bumpDip = clamp(impact * 0.008, 0.06, 0.16);
       }
       if (impact > 16) {
         this.takePlayerDamage(impact * 0.34);
@@ -3991,9 +4186,17 @@ export class HeavensGateEngine {
     }
     const braking = handbrake || (throttle < 0 && vehicle.speed > 4);
     const steerVisual = steering * clamp(Math.abs(vehicle.speed) / 12, 0, 1);
-    vehicle.wheels?.forEach((wheel) => {
+    vehicle.bumpDip = damp(vehicle.bumpDip ?? 0, 0, 5.5, delta);
+    const speedFactor = clamp(Math.abs(vehicle.speed) / 40, 0, 1);
+    vehicle.wheels?.forEach((wheel, wheelIndex) => {
       wheel.pivot.rotation.y = wheel.front ? -steerVisual * 0.42 : 0;
       wheel.pivot.rotation.x += (vehicle.speed * delta) / 0.52;
+      // Suspension travel: road jitter at speed, corner compression from
+      // body lean, and a dip that absorbs collision impacts.
+      const side = wheel.pivot.position.x >= 0 ? 1 : -1;
+      const roadNoise = Math.sin(this.elapsed * 16 + wheelIndex * 1.9 + vehicle.group.position.x * 0.4) * speedFactor * 0.042;
+      const leanCompression = clamp(-vehicle.group.rotation.z * side * 1.2, -0.07, 0.07);
+      wheel.pivot.position.y = 0.58 + roadNoise + leanCompression + vehicle.bumpDip;
     });
     if (vehicle.tailMaterial) {
       vehicle.tailMaterial.emissiveIntensity = damp(vehicle.tailMaterial.emissiveIntensity, braking ? 3.4 : 0.95, 10, delta);
@@ -5565,6 +5768,7 @@ export class HeavensGateEngine {
     }
     this.updateVeilMotes(time);
     this.updateBreadcrumb(time);
+    this.updateSearchlight(delta, time);
     this.updateContactShadows();
     this.echoes.forEach((echo, index) => {
       if (echo.activated) return;
