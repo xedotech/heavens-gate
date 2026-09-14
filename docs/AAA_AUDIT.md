@@ -95,11 +95,30 @@ The entire cheap-wins shortlist and the top [S]/[A] items are now live:
 - ✅ Minimap route line to objective, occlusion raycast for honks +
   chatter, adaptive music stems (combat kick at 0.55, hats at 0.78,
   calm shimmer below 0.18)
+- ✅ Rotating-minimap option + sigil/echo/gate markers, photo-mode
+  color grades (4 palettes on weapon-swap), mission replay picker,
+  erase-save two-press confirm
+- ✅ Animation + traffic LOD throttling (distance-scaled update rates),
+  shadow frustum follows the player (±64 m sharp window, 4 m snap)
+- ✅ Bonnet/hood cam while driving, surface-variant footsteps
+  (stone/asphalt/interior), hard-landing tuck on big impacts
+- ✅ Squad radio barks (spotted/lost/losing/pinned), crit-kill slow-mo
+  beat extended, directional hitstop HUD flash
+- ✅ Height-aware collision + verticality: stand on low cover, vault
+  over/onto obstacles (stamina cost, clearance-checked), chapel pews
+  as real colliders
+- ✅ Altar resonance shrine (interact prompt, +45 resonance, candle
+  flare, 12 s cooldown), echoes on the map, wreck scorch decals
+- ✅ Crouch stealth profile (0.45x visibility, stacks with Veil),
+  NG+ replay tier persisted in saves (enemy cadence −8%/replay,
+  floor 0.72x, "The Choir remembers" toast)
+- ✅ Rain splash ring pool (44 instanced ground rings recycling near
+  the camera), hit-stop screen beat
 
 Still open: real-world photogrammetry source photos (pipeline ready,
 needs captures), sustained hardware frame trace, browser playthrough
-capture, foot IK, NPC facial morphs, landing-roll clip, mantle/climb
-(no verticality yet), recorded foley, and the [C] honesty items below.
+capture, foot IK, NPC facial morphs, recorded foley, free-cam photo
+mode (current mode orbits the character), and the [C] honesty items.
 
 ---
 

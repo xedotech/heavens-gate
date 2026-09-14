@@ -365,6 +365,9 @@ export class HeavensGateEngine {
   private contactShadowSources: Array<{ object: THREE.Object3D; radius: number; visible: boolean }> = [];
   private decalMesh: THREE.InstancedMesh | null = null;
   private decalCursor = 0;
+  private skidMesh: THREE.InstancedMesh | null = null;
+  private skidCursor = 0;
+  private skidDistance = 0;
   private decalNormal = new THREE.Vector3();
   private decalQuaternion = new THREE.Quaternion();
   private decalZ = new THREE.Vector3(0, 0, 1);
@@ -675,6 +678,7 @@ export class HeavensGateEngine {
       this.createTraffic();
       this.createRain();
       this.createRainSplashes();
+      this.createSkidMarks();
       this.createCloudLayer();
       this.createVeilMotes();
       this.createBreadcrumb();
@@ -4290,6 +4294,22 @@ export class HeavensGateEngine {
     }
     this.statDistanceDriven += Math.abs(vehicle.speed) * delta;
     this.screechTimer = Math.max(0, this.screechTimer - delta);
+    // Tire marks: handbrake slides and hard cornering write dark strips
+    // under the rear axle, spaced by distance travelled rather than frames.
+    const sliding = Math.abs(vehicle.speed) > 12 && (handbrake || Math.abs(steering) > 0.55);
+    if (!sliding) this.skidDistance = 0;
+    else {
+      this.skidDistance += Math.abs(vehicle.speed) * delta;
+      if (this.skidDistance > 0.5) {
+        this.skidDistance = 0;
+        const rearX = vehicle.group.position.x + Math.sin(vehicle.heading) * 1.05;
+        const rearZ = vehicle.group.position.z + Math.cos(vehicle.heading) * 1.05;
+        const latX = -Math.cos(vehicle.heading) * 0.72;
+        const latZ = Math.sin(vehicle.heading) * 0.72;
+        this.laySkidMark(rearX + latX, rearZ + latZ, vehicle.heading);
+        this.laySkidMark(rearX - latX, rearZ - latZ, vehicle.heading);
+      }
+    }
     // Handbrake loosens the rear: steering gains authority while the body
     // leans further, reading as a slide without a full slip sim.
     const steerAuthority = handbrake ? 1.75 : 1;
@@ -6262,6 +6282,30 @@ export class HeavensGateEngine {
     this.decalMatrix.compose(this.contactShadowPosition, this.decalQuaternion, this.litterScale.set(scale, scale, scale));
     this.decalMesh.setMatrixAt(index, this.decalMatrix);
     this.decalMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Tire marks during slides — a dedicated pool, laid under the rear axle. */
+  private createSkidMarks() {
+    const geometry = new THREE.PlaneGeometry(0.24, 0.9);
+    geometry.rotateX(-Math.PI / 2);
+    const material = new THREE.MeshBasicMaterial({ color: 0x0b0d0f, transparent: true, opacity: 0.38, depthWrite: false });
+    const mesh = new THREE.InstancedMesh(geometry, material, 128);
+    mesh.frustumCulled = false;
+    for (let i = 0; i < 128; i += 1) {
+      this.rainMatrix.makeTranslation(0, -10, 0);
+      mesh.setMatrixAt(i, this.rainMatrix);
+    }
+    this.scene.add(mesh);
+    this.skidMesh = mesh;
+  }
+
+  private laySkidMark(x: number, z: number, heading: number) {
+    if (!this.skidMesh) return;
+    this.rainMatrix.makeRotationY(heading);
+    this.rainMatrix.setPosition(x, 0.018, z);
+    this.skidMesh.setMatrixAt(this.skidCursor % 128, this.rainMatrix);
+    this.skidCursor += 1;
+    this.skidMesh.instanceMatrix.needsUpdate = true;
   }
 
   private createPulseEffect(position: THREE.Vector3) {
