@@ -3672,6 +3672,34 @@ export class HeavensGateEngine {
     this.beginCinematic();
   }
 
+  // Post-campaign replay: jump back into any operation. Keeps earned
+  // upgrades, marks, sigils, and stats — only the mission pointer moves.
+  replayMission(missionIndex: number) {
+    if (!Number.isInteger(missionIndex) || missionIndex < 0 || missionIndex > 6) return;
+    const base = this.lastSave;
+    this.resetCampaign(base
+      ? { ...base, missionIndex, ending: undefined, echoesActivated: missionIndex === 4 ? [] : base.echoesActivated }
+      : {
+          version: 1,
+          missionIndex,
+          health: 100,
+          armor: 50,
+          ammo: 18,
+          reserveAmmo: 126,
+          resonance: 100,
+          defeatedWardens: 0,
+          echoesActivated: [],
+          elapsed: 0,
+          updatedAt: Date.now(),
+        });
+    this.clearInput();
+    this.mode = 'playing';
+    this.paused = false;
+    this.emitMissionBriefing();
+    this.updateObjectiveMarker();
+    this.beginCinematic();
+  }
+
   returnToTitle() {
     this.mode = 'attract';
     this.paused = false;

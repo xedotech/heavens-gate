@@ -2149,6 +2149,50 @@ kbd {
   gap: 10px;
 }
 
+.replay-row {
+  display: block !important;
+  margin-top: 34px;
+  max-width: 640px;
+}
+
+.replay-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.replay-button {
+  display: grid;
+  gap: 4px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(232, 201, 111, 0.22);
+  border-radius: 8px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.replay-button:hover,
+.replay-button:focus-visible {
+  border-color: rgba(232, 201, 111, 0.6);
+  background: rgba(232, 201, 111, 0.08);
+}
+
+.replay-button small {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.replay-button span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .credits-layout {
   display: grid;
   max-width: 1240px;

@@ -270,6 +270,7 @@ export default function GameShell() {
   const [listeningAction, setListeningAction] = useState<KeybindAction | null>(null);
   const [listeningPadAction, setListeningPadAction] = useState<KeybindAction | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [confirmErase, setConfirmErase] = useState(false);
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -517,6 +518,7 @@ export default function GameShell() {
   };
 
   const restartCampaign = () => {
+    setConfirmErase(false);
     if (!eraseSaves(browserStorage)) {
       setSaveNotice('The saved checkpoint could not be erased. Check browser storage permissions, then try again.');
       return;
@@ -814,6 +816,16 @@ export default function GameShell() {
           <p>{ending === 'open' ? 'Across Aethel, locked rooms filled with voices people had spent lifetimes refusing to forget. The gates were no longer borders. They were reunions.' : 'The rings went dark one by one. Aethel woke beneath an ordinary dawn—safe, guilty, alive. Somewhere beyond the seal, heaven waited without an owner.'}</p>
           <blockquote>“Every city is a gate. Every choice is a key.” <cite>— Nia Vale</cite></blockquote>
           <div><button className="primary-action" type="button" onClick={() => { setScreen('playing'); void engineRef.current?.enterFreeRoam(); }}><MapIcon aria-hidden="true" /> Enter free roam</button><button className="secondary-button" type="button" onClick={() => openPanel('credits', 'title')}><Code2 aria-hidden="true" /> View credits</button></div>
+          <div className="replay-row" role="group" aria-label="Replay an operation">
+            <p className="eyebrow">Replay an operation</p>
+            <div className="replay-grid">
+              {MISSIONS.slice(0, 7).map((mission, index) => (
+                <button key={mission.title} type="button" className="replay-button" onClick={() => { setScreen('playing'); engineRef.current?.replayMission(index); void engineRef.current?.resume(); }}>
+                  <small>Op {index + 1}</small><span>{mission.title}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </section>
       )}
 
@@ -823,7 +835,15 @@ export default function GameShell() {
           <div className="credits-layout">
             <div className="credits-statement"><p>Heaven&apos;s Gate is an original browser-game vertical slice made from procedural geometry, authored systems, CC0 human source assets, and synthesized sound. No GTA, Call of Duty, Free Guy, Rockstar, or other franchise assets are included.</p><p>The game code is MIT licensed. Generated Aurel character meshes derive from documented MakeHuman Community CC0 assets; the reproducible Blender/MPFB compiler, file hashes, and full notices ship with the repository.</p></div>
             <dl><div><dt>Creative direction</dt><dd>Celestial noir / Aurelian Void</dd></div><div><dt>World</dt><dd>Aethel · 340-meter systemic city</dd></div><div><dt>Campaign</dt><dd>8 operations · 2 endings · free roam</dd></div><div><dt>Graphics</dt><dd>Three.js · CC0 MakeHuman source · ACES tone mapping</dd></div><div><dt>Characters</dt><dd>53-bone rigs · facial units · streamed glTF</dd></div><div><dt>Sound</dt><dd>Web Audio synthesis · zero sampled tracks</dd></div><div><dt>Input</dt><dd>Keyboard, mouse, standard gamepad API</dd></div><div><dt>License</dt><dd>MIT code · CC0 character source</dd></div></dl>
-            <button className="danger-button" type="button" onClick={restartCampaign}><RotateCcw aria-hidden="true" /> Erase save and begin again</button>
+            <button className="danger-button" type="button" onClick={() => {
+              if (confirmErase) {
+                restartCampaign();
+              } else {
+                setConfirmErase(true);
+                const timer = setTimeout(() => setConfirmErase(false), 4000);
+                toastTimersRef.current.add(timer);
+              }
+            }}><RotateCcw aria-hidden="true" /> {confirmErase ? 'Confirm — erase save forever?' : 'Erase save and begin again'}</button>
           </div>
         </section>
       )}
