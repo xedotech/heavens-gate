@@ -300,6 +300,7 @@ export class HeavensGateEngine {
   private gates: GateObject[] = [];
   private phaseMaterials: THREE.MeshStandardMaterial[] = [];
   private collisionBoxes: THREE.Box3[] = [];
+  private vaultIgnore: THREE.Box3 | null = null;
   private rayTargets: THREE.Object3D[] = [];
   private scannedGround: ScannedSurfaceMaterial | null = null;
   private scannedSurfaces: ScannedSurfaceMaterial[] = [];
@@ -3275,12 +3276,17 @@ export class HeavensGateEngine {
     ring.rotation.y = Math.PI / 2;
     chapel.add(ring);
 
-    // Pews: two rows split by a center aisle.
+    // Pews: two rows split by a center aisle. The seat boxes are real
+    // colliders — low enough to vault onto or take cover behind.
     [-2.2, 0.4].forEach((px) => {
       [-2.4, 2.4].forEach((pz) => {
         box(0.5, 0.5, 3.4, px, 0.55, pz, wood);
         box(0.5, 0.9, 0.18, px, 0.95, pz - 1.55, wood);
         box(0.5, 0.9, 0.18, px, 0.95, pz + 1.55, wood);
+        this.collisionBoxes.push(new THREE.Box3(
+          new THREE.Vector3(cx + px - 0.28, 0, cz + pz - 1.72),
+          new THREE.Vector3(cx + px + 0.28, 0.9, cz + pz + 1.72),
+        ));
       });
     });
 
@@ -4127,8 +4133,9 @@ export class HeavensGateEngine {
 
     const previous = this.player.position.clone();
     this.player.position.addScaledVector(this.playerVelocity, delta);
-    if (this.player.position.y <= 0) {
-      this.player.position.y = 0;
+    const groundHeight = this.groundHeightAt(this.player.position.x, this.player.position.z, this.player.position.y);
+    if (this.player.position.y <= groundHeight) {
+      this.player.position.y = groundHeight;
       if (!this.grounded) {
         const impact = clamp(-this.playerVelocity.y, 0, 24);
         this.landDip = Math.max(this.landDip, impact * 0.011);
@@ -4146,24 +4153,28 @@ export class HeavensGateEngine {
       this.grounded = true;
     }
     this.clampWorld(this.player.position);
+    const floorY = this.player.position.y;
     const sweptPosition = sweepPlanarCollision(previous, this.player.position,
-      (x, z) => this.collides(x, z, PLAYER_RADIUS));
+      (x, z) => this.collides(x, z, PLAYER_RADIUS, floorY));
     if (sweptPosition.swept) {
       this.player.position.x = sweptPosition.x;
       this.player.position.z = sweptPosition.z;
     }
-    if (sweptPosition.swept || this.collides(this.player.position.x, this.player.position.z, PLAYER_RADIUS)) {
+    if (sweptPosition.swept || this.collides(this.player.position.x, this.player.position.z, PLAYER_RADIUS, floorY)) {
       const vaultDirection = desired.clone().setY(0);
       const vaultTarget = previous.clone();
       let vaulted = false;
       if (jumpPressed && vaultDirection.lengthSq() > 0.1 && this.stamina >= 8) {
         vaultDirection.normalize();
         vaultTarget.addScaledVector(vaultDirection, 2.35);
-        if (!this.collides(vaultTarget.x, vaultTarget.z, PLAYER_RADIUS * 0.78)) {
+        // Landing can be the top of low cover — probe the target ground so
+        // a vault onto a pew or crate sticks instead of bouncing off.
+        const landingGround = this.groundHeightAt(vaultTarget.x, vaultTarget.z, this.player.position.y + 1.5);
+        if (!this.collides(vaultTarget.x, vaultTarget.z, PLAYER_RADIUS * 0.78, landingGround)) {
           this.player.position.x = vaultTarget.x;
           this.player.position.z = vaultTarget.z;
-          this.player.position.y = Math.max(this.player.position.y, 0.52);
-          this.playerVelocity.y = Math.max(this.playerVelocity.y, 4.2);
+          this.player.position.y = Math.max(this.player.position.y, landingGround + 0.08, 0.52);
+          this.playerVelocity.y = Math.max(this.playerVelocity.y, landingGround > 0.2 ? 2.6 : 4.2);
           this.stamina = Math.max(0, this.stamina - 8);
           this.grounded = false;
           vaulted = true;
@@ -4171,7 +4182,7 @@ export class HeavensGateEngine {
       }
       if (!vaulted) {
         const resolved = sweptPosition.swept ? sweptPosition : resolvePlanarCollision(previous, this.player.position,
-          (x, z) => this.collides(x, z, PLAYER_RADIUS));
+          (x, z) => this.collides(x, z, PLAYER_RADIUS, floorY));
         this.player.position.x = resolved.x;
         this.player.position.z = resolved.z;
         if (resolved.blockedX) this.playerVelocity.x = 0;
@@ -4358,9 +4369,17 @@ export class HeavensGateEngine {
     return this.coverFaceVector;
   }
 
-  private collides(x: number, z: number, radius: number) {
+  // floorY enables height-aware collision: boxes whose tops sit at or below
+  // the mover's feet (plus step tolerance) don't block — the basis for
+  // vaulting and standing on low cover. Actors/vehicles pass no floor and
+  // collide exactly as before.
+  private collides(x: number, z: number, radius: number, floorY = -Infinity) {
+    const unbounded = floorY === -Infinity;
     const blocked = this.collisionBoxes.some((box) =>
-      x + radius > box.min.x && x - radius < box.max.x && z + radius > box.min.z && z - radius < box.max.z,
+      box !== this.vaultIgnore
+      && (unbounded || box.max.y > floorY + 0.42)
+      && (unbounded || box.min.y < floorY + 1.9)
+      && x + radius > box.min.x && x - radius < box.max.x && z + radius > box.min.z && z - radius < box.max.z,
     );
     if (blocked) return true;
     const obstacles = this.dynamicObstacles;
@@ -4372,6 +4391,19 @@ export class HeavensGateEngine {
       if (dx * dx + dz * dz < combined * combined) return true;
     }
     return false;
+  }
+
+  // The ground plane under a point: the highest collider top the mover
+  // could realistically be standing on (within step reach of currentY).
+  private groundHeightAt(x: number, z: number, currentY: number) {
+    let ground = 0;
+    for (const box of this.collisionBoxes) {
+      if (x > box.min.x && x < box.max.x && z > box.min.z && z < box.max.z
+        && box.max.y <= currentY + 0.45 && box.max.y > ground && box.max.y < 2.2) {
+        ground = box.max.y;
+      }
+    }
+    return ground;
   }
 
   private hasLineOfSight(from: THREE.Vector3, to: THREE.Vector3) {
