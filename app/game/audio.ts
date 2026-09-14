@@ -426,8 +426,22 @@ export class AudioEngine {
     if (critical) this.tone(340, 0.12, 'triangle', 0.045, 0.015, this.effectsBus, 220);
   }
 
-  footstep(run = false) {
+  footstep(run = false, surface: 'street' | 'stone' | 'veil' = 'street') {
     const jitter = 0.9 + Math.random() * 0.2;
+    if (surface === 'stone') {
+      // Interior flagstones — a hard click and a bright scuff that the
+      // chapel slapback then smears into the room.
+      this.noise(0.022, run ? 0.02 : 0.011, 2100 * jitter);
+      this.tone(210 * jitter, 0.035, 'triangle', run ? 0.014 : 0.008, 0, this.effectsBus, 140);
+      this.tone(96 * jitter, 0.05, 'sine', run ? 0.02 : 0.011, 0, this.effectsBus, 58);
+      return;
+    }
+    if (surface === 'veil') {
+      // The Veil swallows impact — a soft low thud, no scuff.
+      this.noise(0.07, run ? 0.016 : 0.009, 220 * jitter);
+      this.tone(64 * jitter, 0.08, 'sine', run ? 0.018 : 0.01, 0, this.effectsBus, 42);
+      return;
+    }
     this.noise(0.05, run ? 0.03 : 0.018, 150 * jitter);
     this.noise(0.028, run ? 0.014 : 0.008, 950 * jitter);
     this.tone(88 * jitter, 0.045, 'sine', run ? 0.02 : 0.011, 0, this.effectsBus, 55);

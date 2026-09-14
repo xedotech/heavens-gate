@@ -278,6 +278,7 @@ export class HeavensGateEngine {
   private cameraPitch = 0.18;
   private photoMode = false;
   private photoFilterIndex = 0;
+  private bonnetCam = false;
   private readonly inspectionCenter = new THREE.Vector3(0, 2.05, 0);
   private inspectionHeight = 3.7;
   private grounded = true;
@@ -3856,7 +3857,15 @@ export class HeavensGateEngine {
   }
 
   private processActions() {
-    if (this.wasActionPressed('inspect') && !this.currentVehicle) {
+    if (this.wasActionPressed('inspect') && this.currentVehicle) {
+      // In a vehicle the inspect key becomes the bonnet/first-person cam.
+      this.bonnetCam = !this.bonnetCam;
+      this.emitToast(
+        this.bonnetCam ? 'Bonnet cam' : 'Chase cam',
+        this.bonnetCam ? 'Hood-level view — look is free, crouch checks the mirror.' : 'Third-person camera restored.',
+        'info',
+      );
+    } else if (this.wasActionPressed('inspect')) {
       this.photoMode = !this.photoMode;
       if (this.photoMode && document.pointerLockElement) void document.exitPointerLock();
       if (!this.photoMode && this.renderer?.domElement) this.renderer.domElement.style.filter = '';
@@ -4124,8 +4133,13 @@ export class HeavensGateEngine {
         const impact = clamp(-this.playerVelocity.y, 0, 24);
         this.landDip = Math.max(this.landDip, impact * 0.011);
         if (impact > 7) {
-          this.audio.footstep(true);
+          this.audio.footstep(true, this.chapelInterior ? 'stone' : 'street');
           this.pulseGamepad(50, clamp(impact * 0.02, 0.1, 0.4), clamp(impact * 0.014, 0.08, 0.3));
+        }
+        // Hard drops tuck into a recovery roll instead of a flat stomp.
+        if (impact > 13 && !this.settings?.reducedMotion) {
+          this.heroCharacter?.playOnce('slide', 0.05);
+          this.hurtKick = Math.min(0.4, this.hurtKick + impact * 0.012);
         }
       }
       this.playerVelocity.y = 0;
@@ -4196,7 +4210,7 @@ export class HeavensGateEngine {
     });
     this.footstepTimer -= delta;
     if (movement > 1.4 && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0 && this.footstepTimer <= 0) {
-      this.audio.footstep(sprinting);
+      this.audio.footstep(sprinting, this.veilActive ? 'veil' : this.chapelInterior ? 'stone' : 'street');
       this.footstepTimer = sprinting ? 0.29 : 0.44;
     }
   }
@@ -4489,6 +4503,27 @@ export class HeavensGateEngine {
       this.camera.position.lerp(desiredDeath, 1 - Math.exp(-4.5 * delta));
       this.camera.lookAt(body.x, body.y + 1.1, body.z);
       this.camera.fov = damp(this.camera.fov, 42, 3, delta);
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+    // Bonnet cam: hood-height first-person driving. Free look via the
+    // normal yaw/pitch; holding crouch snaps the view to the mirror.
+    if (this.bonnetCam && this.currentVehicle) {
+      const vehicle = this.currentVehicle;
+      const lookBackBonnet = this.isActionHeld('crouch');
+      const hoodYaw = lookBackBonnet ? vehicle.heading + Math.PI : this.cameraYaw;
+      const forwardHood = new THREE.Vector3(-Math.sin(hoodYaw), 0, -Math.cos(hoodYaw));
+      const hoodPos = this.tmpMove.set(
+        vehicle.group.position.x - Math.sin(vehicle.heading) * 1.55,
+        vehicle.group.position.y + 1.62,
+        vehicle.group.position.z - Math.cos(vehicle.heading) * 1.55,
+      );
+      this.camera.position.lerp(hoodPos, 1 - Math.exp(-22 * delta));
+      const hoodTarget = hoodPos.clone().addScaledVector(forwardHood, 8);
+      hoodTarget.y -= Math.sin(this.cameraPitch) * 6;
+      this.camera.lookAt(hoodTarget);
+      const hoodFov = clamp(this.settings?.fov ?? 56, 48, 78) + clamp(Math.abs(vehicle.speed) * 0.34, 0, 14);
+      this.camera.fov = damp(this.camera.fov, hoodFov, 5, delta);
       this.camera.updateProjectionMatrix();
       return;
     }
@@ -5567,6 +5602,7 @@ export class HeavensGateEngine {
       return;
     }
     this.currentVehicle = null;
+    this.bonnetCam = false;
     vehicle.occupied = false;
     vehicle.bodyMaterial.emissiveIntensity = 0;
     if (vehicle.spot) vehicle.spot.intensity = 0;
