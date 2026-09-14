@@ -690,6 +690,17 @@ export default function GameShell() {
               })}
             </div>
           </div>
+          <div className="attunements record-panel" aria-label="Record">
+            <div className="attunements-head">
+              <h2>Record</h2>
+            </div>
+            <div className="record-grid">
+              <div className="record-stat"><strong>{hud.stats.kills}</strong><small>hostiles severed</small></div>
+              <div className="record-stat"><strong>{hud.stats.shots > 0 ? `${Math.round((hud.stats.hits / hud.stats.shots) * 100)}%` : '—'}</strong><small>accuracy · {hud.stats.hits}/{hud.stats.shots}</small></div>
+              <div className="record-stat"><strong>{hud.stats.distanceDriven >= 1000 ? `${(hud.stats.distanceDriven / 1000).toFixed(1)} km` : `${hud.stats.distanceDriven} m`}</strong><small>driven</small></div>
+              <div className="record-stat"><strong>{hud.stats.sigils}/{hud.stats.sigilsTotal}</strong><small>sigils claimed</small></div>
+            </div>
+          </div>
         </section>
       )}
 

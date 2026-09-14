@@ -88,6 +88,7 @@ export interface SaveState {
   resonance: number;
   defeatedWardens: number;
   echoesActivated: string[];
+  sigilsCollected?: string[];
   elapsed: number;
   ending?: 'open' | 'seal';
   updatedAt: number;
@@ -130,6 +131,14 @@ export interface HUDState {
   damageDirection: number | null;
   bossHealth: number | null;
   cinematic: boolean;
+  stats: {
+    kills: number;
+    shots: number;
+    hits: number;
+    distanceDriven: number;
+    sigils: number;
+    sigilsTotal: number;
+  };
 }
 
 export interface MapPoint {
@@ -275,6 +284,7 @@ export const INITIAL_HUD: HUDState = {
   damageDirection: null,
   bossHealth: null,
   cinematic: false,
+  stats: { kills: 0, shots: 0, hits: 0, distanceDriven: 0, sigils: 0, sigilsTotal: 8 },
 };
 
 export const MISSIONS: MissionDefinition[] = [

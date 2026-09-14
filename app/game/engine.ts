@@ -122,6 +122,15 @@ interface VehicleWheel {
   front: boolean;
 }
 
+interface VehicleSpec {
+  name: string;
+  top: number;
+  boost: number;
+  accel: number;
+  steer: number;
+  damageScale: number;
+}
+
 interface Vehicle {
   id: string;
   group: THREE.Group;
@@ -130,6 +139,7 @@ interface Vehicle {
   speed: number;
   occupied: boolean;
   damage: number;
+  spec: VehicleSpec;
   smoke?: THREE.Group;
   bodyMaterial: THREE.MeshStandardMaterial;
   wheels?: VehicleWheel[];
@@ -403,6 +413,12 @@ export class HeavensGateEngine {
   private memorialZone: THREE.Box3 | null = null;
   private memorialMesh: THREE.Object3D | null = null;
   private memorialVisited = false;
+  private sigils: Array<{ id: string; group: THREE.Group; collected: boolean }> = [];
+  private sigilsCollected = new Set<string>();
+  private statKills = 0;
+  private statShots = 0;
+  private statHits = 0;
+  private statDistanceDriven = 0;
   private peekLean = 0;
   private shoulderSide = 1;
   private shoulderOffset = 0.78;
@@ -642,6 +658,7 @@ export class HeavensGateEngine {
       this.createObjectiveMarker();
       this.createChapel();
       this.createMemorial();
+      this.createSigils();
       this.createContactShadows();
       await this.nextFrame();
       this.callbacks.onLoadProgress(1, 'The city remembers');
@@ -2031,22 +2048,25 @@ export class HeavensGateEngine {
     this.playerSkinMaterials.hair.color.setHex(palette.hair);
   }
 
-  private buildCarBody(color: number) {
+  private buildCarBody(color: number, archetype = 'seraph') {
     const group = new THREE.Group();
     const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.22, metalness: 0.76 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x090d0f, roughness: 0.24, metalness: 0.7 });
     const headlightMaterial = new THREE.MeshStandardMaterial({ color: 0xe5c774, emissive: 0xe5a932, emissiveIntensity: 2.2 });
     const tailMaterial = new THREE.MeshStandardMaterial({ color: 0x5a1018, emissive: 0xd92632, emissiveIntensity: 0.9 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.72, 7.1), bodyMaterial);
-    body.position.y = 0.82;
+    // Archetype silhouettes: morrow is tall and slab-sided, choir is low and long.
+    const hauler = archetype === 'morrow';
+    const interceptor = archetype === 'choir';
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.7, hauler ? 1.05 : 0.72, interceptor ? 7.9 : 7.1), bodyMaterial);
+    body.position.y = hauler ? 0.95 : 0.82;
     body.castShadow = true;
     group.add(body);
-    const hood = new THREE.Mesh(new THREE.BoxGeometry(3.25, 0.42, 2.3), bodyMaterial);
-    hood.position.set(0, 1.25, -2.15);
-    hood.rotation.x = -0.08;
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(3.25, hauler ? 0.62 : 0.42, 2.3), bodyMaterial);
+    hood.position.set(0, hauler ? 1.55 : 1.25, interceptor ? -2.6 : -2.15);
+    hood.rotation.x = interceptor ? -0.14 : -0.08;
     group.add(hood);
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.92, 2.55), dark);
-    cabin.position.set(0, 1.47, 0.55);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.8, hauler ? 1.35 : interceptor ? 0.7 : 0.92, hauler ? 3.1 : 2.55), dark);
+    cabin.position.set(0, hauler ? 2.1 : interceptor ? 1.32 : 1.47, 0.55);
     group.add(cabin);
     const wheels: VehicleWheel[] = [];
     for (const side of [-1, 1]) {
@@ -2084,7 +2104,7 @@ export class HeavensGateEngine {
   }
 
   private createVehicle(id: string, x: number, z: number, heading: number, color: number) {
-    const { group, bodyMaterial, tailMaterial, beamMaterial, wheels } = this.buildCarBody(color);
+    const { group, bodyMaterial, tailMaterial, beamMaterial, wheels } = this.buildCarBody(color, id.split('-')[0]);
     group.position.set(x, 0, z);
     group.rotation.y = heading;
     group.userData.vehicleId = id;
@@ -2103,6 +2123,7 @@ export class HeavensGateEngine {
       speed: 0,
       occupied: false,
       damage: 0,
+      spec: this.vehicleSpecFor(id),
       bodyMaterial,
       wheels,
       tailMaterial,
@@ -2297,6 +2318,19 @@ export class HeavensGateEngine {
     mesh.visible = this.settings.quality !== 'low';
     this.scene.add(mesh);
     this.rain = { mesh, drops, count };
+  }
+
+  private static readonly VEHICLE_SPECS: Record<string, VehicleSpec> = {
+    // Seraph sedan — the baseline: balanced speed and forgiveness.
+    seraph: { name: 'Seraph sedan', top: 38, boost: 48, accel: 2.7, steer: 1.42, damageScale: 1 },
+    // Morrow hauler — armored workhorse: slower, lumbering, shrugs off hits.
+    morrow: { name: 'Morrow hauler', top: 30, boost: 38, accel: 1.8, steer: 1.02, damageScale: 0.6 },
+    // Choir interceptor — pursuit frame: fast and twitchy, fragile.
+    choir: { name: 'Choir interceptor', top: 45, boost: 58, accel: 3.6, steer: 1.75, damageScale: 1.35 },
+  };
+
+  private vehicleSpecFor(id: string): VehicleSpec {
+    return HeavensGateEngine.VEHICLE_SPECS[id.split('-')[0]] ?? HeavensGateEngine.VEHICLE_SPECS.seraph;
   }
 
   private createVehicles() {
@@ -2934,6 +2968,67 @@ export class HeavensGateEngine {
     this.audio.ui(true);
   }
 
+  // Eight hidden sigils — permanent world collectibles paying marks.
+  private static readonly SIGIL_SPOTS: Array<{ id: string; x: number; z: number; lore: string }> = [
+    { id: 'sigil-spire-plaza', x: 0, z: 34, lore: 'A sigil of the First Architect — the plaza was her signature.' },
+    { id: 'sigil-south-gate', x: 0, z: -54, lore: 'Carved by a gate-keeper who refused the Choir\'s hymn.' },
+    { id: 'sigil-chapel', x: -69, z: 52.5, lore: 'The Unburied marked this stone before the burning.' },
+    { id: 'sigil-docks', x: 90, z: 76, lore: 'Dockhands scratched it into the pier the night the bells drowned.' },
+    { id: 'sigil-gardens', x: -112, z: 72, lore: 'An Ash Gardens warden hid it where the rain falls sideways.' },
+    { id: 'sigil-north-ridge', x: -82, z: 104, lore: 'The ridge runners swore it hums before a storm breaks.' },
+    { id: 'sigil-east-verge', x: 140, z: -140, lore: 'Half-buried at the city\'s edge — the last thing exiles touched.' },
+    { id: 'sigil-west-hollow', x: -140, z: -60, lore: 'The Hollow kept it dark for sixty years. Now it answers you.' },
+  ];
+
+  private createSigils() {
+    const coreMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8a5ac8, emissive: 0x7a3fd4, emissiveIntensity: 2.2, roughness: 0.3, metalness: 0.4, transparent: true,
+    });
+    const ringMaterial = new THREE.MeshBasicMaterial({ color: 0xb98af0, transparent: true, opacity: 0.55 });
+    HeavensGateEngine.SIGIL_SPOTS.forEach((spot) => {
+      // Nudge out of geometry if a spot lands inside a collider.
+      let { x, z } = spot;
+      for (let r = 0; r <= 8 && this.collides(x, z, 0.6); r += 1) {
+        x = spot.x + Math.cos(r * 1.3) * r * 0.8;
+        z = spot.z + Math.sin(r * 1.3) * r * 0.8;
+      }
+      const group = new THREE.Group();
+      group.position.set(x, 1.05, z);
+      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), coreMaterial);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.018, 6, 28), ringMaterial);
+      ring.rotation.x = Math.PI / 2;
+      const pillar = new THREE.Mesh(
+        new THREE.ConeGeometry(0.34, 1.15, 6, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0x7a3fd4, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }),
+      );
+      pillar.position.y = 0.55;
+      group.add(core, ring, pillar);
+      this.scene.add(group);
+      this.sigils.push({ id: spot.id, group, collected: false });
+    });
+  }
+
+  private updateSigils(delta: number, time: number) {
+    if (!this.player || this.currentVehicle) return;
+    (this.sigils ?? []).forEach((sigil, index) => {
+      if (sigil.collected) return;
+      sigil.group.rotation.y += delta * 1.7;
+      sigil.group.position.y = 1.05 + Math.sin(time * 1.9 + index * 1.4) * 0.14;
+      if (distance2D(sigil.group.position.x, sigil.group.position.z, this.player.position.x, this.player.position.z) < 2.1) {
+        sigil.collected = true;
+        sigil.group.visible = false;
+        this.sigilsCollected.add(sigil.id);
+        this.shards += 25;
+        const spot = HeavensGateEngine.SIGIL_SPOTS.find((s) => s.id === sigil.id);
+        this.emitSubtitle('Hidden Sigil', spot?.lore ?? 'The mark answers.');
+        this.emitToast('Sigil claimed', `+25 marks · ${this.sigilsCollected.size} of ${HeavensGateEngine.SIGIL_SPOTS.length}`, 'success');
+        this.audio.ui(true);
+        this.audio.whisperBlip?.();
+        this.saveCheckpoint();
+      }
+    });
+  }
+
   private updateMemorial() {
     if (!this.memorialZone || !this.memorialMesh || this.memorialVisited || !this.player) return;
     const position = this.currentVehicle?.group.position ?? this.player.position;
@@ -3021,6 +3116,11 @@ export class HeavensGateEngine {
     this.missionIndex = clamp(save?.missionIndex ?? 0, 0, MISSIONS.length - 1);
     this.defeatedWardens = save?.defeatedWardens ?? 0;
     this.echoesActivated = new Set(save?.echoesActivated ?? []);
+    this.sigilsCollected = new Set(save?.sigilsCollected ?? []);
+    (this.sigils ?? []).forEach((sigil) => {
+      sigil.collected = this.sigilsCollected.has(sigil.id);
+      sigil.group.visible = !sigil.collected;
+    });
     this.radioSignals = [];
     this.elapsed = save?.elapsed ?? 0;
     this.reloading = 0;
@@ -3323,6 +3423,7 @@ export class HeavensGateEngine {
     this.updateCasings(delta);
     this.updateChapel();
     this.updateMemorial();
+    this.updateSigils(delta, this.elapsed);
     this.updateVeil(delta);
     this.updateWeaponSway(delta);
     this.updateEffects(delta);
@@ -3674,9 +3775,10 @@ export class HeavensGateEngine {
     const steering = clamp((this.isActionHeld('moveLeft') ? 1 : 0) - (this.isActionHeld('moveRight') ? 1 : 0) - this.gamepadAxes.moveX - (this.touchMove?.x ?? 0), -1, 1);
     const boost = this.isActionHeld('sprint');
     const handbrake = this.isActionHeld('jump');
-    const maxSpeed = (boost ? 48 : 38) * (vehicle.damage > 80 ? 0.45 : vehicle.damage > 40 ? 0.8 : 1);
-    const targetSpeed = throttle >= 0 ? throttle * maxSpeed : throttle * 18;
-    vehicle.speed = damp(vehicle.speed, targetSpeed, throttle ? 2.7 : 1.8, delta);
+    const spec = vehicle.spec ?? HeavensGateEngine.VEHICLE_SPECS.seraph;
+    const maxSpeed = (boost ? spec.boost : spec.top) * (vehicle.damage > 80 ? 0.45 : vehicle.damage > 40 ? 0.8 : 1);
+    const targetSpeed = throttle >= 0 ? throttle * maxSpeed : throttle * spec.top * 0.47;
+    vehicle.speed = damp(vehicle.speed, targetSpeed, throttle ? spec.accel : 1.8, delta);
     if (handbrake) {
       vehicle.speed = damp(vehicle.speed, 0, 9.5, delta);
       if (Math.abs(vehicle.speed) > 9 && this.screechTimer <= 0) {
@@ -3684,12 +3786,13 @@ export class HeavensGateEngine {
         this.screechTimer = 0.22;
       }
     }
+    this.statDistanceDriven += Math.abs(vehicle.speed) * delta;
     this.screechTimer = Math.max(0, this.screechTimer - delta);
     // Handbrake loosens the rear: steering gains authority while the body
     // leans further, reading as a slide without a full slip sim.
     const steerAuthority = handbrake ? 1.75 : 1;
     const steerStrength = clamp(Math.abs(vehicle.speed) / 9, 0.15, 1) * steerAuthority;
-    vehicle.heading += steering * steerStrength * delta * 1.42 * Math.sign(vehicle.speed || 1);
+    vehicle.heading += steering * steerStrength * delta * spec.steer * Math.sign(vehicle.speed || 1);
     const previous = vehicle.group.position.clone();
     vehicle.group.position.x += -Math.sin(vehicle.heading) * vehicle.speed * delta;
     vehicle.group.position.z += -Math.cos(vehicle.heading) * vehicle.speed * delta;
@@ -3703,7 +3806,7 @@ export class HeavensGateEngine {
       const impact = Math.abs(vehicle.speed);
       if (impact > 8) {
         this.audio.crash?.(clamp(impact / 34, 0.2, 1));
-        vehicle.damage = (vehicle.damage ?? 0) + impact * 1.1;
+        vehicle.damage = (vehicle.damage ?? 0) + impact * 1.1 * spec.damageScale;
       }
       if (impact > 16) {
         this.takePlayerDamage(impact * 0.34);
@@ -4354,6 +4457,7 @@ export class HeavensGateEngine {
     }
     this.heroCharacter?.playOnce('fire', 0.045);
     this.ammo -= 1;
+    this.statShots += spec.pellets;
     this.shotCooldown = shotIntervalSeconds(spec);
     this.weaponRecoil = addShotRecoil(this.weaponRecoil, spec);
     this.weaponKick = Math.min(1, this.weaponKick + (spec.pellets > 1 ? 0.85 : 0.55));
@@ -4414,6 +4518,7 @@ export class HeavensGateEngine {
           const critical = hit.object.name === 'head';
           this.damageActor(actor, weaponDamage(origin.distanceTo(hit.point), critical, actor.kind === 'boss', spec), critical);
           landedHit = true;
+          this.statHits += 1;
           this.audio.hit(critical);
         }
       } else if (!actorId && this.actors) {
@@ -4491,7 +4596,10 @@ export class HeavensGateEngine {
   private killActor(actor: Actor) {
     actor.alive = false;
     this.audio.explosion();
-    if (actor.kind !== 'civilian') this.reticleKill = 0.55;
+    if (actor.kind !== 'civilian') {
+      this.reticleKill = 0.55;
+      this.statKills += 1;
+    }
     if (actor.kind !== 'civilian' && !this.settings.reducedMotion) this.hitStop = Math.max(this.hitStop, actor.kind === 'boss' ? 0.22 : 0.085);
     const total = actor.kind === 'boss' ? 2.6 : actor.kind === 'drone' ? 1.15 : 1.6;
     actor.materials.forEach((material) => { material.transparent = true; });
@@ -4934,7 +5042,7 @@ export class HeavensGateEngine {
     this.cameraYaw = vehicle.heading;
     this.audio.ui(true);
     const driveKeys = ['moveForward', 'moveLeft', 'moveBackward', 'moveRight'].map((action) => this.bindingLabel(action as KeybindAction)).join(' / ');
-    this.emitToast('Seraph linked', `${driveKeys} / left stick to drive · ${this.bindingLabel('jump')} / A to brake · ${this.bindingLabel('interact')} / Y to exit`, 'success');
+    this.emitToast(`${vehicle.spec.name} linked`, `${driveKeys} / left stick to drive · ${this.bindingLabel('jump')} / A to brake · ${this.bindingLabel('interact')} / Y to exit`, 'success');
   }
 
   private exitVehicle() {
@@ -5161,6 +5269,14 @@ export class HeavensGateEngine {
       lowHealth: this.health <= 30 && this.health > 0,
       hitDamage: this.hitDamageTimer > 0 ? Math.max(1, Math.round(this.hitDamagePool)) : null,
       hitDamageSeq: this.hitDamageSeq,
+      stats: {
+        kills: this.statKills,
+        shots: this.statShots,
+        hits: this.statHits,
+        distanceDriven: Math.round(this.statDistanceDriven),
+        sigils: this.sigilsCollected.size,
+        sigilsTotal: HeavensGateEngine.SIGIL_SPOTS.length,
+      },
       reloading: this.reloading > 0,
       damageFlash: this.damageFlash,
       damageDirection: this.damageDirection,
@@ -5551,6 +5667,7 @@ export class HeavensGateEngine {
       upgrades: [...this.ownedUpgrades],
       defeatedWardens: this.defeatedWardens,
       echoesActivated: [...this.echoesActivated],
+      sigilsCollected: [...this.sigilsCollected],
       elapsed: this.elapsed,
       weaponId: this.weaponId,
       weaponAmmo: {

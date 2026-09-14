@@ -8,6 +8,10 @@ export const SAVE_KEY = 'heavens-gate-save-v1';
 export const SAVE_BACKUP_KEY = 'heavens-gate-save-v1-backup';
 export const SETTINGS_KEY = 'heavens-gate-settings-v1';
 const ECHO_IDS = new Set(['echo-mercy', 'echo-truth', 'echo-name']);
+export const SIGIL_IDS = new Set([
+  'sigil-spire-plaza', 'sigil-south-gate', 'sigil-chapel', 'sigil-docks',
+  'sigil-gardens', 'sigil-north-ridge', 'sigil-east-verge', 'sigil-west-hollow',
+]);
 const FINAL_MISSION = MISSIONS.length - 1;
 
 export interface StorageAccess {
@@ -101,6 +105,11 @@ export function normalizeSave(value: unknown): SaveState | null {
     echoesActivated: Array.isArray(value.echoesActivated)
       ? [...new Set(value.echoesActivated.filter((id): id is string => typeof id === 'string' && ECHO_IDS.has(id)))]
       : [],
+    ...(value.sigilsCollected !== undefined ? {
+      sigilsCollected: Array.isArray(value.sigilsCollected)
+        ? [...new Set(value.sigilsCollected.filter((id): id is string => typeof id === 'string' && SIGIL_IDS.has(id)))]
+        : [],
+    } : {}),
     elapsed: finite(value.elapsed, 0, 0, Number.MAX_SAFE_INTEGER / 1000),
     ...(ending ? { ending } : {}),
     updatedAt: finite(value.updatedAt, 0, 0, 8.64e15, true),
