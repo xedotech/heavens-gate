@@ -94,10 +94,12 @@ interface Actor {
   aiState?: NpcAiState;
   damagePulse: number;
   lastDamageAmount: number;
-  vignette?: 'wander' | 'idle' | 'talk' | 'lean';
+  vignette?: 'wander' | 'idle' | 'talk' | 'lean' | 'run';
   vignetteTimer?: number;
   hitReact?: number;
   hitReactSide?: number;
+  lastHitAngle?: number;
+  lastHitCritical?: boolean;
 }
 
 interface CharacterRig {
@@ -367,6 +369,7 @@ export class HeavensGateEngine {
   private cinematic: MissionCinematic | null = null;
   private hitStop = 0;
   private rain: { mesh: THREE.InstancedMesh; drops: Float32Array; count: number } | null = null;
+  private cloudLayer: { mesh: THREE.Mesh; texture: THREE.CanvasTexture } | null = null;
   private corpses: Corpse[] = [];
   private drops: DropPickup[] = [];
   private envMapTexture: THREE.Texture | null = null;
@@ -651,6 +654,7 @@ export class HeavensGateEngine {
       this.createVehicles();
       this.createTraffic();
       this.createRain();
+      this.createCloudLayer();
       this.createActors();
       await this.nextFrame();
       this.callbacks.onLoadProgress(0.76, 'Tuning the gates');
@@ -2320,6 +2324,55 @@ export class HeavensGateEngine {
     this.rain = { mesh, drops, count };
   }
 
+  // A low storm shelf scrolling overhead — cheap sky detail that reads as
+  // moving weather instead of a static gradient dome.
+  private createCloudLayer() {
+    const size = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const context = canvas.getContext('2d');
+    if (context) {
+      context.fillStyle = '#000000';
+      context.fillRect(0, 0, size, size);
+      // Layered soft blobs — cheap fbm; edges wrap because blobs drawn near
+      // the border are mirrored.
+      for (let i = 0; i < 340; i += 1) {
+        const x = seeded(i, 150) * size;
+        const y = seeded(i, 151) * size;
+        const radius = 18 + seeded(i, 152) * 64;
+        const shade = 26 + seeded(i, 153) * 60;
+        for (const ox of [-size, 0, size]) {
+          for (const oy of [-size, 0, size]) {
+            const gradient = context.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, radius);
+            gradient.addColorStop(0, `rgba(${shade},${shade + 6},${shade + 12},0.16)`);
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            context.fillStyle = gradient;
+            context.fillRect(x + ox - radius, y + oy - radius, radius * 2, radius * 2);
+          }
+        }
+      }
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(3, 3);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      fog: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), material);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.y = 165;
+    mesh.renderOrder = -1;
+    this.scene.add(mesh);
+    this.cloudLayer = { mesh, texture };
+  }
+
   private static readonly VEHICLE_SPECS: Record<string, VehicleSpec> = {
     // Seraph sedan — the baseline: balanced speed and forgiveness.
     seraph: { name: 'Seraph sedan', top: 38, boost: 48, accel: 2.7, steer: 1.42, damageScale: 1 },
@@ -2700,6 +2753,11 @@ export class HeavensGateEngine {
       } else if (roll < 0.32) {
         citizen.vignette = 'lean';
         citizen.group.rotation.x = -0.08;
+      } else if (roll < 0.42) {
+        // Ambient runner — hurrying through the storm, glancing back.
+        citizen.vignette = 'run';
+        citizen.wanderAngle = seeded(i, 133) * Math.PI * 2;
+        citizen.vignetteTimer = 1 + seeded(i, 134) * 3;
       } else {
         citizen.vignette = 'wander';
       }
@@ -4178,6 +4236,19 @@ export class HeavensGateEngine {
             if (distance < 42) this.audio.pedestrianBlip(actor.group.position, playerPosition, this.cameraYaw);
           }
           this.animateActor(actor, 0, delta);
+        } else if (actor.vignette === 'run') {
+          // Street event: a citizen hurrying somewhere — or from something.
+          // Bursts of speed, periodic heading changes, occasional look-backs.
+          actor.vignetteTimer = (actor.vignetteTimer ?? 2) - delta;
+          if (actor.vignetteTimer <= 0) {
+            actor.vignetteTimer = 1.8 + seeded(actorIndex + Math.floor(time * 0.7), 136) * 3.4;
+            actor.wanderAngle += (seeded(actorIndex + Math.floor(time), 137) - 0.5) * 2.4;
+          }
+          const glance = Math.sin(time * 2.7 + actorIndex * 1.7) > 0.82;
+          this.moveActor(actor, this.tmpMove.set(
+            Math.sin(actor.wanderAngle + (glance ? 0.4 : 0)), 0,
+            Math.cos(actor.wanderAngle + (glance ? 0.4 : 0)),
+          ), actor.speed * (glance ? 1.35 : 1.9), delta);
         } else if (actor.vignette === 'idle' || actor.vignette === 'lean') {
           // Standing life: weight-shift sway and head-look drift.
           actor.group.position.x = actor.spawn.x + Math.sin(time * 0.4 + actorIndex) * 0.08;
@@ -4571,6 +4642,8 @@ export class HeavensGateEngine {
     while (rel < -Math.PI) rel += Math.PI * 2;
     actor.hitReactSide = Math.sin(rel);
     actor.hitReact = Math.max(actor.hitReact ?? 0, critical ? 0.5 : 0.3);
+    actor.lastHitAngle = toActor;
+    actor.lastHitCritical = critical;
     actor.materials.forEach((material) => {
       const original = material.emissive.clone();
       material.emissive.setHex(critical ? 0xffd98a : 0xa9382d);
@@ -4603,12 +4676,21 @@ export class HeavensGateEngine {
     if (actor.kind !== 'civilian' && !this.settings.reducedMotion) this.hitStop = Math.max(this.hitStop, actor.kind === 'boss' ? 0.22 : 0.085);
     const total = actor.kind === 'boss' ? 2.6 : actor.kind === 'drone' ? 1.15 : 1.6;
     actor.materials.forEach((material) => { material.transparent = true; });
+    // Directional fall: align the body so the Z-tip carries it along the
+    // incoming shot. Headshots snap back toward the shooter; body hits fall away.
+    if (actor.kind !== 'drone' && actor.lastHitAngle !== undefined) {
+      actor.group.rotation.y = actor.lastHitAngle + Math.PI / 2;
+    }
     (this.corpses ??= []).push({
       group: actor.group,
       materials: actor.materials,
       life: total,
       total,
-      tip: actor.kind === 'drone' ? 0 : (Math.PI / 2) * (seeded(actor.id.length, 311) > 0.5 ? 1 : -1),
+      tip: actor.kind === 'drone'
+        ? 0
+        : actor.lastHitAngle !== undefined
+          ? (actor.lastHitCritical ? -1 : 1) * Math.PI / 2
+          : (Math.PI / 2) * (seeded(actor.id.length, 311) > 0.5 ? 1 : -1),
     });
     this.spawnDrop(actor);
     if (actor.id.startsWith('warden-')) {
@@ -5342,6 +5424,12 @@ export class HeavensGateEngine {
       mesh.instanceMatrix.needsUpdate = true;
     }
     this.updateLitter(delta, time);
+    if (this.cloudLayer) {
+      this.cloudLayer.texture.offset.x = time * 0.0045;
+      this.cloudLayer.texture.offset.y = time * 0.0022;
+      const eye = this.currentVehicle?.group.position ?? this.player.position;
+      this.cloudLayer.mesh.position.set(eye.x, 165, eye.z);
+    }
     this.updateContactShadows();
     this.echoes.forEach((echo, index) => {
       if (echo.activated) return;
