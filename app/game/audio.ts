@@ -168,6 +168,25 @@ export class AudioEngine {
     if (this.intensity > 0.25 && this.scoreStep % 2 === 0) {
       this.noise(0.08, 0.018 + this.intensity * 0.025, 480, this.ambientBus);
     }
+    // Combat stem: a four-on-the-floor sub-kick subdivides each bar once the
+    // city is on you, with hat ticks slipping between beats at max intensity.
+    if (this.intensity > 0.55) {
+      const kickLevel = 0.05 + (this.intensity - 0.55) * 0.09;
+      for (let beat = 0; beat < 4; beat += 1) {
+        this.tone(52, 0.11, 'sine', kickLevel, beat * 0.46, this.ambientBus, 34);
+      }
+      if (this.intensity > 0.78) {
+        for (let tick = 0; tick < 4; tick += 1) {
+          this.noise(0.03, 0.02, 6800, this.ambientBus);
+          this.tone(7000, 0.025, 'square', 0.008, tick * 0.46 + 0.23, this.ambientBus);
+        }
+      }
+    }
+    // Calm stem: a high airy shimmer when nothing hunts you — the city breathing.
+    if (this.intensity < 0.18 && this.scoreStep % 2 === 0) {
+      this.tone(note * 4, 1.4, 'sine', 0.008, 0.1, this.ambientBus);
+      this.tone(note * 4 * 1.5, 1.2, 'sine', 0.005, 0.55, this.ambientBus);
+    }
   }
 
   setIntensity(intensity: number) {
@@ -254,9 +273,9 @@ export class AudioEngine {
 
   // Ambient pedestrian chatter — short filtered murmurs spatialized like
   // enemy shots so a conversation reads from the direction it happens in.
-  pedestrianBlip(source: SoundPosition, listener: SoundPosition, yaw: number) {
+  pedestrianBlip(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {
     if (!this.context || !this.effectsBus) return;
-    const mix = spatialGunshotMix(source, listener, yaw, false);
+    const mix = spatialGunshotMix(source, listener, yaw, occluded);
     const gain = Math.min(mix.gain * 0.5, 0.03);
     if (gain < 0.002) return;
     const pan = this.context.createStereoPanner();
@@ -265,7 +284,7 @@ export class AudioEngine {
     pan.pan.value = mix.pan * 0.7;
     master.gain.value = gain;
     filter.type = 'bandpass';
-    filter.frequency.value = 320 + Math.random() * 320;
+    filter.frequency.value = Math.min(320 + Math.random() * 320, mix.cutoff);
     filter.Q.value = 2.2;
     filter.connect(pan);
     pan.connect(master);
@@ -318,9 +337,9 @@ export class AudioEngine {
 
   // Traffic horn — the classic two-tone square blare, spatialized like
   // pedestrian chatter. Sometimes a double-tap when the driver is angry.
-  honk(source: SoundPosition, listener: SoundPosition, yaw: number) {
+  honk(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {
     if (!this.context || !this.effectsBus) return;
-    const mix = spatialGunshotMix(source, listener, yaw, false);
+    const mix = spatialGunshotMix(source, listener, yaw, occluded);
     const gain = Math.min(mix.gain * 0.9, 0.055);
     if (gain < 0.002) return;
     const pan = this.context.createStereoPanner();
@@ -329,7 +348,7 @@ export class AudioEngine {
     pan.pan.value = mix.pan * 0.8;
     master.gain.value = gain;
     filter.type = 'lowpass';
-    filter.frequency.value = 1600;
+    filter.frequency.value = Math.min(1600, mix.cutoff);
     filter.connect(pan);
     pan.connect(master);
     master.connect(this.effectsBus);

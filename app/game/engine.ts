@@ -2385,7 +2385,11 @@ export class HeavensGateEngine {
         if (car.blockedFor > 0.85 && car.honkTimer <= 0) {
           car.honkTimer = 3.5 + seeded(Math.floor(this.elapsed * 10) + Math.round(car.lane * 7), 96) * 4.5;
           car.blockedFor = 0;
-          this.audio.honk?.(position, playerPosition, this.cameraYaw);
+          const occluded = this.firstWorldObstruction(
+            this.tmpMove.copy(position).setY(1.4),
+            this.tmpActorFwd.copy(playerPosition).setY(1.6),
+          ) !== null;
+          this.audio.honk?.(position, playerPosition, this.cameraYaw, occluded);
         }
       } else {
         car.blockedFor = Math.max(0, car.blockedFor - delta * 2);
@@ -4558,7 +4562,13 @@ export class HeavensGateEngine {
           actor.vignetteTimer = (actor.vignetteTimer ?? seeded(actorIndex, 131) * 6) - delta;
           if (actor.vignetteTimer <= 0) {
             actor.vignetteTimer = 2.4 + seeded(actorIndex + Math.floor(time), 132) * 4.5;
-            if (distance < 42) this.audio.pedestrianBlip(actor.group.position, playerPosition, this.cameraYaw);
+            if (distance < 42) {
+              const occluded = this.firstWorldObstruction(
+                this.tmpMove.copy(actor.group.position).setY(1.5),
+                this.tmpActorFwd.copy(playerPosition).setY(1.6),
+              ) !== null;
+              this.audio.pedestrianBlip(actor.group.position, playerPosition, this.cameraYaw, occluded);
+            }
           }
           this.animateActor(actor, 0, delta);
         } else if (actor.vignette === 'run') {

@@ -134,6 +134,27 @@ function MiniMap({ snapshot, label, size = 164 }: { snapshot: MapSnapshot; label
       vehicle: '#7fb9c1',
       gate: '#c49b42',
     };
+    // Route line: a dashed gold thread from the player to the objective.
+    const playerPoint = snapshot.points.find((point) => point.kind === 'player');
+    const objectivePoint = snapshot.points.find((point) => point.kind === 'objective');
+    if (playerPoint && objectivePoint) {
+      const toPixel = (x: number, z: number) => [
+        ((x + snapshot.worldSize / 2) / snapshot.worldSize) * size,
+        ((z + snapshot.worldSize / 2) / snapshot.worldSize) * size,
+      ];
+      const [px, py] = toPixel(playerPoint.x, playerPoint.z);
+      const [ox, oy] = toPixel(objectivePoint.x, objectivePoint.z);
+      context.save();
+      context.strokeStyle = 'rgba(232, 201, 111, 0.55)';
+      context.lineWidth = 1.6;
+      context.setLineDash([5, 5]);
+      context.lineDashOffset = -6;
+      context.beginPath();
+      context.moveTo(px, py);
+      context.lineTo(ox, oy);
+      context.stroke();
+      context.restore();
+    }
     snapshot.points.forEach((point) => {
       const x = ((point.x + snapshot.worldSize / 2) / snapshot.worldSize) * size;
       const y = ((point.z + snapshot.worldSize / 2) / snapshot.worldSize) * size;
