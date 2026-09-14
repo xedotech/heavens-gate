@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "corrugated-iron-02",
+  "label": "Corrugated Iron 02",
+  "author": "Poly Haven",
+  "source": "https://polyhaven.com/a/corrugated_iron_02",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "sourceStandard": "https://docs.polyhaven.com/en/technical-standards/textures",
+  "acquisition": "Photo-based PBR material. Provider uses photogrammetry or photometric stereo; asset-specific capture method is not stated.",
+  "intendedUse": "Weathered sheet metal — rooftop water tanks and sheds",
+  "tileMeters": 1.4,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "1k": {
+      "albedo": {
+        "file": "corrugated-iron-02-albedo-1k-a54228f36b2a.webp",
+        "sha256": "a54228f36b2a43946823b09d62cda4f913d98eb5157477c1916c3b9febd04aef",
+        "bytes": 87310,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/corrugated_iron_02/corrugated_iron_02_diff_1k.jpg",
+        "sourceMd5": "0437ba7acc3a60e9a00245580ae7e10b",
+        "sourceSha256": "7a7b43099d015c1b08ebb175da5965caeae44b86de65a727b3fffa20a7c69a93"
+      },
+      "normal": {
+        "file": "corrugated-iron-02-normal-1k-2a5bef8dc1f3.webp",
+        "sha256": "2a5bef8dc1f33964701e1eb51d7c1264a4fa324120ea5f7f2d186d96e44b3d49",
+        "bytes": 718630,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/corrugated_iron_02/corrugated_iron_02_nor_gl_1k.jpg",
+        "sourceMd5": "e3a9b41f29a5dee9f0835bddb440efbd",
+        "sourceSha256": "9743c93668689c36a67e9c4dc8d6a0870fe91202f82dcdaf70ddc330c12f9ecb"
+      },
+      "arm": {
+        "file": "corrugated-iron-02-arm-1k-f9f70eeedab4.webp",
+        "sha256": "f9f70eeedab4ce1311bb777fa06a169d7c26b807fd632f6a93fe9a8e50dc3fea",
+        "bytes": 1428166,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/corrugated_iron_02/corrugated_iron_02_arm_1k.jpg",
+        "sourceMd5": "58d9a11932fae9f85d4cbcde4700abb2",
+        "sourceSha256": "da4197f5b3e199ef693082836ca803f9d5cad2b4998a1c1c3dc4ac384f93a890"
+      }
+    },
+    "2k": {
+      "albedo": {
+        "file": "corrugated-iron-02-albedo-2k-c59d440479b5.webp",
+        "sha256": "c59d440479b5babbc025089c27729990c1367d079a566023651f40732319ff76",
+        "bytes": 422076,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/corrugated_iron_02/corrugated_iron_02_diff_2k.jpg",
+        "sourceMd5": "88f0ec0310e41f408dd0092c8c53db58",
+        "sourceSha256": "1bd2b9900e066d7e6cbacc5093aa4204db71c1bbe13b42a3d8ad23d04fa8075a"
+      },
+      "normal": {
+        "file": "corrugated-iron-02-normal-2k-582069bc51af.webp",
+        "sha256": "582069bc51af4b986462d51b7f894f0bdd7ee51069f304bb0a44fd78b1181d76",
+        "bytes": 3982016,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/corrugated_iron_02/corrugated_iron_02_nor_gl_2k.jpg",
+        "sourceMd5": "7ce1e415161ddffdf06fb1f9a80bae5c",
+        "sourceSha256": "a7972360f64fb44beee57750b0ad6bee1f3b64268cd9f649b5e92e1de4de0632"
+      },
+      "arm": {
+        "file": "corrugated-iron-02-arm-2k-424d8a147286.webp",
+        "sha256": "424d8a14728625d004a501540675bbe97f18d386cd36bf2d3c3716612df00e14",
+        "bytes": 6163604,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/corrugated_iron_02/corrugated_iron_02_arm_2k.jpg",
+        "sourceMd5": "290894c6b9198558707e9ca713010f02",
+        "sourceSha256": "80ae7f8b9ff7521898049cb79b7cfb82a0bb95bf0cba312ffe1d0e5760f45dcb"
+      }
+    }
+  }
+}

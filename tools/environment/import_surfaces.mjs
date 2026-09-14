@@ -29,6 +29,16 @@ const catalog = [
     source: 'https://polyhaven.com/a/dark_brick_wall', author: 'Poly Haven',
     tileMeters: 2.2, role: 'Chapel exterior walls and Old Spine masonry',
   },
+  {
+    slug: 'metal-plate', asset: 'metal_plate', label: 'Metal Plate',
+    source: 'https://polyhaven.com/a/metal_plate', author: 'Poly Haven',
+    tileMeters: 1.0, role: 'Painted metal — HVAC units, kiosk bodies, bollards, benches',
+  },
+  {
+    slug: 'corrugated-iron-02', asset: 'corrugated_iron_02', label: 'Corrugated Iron 02',
+    source: 'https://polyhaven.com/a/corrugated_iron_02', author: 'Poly Haven',
+    tileMeters: 1.4, role: 'Weathered sheet metal — rooftop water tanks and sheds',
+  },
 ];
 const tiers = { '1k': 1024, '2k': 2048 };
 const mapSuffix = { albedo: 'diff', normal: 'nor_gl', arm: 'arm' };

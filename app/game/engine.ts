@@ -57,6 +57,7 @@ import { FrameTimeSampler } from './performance';
 import { createCheckpoint, normalizeSave } from './persistence';
 import { UPGRADES, marksForActor } from './upgrades';
 import { ScannedSurfaceMaterial } from './scanned-materials';
+import { loadVerifiedProp } from './props';
 import { visibleInScene, withoutSubtree } from './scene-lifecycle';
 import {
   INITIAL_HUD,
@@ -283,6 +284,8 @@ export class HeavensGateEngine {
   private scannedSurfaces: ScannedSurfaceMaterial[] = [];
   private chapelStone: THREE.MeshStandardMaterial | null = null;
   private chapelStoneDark: THREE.MeshStandardMaterial | null = null;
+  private propMetal: THREE.MeshStandardMaterial | null = null;
+  private propIron: THREE.MeshStandardMaterial | null = null;
   private effects: TimedEffect[] = [];
   private objectiveMarker: THREE.Group | null = null;
   private dust: THREE.Points | null = null;
@@ -397,6 +400,9 @@ export class HeavensGateEngine {
   private chapelVisited = false;
   private chapelInterior = false;
   private chapelCandles: THREE.PointLight[] = [];
+  private memorialZone: THREE.Box3 | null = null;
+  private memorialMesh: THREE.Object3D | null = null;
+  private memorialVisited = false;
   private peekLean = 0;
   private shoulderSide = 1;
   private shoulderOffset = 0.78;
@@ -635,6 +641,7 @@ export class HeavensGateEngine {
       this.createGatesAndEchoes();
       this.createObjectiveMarker();
       this.createChapel();
+      this.createMemorial();
       this.createContactShadows();
       await this.nextFrame();
       this.callbacks.onLoadProgress(1, 'The city remembers');
@@ -822,9 +829,23 @@ export class HeavensGateEngine {
       aoIntensity: 0.8,
       fallback: { color: 0x2e2c2a, roughness: 0.9, metalness: 0.05 },
     });
+    const propMetalLoader = new ScannedSurfaceMaterial('/assets/environment/metal-plate/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Metal'), {
+      repeat: [1.6, 1.6],
+      tint: 0x8a9198,
+      aoIntensity: 0.55,
+      fallback: { color: 0x39424a, roughness: 0.46, metalness: 0.5 },
+    });
+    const propIronLoader = new ScannedSurfaceMaterial('/assets/environment/corrugated-iron-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Iron'), {
+      repeat: [2.4, 2.4],
+      tint: 0x7a6a5c,
+      aoIntensity: 0.7,
+      fallback: { color: 0x4c3a2c, roughness: 0.7, metalness: 0.34 },
+    });
+    this.propMetal = propMetalLoader.material;
+    this.propIron = propIronLoader.material;
     this.chapelStoneDark = chapelFloor.material;
     this.chapelStone = chapelBrick.material;
-    this.scannedSurfaces = [this.scannedGround, scannedRoad, scannedFacade, chapelFloor, chapelBrick];
+    this.scannedSurfaces = [this.scannedGround, scannedRoad, scannedFacade, chapelFloor, chapelBrick, propMetalLoader, propIronLoader];
     this.scannedSurfaces.forEach((surface) => surface.setQuality(this.settings.quality));
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE), this.scannedGround.material);
     ground.rotation.x = -Math.PI / 2;
@@ -1385,8 +1406,8 @@ export class HeavensGateEngine {
       }
     });
     const dark = new THREE.MeshStandardMaterial({ color: 0x1a1e20, roughness: 0.52, metalness: 0.62 });
-    const metal = new THREE.MeshStandardMaterial({ color: 0x39424a, roughness: 0.46, metalness: 0.5 });
-    const rust = new THREE.MeshStandardMaterial({ color: 0x4c3a2c, roughness: 0.7, metalness: 0.34 });
+    const metal = this.propMetal ?? new THREE.MeshStandardMaterial({ color: 0x39424a, roughness: 0.46, metalness: 0.5 });
+    const rust = this.propIron ?? new THREE.MeshStandardMaterial({ color: 0x4c3a2c, roughness: 0.7, metalness: 0.34 });
     const beaconMaterial = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 0.4, 0.3) });
     const matrix = new THREE.Matrix4();
     const quaternion = new THREE.Quaternion();
@@ -1447,9 +1468,9 @@ export class HeavensGateEngine {
         }
       }
     }
-    const bollardMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.42, metalness: 0.68 });
+    const bollardMaterial = this.propMetal ?? new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.42, metalness: 0.68 });
     const planterMaterial = new THREE.MeshStandardMaterial({ color: 0x22312a, roughness: 0.8, metalness: 0.08 });
-    const kioskBody = new THREE.MeshStandardMaterial({ color: 0x1d2326, roughness: 0.44, metalness: 0.55 });
+    const kioskBody = this.propMetal ?? new THREE.MeshStandardMaterial({ color: 0x1d2326, roughness: 0.44, metalness: 0.55 });
     const kioskScreen = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.6, 1.7, 2.1) });
     const matrix = new THREE.Matrix4();
     const quaternion = new THREE.Quaternion();
@@ -2857,6 +2878,43 @@ export class HeavensGateEngine {
     );
   }
 
+  // The Memorial Obelisk — a genuine photogrammetry reconstruction standing
+  // in the chapel clearing. Loads async; the clearing is valid without it.
+  private createMemorial() {
+    const mx = -69;
+    const mz = 55.5;
+    this.memorialZone = new THREE.Box3(
+      new THREE.Vector3(mx - 4.5, -1, mz - 4.5),
+      new THREE.Vector3(mx + 4.5, 7, mz + 4.5),
+    );
+    void loadVerifiedProp('memorial-obelisk').then((prop) => {
+      if (this.disposed) { prop.traverse((o) => { if (o instanceof THREE.Mesh) o.geometry.dispose(); }); return; }
+      const bounds = new THREE.Box3().setFromObject(prop);
+      const size = new THREE.Vector3();
+      bounds.getSize(size);
+      const scale = 5.2 / Math.max(size.y, 0.01);
+      prop.scale.setScalar(scale);
+      bounds.setFromObject(prop);
+      prop.position.set(mx - (bounds.min.x + bounds.max.x) / 2, -bounds.min.y, mz - (bounds.min.z + bounds.max.z) / 2);
+      prop.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.castShadow = this.settings.quality === 'high';
+          node.receiveShadow = true;
+          node.userData.blocksShot = true;
+          this.rayTargets.push(node);
+        }
+      });
+      this.scene.add(prop);
+      this.memorialMesh = prop;
+      this.collisionBoxes.push(new THREE.Box3(
+        new THREE.Vector3(mx - 0.85, 0, mz - 0.85),
+        new THREE.Vector3(mx + 0.85, 5.4, mz + 0.85),
+      ));
+    }).catch(() => {
+      // The clearing stands without the memorial if the asset can't verify.
+    });
+  }
+
   private updateChapel() {
     // Candle flames breathe even before the player finds the chapel.
     this.chapelCandles?.forEach((flame, index) => {
@@ -2872,6 +2930,16 @@ export class HeavensGateEngine {
     if (!inside || this.chapelVisited) return;
     this.chapelVisited = true;
     this.emitSubtitle('The Archivist', 'The Unburied Chapel. The Choir burned the records — the candles remember anyway.');
+    this.audio.whisperBlip?.();
+    this.audio.ui(true);
+  }
+
+  private updateMemorial() {
+    if (!this.memorialZone || !this.memorialMesh || this.memorialVisited || !this.player) return;
+    const position = this.currentVehicle?.group.position ?? this.player.position;
+    if (!this.memorialZone.containsPoint(position)) return;
+    this.memorialVisited = true;
+    this.emitSubtitle('The Archivist', 'The Memorial Obelisk — raised from photographs alone. The city keeps what the light remembers.');
     this.audio.whisperBlip?.();
     this.audio.ui(true);
   }
@@ -3254,6 +3322,7 @@ export class HeavensGateEngine {
     this.updateCharges(delta);
     this.updateCasings(delta);
     this.updateChapel();
+    this.updateMemorial();
     this.updateVeil(delta);
     this.updateWeaponSway(delta);
     this.updateEffects(delta);

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "props": [
+    {
+      "id": "memorial-obelisk",
+      "file": "memorial-obelisk.glb",
+      "sha256": "57acdf04d066a13471ef9e21cc8abc78b4af139aa43076163def456dc6097d03",
+      "bytes": 3844992,
+      "source": "local photogrammetry pipeline (tools/photogrammetry) — COLMAP SfM + OpenMVS mesh/texture from a synthetic orbit capture",
+      "provenance": "synthetic self-test reconstruction",
+      "heightMeters": 5.2
+    }
+  ]
+}
