@@ -310,6 +310,7 @@ export class HeavensGateEngine {
   private objectiveMarker: THREE.Group | null = null;
   private dust: THREE.Points | null = null;
   private sun: THREE.DirectionalLight | null = null;
+  private sunTarget: THREE.Object3D | null = null;
   private stormLight: THREE.DirectionalLight | null = null;
   private lightningTimer = 9;
   private lightningFlash = 0;
@@ -709,13 +710,19 @@ export class HeavensGateEngine {
     this.sun.position.set(-84, 116, 58);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
-    this.sun.shadow.camera.left = -86;
-    this.sun.shadow.camera.right = 86;
-    this.sun.shadow.camera.top = 86;
-    this.sun.shadow.camera.bottom = -86;
+    this.sun.shadow.camera.left = -64;
+    this.sun.shadow.camera.right = 64;
+    this.sun.shadow.camera.top = 64;
+    this.sun.shadow.camera.bottom = -64;
     this.sun.shadow.camera.near = 1;
     this.sun.shadow.camera.far = 260;
     this.scene.add(this.sun);
+    // The shadow frustum follows the player — a fixed 172 m window meant
+    // half the city never cast a shadow. Snapping to a 4 m grid keeps
+    // texel shimmer inaudible while the window slides.
+    this.sunTarget = new THREE.Object3D();
+    this.scene.add(this.sunTarget);
+    this.sun.target = this.sunTarget;
 
     const rim = new THREE.DirectionalLight(0x7fa6c8, 2.1);
     rim.position.set(70, 34, -90);
@@ -5852,6 +5859,13 @@ export class HeavensGateEngine {
     this.updateVeilMotes(time);
     this.updateBreadcrumb(time);
     this.updateSearchlight(delta, time);
+    if (this.sun && this.sunTarget) {
+      const focus = this.currentVehicle?.group.position ?? this.player.position;
+      const sx = Math.round(focus.x / 4) * 4;
+      const sz = Math.round(focus.z / 4) * 4;
+      this.sunTarget.position.set(sx, 0, sz);
+      this.sun.position.set(sx - 84, 116, sz + 58);
+    }
     this.updateContactShadows();
     this.echoes.forEach((echo, index) => {
       if (echo.activated) return;
