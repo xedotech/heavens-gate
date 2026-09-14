@@ -335,6 +335,7 @@ export class HeavensGateEngine {
   private chargeVelocity = new THREE.Vector3();
   private cameraForward = new THREE.Vector3();
   private tmpToPlayer = new THREE.Vector3();
+  private readonly tmpScale = new THREE.Vector3();
   private tmpPlayerDir = new THREE.Vector3();
   private tmpActorFwd = new THREE.Vector3();
   private tmpDestination = new THREE.Vector3();
@@ -370,6 +371,8 @@ export class HeavensGateEngine {
   private hitStop = 0;
   private rain: { mesh: THREE.InstancedMesh; drops: Float32Array; count: number } | null = null;
   private cloudLayer: { mesh: THREE.Mesh; texture: THREE.CanvasTexture } | null = null;
+  private veilMotes: { mesh: THREE.InstancedMesh; seeds: Float32Array; count: number } | null = null;
+  private breadcrumb: { mesh: THREE.InstancedMesh; count: number } | null = null;
   private corpses: Corpse[] = [];
   private drops: DropPickup[] = [];
   private envMapTexture: THREE.Texture | null = null;
@@ -655,6 +658,8 @@ export class HeavensGateEngine {
       this.createTraffic();
       this.createRain();
       this.createCloudLayer();
+      this.createVeilMotes();
+      this.createBreadcrumb();
       this.createActors();
       await this.nextFrame();
       this.callbacks.onLoadProgress(0.76, 'Tuning the gates');
@@ -2373,6 +2378,95 @@ export class HeavensGateEngine {
     this.cloudLayer = { mesh, texture };
   }
 
+  // Dust motes suspended in the Veil — the Void sells itself on particles
+  // hanging wrong in the air. Visible only while the Veil is open.
+  private createVeilMotes() {
+    const count = 150;
+    const geometry = new THREE.SphereGeometry(0.022, 6, 4);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x9a7ad8,
+      transparent: true,
+      opacity: 0.5,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const mesh = new THREE.InstancedMesh(geometry, material, count);
+    mesh.frustumCulled = false;
+    mesh.visible = false;
+    const seeds = new Float32Array(count * 4);
+    for (let i = 0; i < count; i += 1) {
+      seeds[i * 4] = seeded(i, 160) * Math.PI * 2;
+      seeds[i * 4 + 1] = 1.5 + seeded(i, 161) * 13;
+      seeds[i * 4 + 2] = seeded(i, 162) * Math.PI * 2;
+      seeds[i * 4 + 3] = 0.35 + seeded(i, 163) * 1.4;
+    }
+    this.scene.add(mesh);
+    this.veilMotes = { mesh, seeds, count };
+  }
+
+  // Dotted guidance line from the player to the active objective.
+  private createBreadcrumb() {
+    const count = 22;
+    const geometry = new THREE.SphereGeometry(0.16, 8, 6);
+    const material = new THREE.MeshBasicMaterial({ color: 0xd8b46a, transparent: true, opacity: 0.6, depthWrite: false });
+    const mesh = new THREE.InstancedMesh(geometry, material, count);
+    mesh.frustumCulled = false;
+    mesh.visible = false;
+    this.scene.add(mesh);
+    this.breadcrumb = { mesh, count };
+  }
+
+  private updateVeilMotes(time: number) {
+    if (!this.veilMotes) return;
+    this.veilMotes.mesh.visible = this.veilActive;
+    if (!this.veilActive) return;
+    const center = this.player.position;
+    const { mesh, seeds, count } = this.veilMotes;
+    const m = this.rainMatrix;
+    for (let i = 0; i < count; i += 1) {
+      const angle = seeds[i * 4] + time * 0.06 * seeds[i * 4 + 3];
+      const radius = seeds[i * 4 + 1];
+      const bob = seeds[i * 4 + 2];
+      m.makeTranslation(
+        center.x + Math.cos(angle) * radius,
+        0.5 + (Math.sin(bob + time * 0.5) * 0.5 + 0.5) * 3.4,
+        center.z + Math.sin(angle) * radius,
+      );
+      mesh.setMatrixAt(i, m);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private updateBreadcrumb(time: number) {
+    if (!this.breadcrumb || !this.objectiveMarker?.visible) {
+      if (this.breadcrumb) this.breadcrumb.mesh.visible = false;
+      return;
+    }
+    const target = this.objectiveMarker.position;
+    const from = this.currentVehicle?.group.position ?? this.player.position;
+    const distance = distance2D(from.x, from.z, target.x, target.z);
+    if (distance < 10 || distance > 260) {
+      this.breadcrumb.mesh.visible = false;
+      return;
+    }
+    this.breadcrumb.mesh.visible = true;
+    const { mesh, count } = this.breadcrumb;
+    const m = this.rainMatrix;
+    // A wave of brightness travels along the dots toward the objective.
+    const travel = (time * 0.9) % 1;
+    for (let i = 0; i < count; i += 1) {
+      const t = (i + 1) / (count + 1);
+      const x = from.x + (target.x - from.x) * t;
+      const z = from.z + (target.z - from.z) * t;
+      const y = 0.5 + Math.sin(t * Math.PI) * Math.min(2.2, distance * 0.02);
+      const pulse = 1 - Math.abs(t - travel) * 6;
+      m.makeTranslation(x, y, z);
+      m.scale(this.tmpScale.setScalar(0.6 + Math.max(0, pulse) * 0.8));
+      mesh.setMatrixAt(i, m);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
   private static readonly VEHICLE_SPECS: Record<string, VehicleSpec> = {
     // Seraph sedan — the baseline: balanced speed and forgiveness.
     seraph: { name: 'Seraph sedan', top: 38, boost: 48, accel: 2.7, steer: 1.42, damageScale: 1 },
@@ -3798,6 +3892,12 @@ export class HeavensGateEngine {
 
     this.player.rotation.y = smoothHeading(this.player.rotation.y, this.playerHeading, delta);
     const movement = Math.hypot(this.playerVelocity.x, this.playerVelocity.z);
+    // Turn-in-place: stationary but the body is still catching up to the
+    // desired heading — walk reads as a shuffle-step instead of a pivot slide.
+    let headingError = this.playerHeading - this.player.rotation.y;
+    while (headingError > Math.PI) headingError -= Math.PI * 2;
+    while (headingError < -Math.PI) headingError += Math.PI * 2;
+    const turningInPlace = movement <= 0.7 && Math.abs(headingError) > 0.42 && this.grounded;
     this.heroCharacter?.setMotion(
       !this.grounded
         ? 'jump'
@@ -3809,7 +3909,7 @@ export class HeavensGateEngine {
               ? 'crouch'
               : movement > 8
                 ? 'run'
-                : movement > 0.7
+                : movement > 0.7 || turningInPlace
                   ? 'walk'
                   : 'idle',
     );
@@ -5430,6 +5530,8 @@ export class HeavensGateEngine {
       const eye = this.currentVehicle?.group.position ?? this.player.position;
       this.cloudLayer.mesh.position.set(eye.x, 165, eye.z);
     }
+    this.updateVeilMotes(time);
+    this.updateBreadcrumb(time);
     this.updateContactShadows();
     this.echoes.forEach((echo, index) => {
       if (echo.activated) return;
