@@ -1206,6 +1206,21 @@ kbd {
   45% { filter: brightness(1.35); }
 }
 
+/* Hit-stop beat: a bright edge-flash that sells the time dilation on heavy
+   impacts — chromatic-adjacent cool rim, gone in ~120ms. */
+.hitstop-beat {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, transparent 55%, rgba(186, 216, 255, 0.32) 100%);
+  animation: hitstop-beat 0.12s ease-out both;
+}
+
+@keyframes hitstop-beat {
+  0% { opacity: 0.9; }
+  100% { opacity: 0.35; }
+}
+
 .veil-overlay {
   position: absolute;
   inset: 0;

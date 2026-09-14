@@ -130,6 +130,7 @@ export interface HUDState {
   hitDamageSeq: number;
   reloading: boolean;
   damageFlash: number;
+  hitStop: boolean;
   damageDirection: number | null;
   bossHealth: number | null;
   cinematic: boolean;
@@ -284,6 +285,7 @@ export const INITIAL_HUD: HUDState = {
   hitDamageSeq: 0,
   reloading: false,
   damageFlash: 0,
+  hitStop: false,
   damageDirection: null,
   bossHealth: null,
   cinematic: false,

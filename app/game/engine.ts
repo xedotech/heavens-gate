@@ -356,6 +356,7 @@ export class HeavensGateEngine {
   private tmpMove = new THREE.Vector3();
   private tmpPrevPos = new THREE.Vector3();
   private tmpShotSeg = new THREE.Vector3();
+  private tmpColor = new THREE.Color();
   private contactShadows: THREE.InstancedMesh | null = null;
   private contactShadowMatrix = new THREE.Matrix4();
   private contactShadowPosition = new THREE.Vector3();
@@ -381,6 +382,7 @@ export class HeavensGateEngine {
   private cinematic: MissionCinematic | null = null;
   private hitStop = 0;
   private rain: { mesh: THREE.InstancedMesh; drops: Float32Array; count: number } | null = null;
+  private rainSplash: { mesh: THREE.InstancedMesh; ages: Float32Array; spots: Float32Array; count: number } | null = null;
   private cloudLayer: { mesh: THREE.Mesh; texture: THREE.CanvasTexture } | null = null;
   private veilMotes: { mesh: THREE.InstancedMesh; seeds: Float32Array; count: number } | null = null;
   private breadcrumb: { mesh: THREE.InstancedMesh; count: number } | null = null;
@@ -672,6 +674,7 @@ export class HeavensGateEngine {
       this.createVehicles();
       this.createTraffic();
       this.createRain();
+      this.createRainSplashes();
       this.createCloudLayer();
       this.createVeilMotes();
       this.createBreadcrumb();
@@ -2545,6 +2548,36 @@ export class HeavensGateEngine {
     this.rain = { mesh, drops, count };
   }
 
+  /** Ground-level rain: expanding rings where drops strike the street. */
+  private createRainSplashes() {
+    const count = 44;
+    const geometry = new THREE.RingGeometry(0.34, 0.5, 12);
+    geometry.rotateX(-Math.PI / 2);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x9ec2de,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.InstancedMesh(geometry, material, count);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    const ages = new Float32Array(count);
+    const spots = new Float32Array(count * 2);
+    const color = new THREE.Color();
+    for (let i = 0; i < count; i += 1) {
+      ages[i] = seeded(i, 210) * 0.55;
+      this.rainMatrix.makeTranslation(0, -10, 0);
+      mesh.setMatrixAt(i, this.rainMatrix);
+      mesh.setColorAt(i, color.setScalar(0));
+    }
+    if (mesh.instanceColor) mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    mesh.visible = this.settings.quality !== 'low';
+    this.scene.add(mesh);
+    this.rainSplash = { mesh, ages, spots, count };
+  }
+
   // A low storm shelf scrolling overhead — cheap sky detail that reads as
   // moving weather instead of a static gradient dome.
   private createCloudLayer() {
@@ -3457,6 +3490,7 @@ export class HeavensGateEngine {
       this.bloomPass.threshold = 0.82;
     }
     if (this.rain) this.rain.mesh.visible = this.settings.quality !== 'low';
+    if (this.rainSplash) this.rainSplash.mesh.visible = this.settings.quality !== 'low';
     this.audio.setRainBed(this.settings.quality !== 'low');
     this.scannedSurfaces.forEach((surface) => surface.setQuality(this.settings.quality));
     this.resize();
@@ -5797,7 +5831,13 @@ export class HeavensGateEngine {
     if (this.currentVehicle) prompt = { action: interact, label: 'Exit Seraph' };
     else {
       const vehicle = this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
-      if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.id.startsWith('seraph') ? 'Seraph' : 'Morrow'}` };
+      if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.spec.name}` };
+      if (!prompt && this.chapelZone?.containsPoint(this.player.position) && this.elapsed - this.lastAltarAt > 12) {
+        const altar = this.chapelZone.getCenter(this.tmpMove).add(new THREE.Vector3(-4.4, 0, 0));
+        if (Math.hypot(this.player.position.x - altar.x, this.player.position.z - altar.z) < 2.8) {
+          prompt = { action: interact, label: 'Kneel at the Altar' };
+        }
+      }
       const echo = this.echoes.find((candidate) => !candidate.activated && candidate.group.position.distanceTo(this.player.position) < 5);
       if (echo) prompt = this.veilActive
         ? { action: interact, label: 'Restore Memory Echo' }
@@ -5896,6 +5936,7 @@ export class HeavensGateEngine {
       },
       reloading: this.reloading > 0,
       damageFlash: this.damageFlash,
+      hitStop: this.hitStop > 0,
       damageDirection: this.damageDirection,
       bossHealth: this.boss?.alive ? clamp(this.boss.health / this.boss.maxHealth, 0, 1) : null,
       cinematic: Boolean(this.cinematic),
@@ -5965,6 +6006,26 @@ export class HeavensGateEngine {
         mesh.setMatrixAt(i, this.rainMatrix);
       }
       mesh.instanceMatrix.needsUpdate = true;
+    }
+    if (this.rainSplash && this.rainSplash.mesh.visible) {
+      const center = this.currentVehicle?.group.position ?? this.player.position;
+      const { ages, spots, count: splashCount, mesh: splashMesh } = this.rainSplash;
+      const color = this.tmpColor;
+      for (let i = 0; i < splashCount; i += 1) {
+        ages[i] += delta;
+        if (ages[i] > 0.55) {
+          ages[i] = 0;
+          spots[i * 2] = center.x + (seeded(i, Math.floor(time * 7) + 11) - 0.5) * 34;
+          spots[i * 2 + 1] = center.z + (seeded(i, Math.floor(time * 7) + 23) - 0.5) * 34;
+        }
+        const spread = 0.3 + ages[i] * 3.4;
+        this.rainMatrix.makeScale(spread, 1, spread);
+        this.rainMatrix.setPosition(spots[i * 2], 0.03, spots[i * 2 + 1]);
+        splashMesh.setMatrixAt(i, this.rainMatrix);
+        splashMesh.setColorAt(i, color.setScalar(Math.max(0, 1 - ages[i] / 0.55) * 0.4));
+      }
+      splashMesh.instanceMatrix.needsUpdate = true;
+      if (splashMesh.instanceColor) splashMesh.instanceColor.needsUpdate = true;
     }
     this.updateLitter(delta, time);
     if (this.cloudLayer) {

@@ -657,6 +657,7 @@ export default function GameShell() {
           )}
           {hud.veilActive && <div className="veil-overlay" aria-hidden="true"><i /><i /></div>}
           <div className={`damage-vignette${hud.lowHealth ? ' low-health' : ''}`} style={{ opacity: hud.damageFlash }} aria-hidden="true" />
+          {hud.hitStop && <div className="hitstop-beat" aria-hidden="true" />}
           {hud.damageDirection !== null && (
             <div
               className="hit-direction"
