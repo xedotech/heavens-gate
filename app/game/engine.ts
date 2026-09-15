@@ -103,6 +103,8 @@ interface Actor {
   overwatchAim?: boolean;
   /** Facing a posted enemy eases back to while it holds the line. */
   spawnYaw?: number;
+  /** Flee heading override — released civilians run the exit lane, not just away. */
+  fleeHeading?: number;
   vignetteTimer?: number;
   hitReact?: number;
   hitReactSide?: number;
@@ -300,6 +302,27 @@ const CORDON_CONE_RANGE = 24;
 const CORDON_CONE_HALF_ANGLE = 0.62;
 const CORDON_HEAT_RATE = 2.1;
 const CORDON_SPAWN_DELAY = 12;
+
+// Beat E's speaker exchange — Vox makes the cordon a civic order before the
+// rifles open up. Queued once on the cordon's first commitment.
+const CORDON_VOX_LINES: Array<[string, string]> = [
+  ['Vox', 'Station personnel, leave through the north exit. Courier, put the receipt on the ground.'],
+  ['Aurel', 'It’s paper.'],
+  ['Vox', 'Then you won’t mind letting it go.'],
+];
+// The north-exit release: a lit lever post on the cordon's street side beside
+// the east barrier; the hinged door behind it is what holds people in.
+const EXIT_RELEASE_POST = { x: 4.35, z: -42.55 };
+const EXIT_RELEASE_DOOR = { x: 4.55, z: -43.35, w: 1.8, h: 1.9, yaw: -0.08 };
+const EXIT_RELEASE_RANGE = 3.1;
+const EXIT_RELEASE_CIVILIANS = 4;
+// Beat F — a held breath after the cordon resolves, then the fracture.
+const AFTERMATH_QUIET = 6;
+const AFTERMATH_LINES: Array<[string, string]> = [
+  ['Aurel', 'What did I just carry into that station?'],
+  ['Nia', 'A way into the records.'],
+  ['Aurel', 'That wasn’t the question.'],
+];
 
 export class HeavensGateEngine {
   readonly audio = new AudioEngine();
@@ -552,7 +575,7 @@ export class HeavensGateEngine {
   // are per-session timers so the bell beat can never double-fire.
   private sena: Actor | null = null;
   private senaLamp: THREE.Vector3 | null = null;
-  private narrative: { senaDelivered?: boolean; senaAsked?: boolean; cordonSeen?: boolean } = {};
+  private narrative: NonNullable<SaveState['narrative']> = {};
   private senaChoiceOpen = false;
   private senaChoiceAt = 0;
   private senaChoiceDeadline = 0;
@@ -573,6 +596,19 @@ export class HeavensGateEngine {
   private cordonTellCooldown = 0;
   private cordonConeGeometry: THREE.CircleGeometry | null = null;
   private breadcrumbTarget: THREE.Vector3 | null = null;
+  // The north-exit release prop plus the once-only cost/aftermath timers —
+  // per-session state; the persisted bits are exitReleased/aftermathHeard.
+  private exitRelease: {
+    group: THREE.Group;
+    doorPivot: THREE.Object3D;
+    lamp: THREE.MeshStandardMaterial;
+    collider: THREE.Box3;
+    opening: boolean;
+    open: number;
+  } | null = null;
+  private exitCostAt: number | null = null;
+  private aftermathAt: number | null = null;
+  private cordonResolved = false;
 
   private hudTimer = 0;
   private fpsTimer = 0;
@@ -4466,6 +4502,9 @@ export class HeavensGateEngine {
     this.cordonPassed = false;
     this.cordonTellCooldown = 0;
     this.breadcrumbTarget = null;
+    this.exitCostAt = null;
+    this.aftermathAt = null;
+    this.cordonResolved = false;
     if (this.missionIndex === 0 && this.narrative?.cordonSeen === true) this.spawnCordon(false);
     this.echoes.forEach((echo) => {
       echo.activated = this.echoesActivated.has(echo.id);
@@ -5598,7 +5637,11 @@ export class HeavensGateEngine {
         const threatened = !posted && (actor.flee > 0 || (this.heat > 12 && distance < 22));
         if (threatened) {
           actor.flee = Math.max(actor.flee, 3.5);
-          const away = this.tmpMove.copy(actor.group.position).sub(playerPosition).setY(0).normalize();
+          // A set heading wins over panic direction — the released civilians
+          // take the north lane out instead of just scattering from Aurel.
+          const away = actor.fleeHeading !== undefined
+            ? this.tmpMove.set(Math.sin(actor.fleeHeading), 0, Math.cos(actor.fleeHeading))
+            : this.tmpMove.copy(actor.group.position).sub(playerPosition).setY(0).normalize();
           this.moveActor(actor, away, actor.speed * 2.25, delta);
           actor.flee -= delta;
         } else if (posted) {
@@ -6568,6 +6611,10 @@ export class HeavensGateEngine {
       this.startSenaDelivery();
       return;
     }
+    if (this.exitReleaseInRange()) {
+      this.pullExitRelease();
+      return;
+    }
     const nearbyVehicle = this.vehicles
       .filter((vehicle) => !vehicle.occupied)
       .sort((a, b) => a.group.position.distanceTo(this.player.position) - b.group.position.distanceTo(this.player.position))[0];
@@ -6765,6 +6812,9 @@ export class HeavensGateEngine {
     if (this.currentVehicle) prompt = { action: interact, label: 'Exit Seraph' };
     else {
       if (this.senaInRange()) prompt = { action: interact, label: 'Talk to Sena' };
+      // The exit release only exists while the cordon stands — and only
+      // honestly while Sena's choice isn't borrowing the interact key.
+      if (!prompt && this.exitReleaseInRange()) prompt = { action: interact, label: 'Pull the exit release' };
       const vehicle = prompt ? undefined : this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
       if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.spec.name}` };
       if (!prompt && this.elapsed - this.lastAltarAt > 12) {
@@ -6982,6 +7032,7 @@ export class HeavensGateEngine {
       if (this.cordonGeneration !== generation) this.dropCordonProps(props);
     });
     this.breadcrumbTarget = new THREE.Vector3(CORDON_FLANK.x, 0, CORDON_FLANK.z);
+    this.spawnExitRelease();
     if (radio) {
       // Queued past the bell replies so the radio beat never clips them.
       const base = this.settings?.reducedMotion ? 6600 : 4300;
@@ -6990,6 +7041,123 @@ export class HeavensGateEngine {
       (this.narrative ??= {}).cordonSeen = true;
       this.saveCheckpoint();
     }
+  }
+
+  // Beat E's other half — the lit exit release on the cordon's north face:
+  // a lever post the prompt can name, and the holding door it frees. Cheap
+  // geometry so it dies with the cordon; a re-pulled save rebuilds it open.
+  private spawnExitRelease() {
+    if (!this.scene || this.exitRelease) return;
+    const released = this.narrative?.exitReleased === true;
+    const group = new THREE.Group();
+    const post = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16, 1.18, 0.16),
+      new THREE.MeshStandardMaterial({ color: 0x272b2d, roughness: 0.48, metalness: 0.72 }),
+    );
+    post.position.set(EXIT_RELEASE_POST.x, 0.59, EXIT_RELEASE_POST.z);
+    const lamp = new THREE.MeshStandardMaterial({
+      color: 0xd8b46a, emissive: 0xe8a34c, emissiveIntensity: released ? 0.6 : 2.4, roughness: 0.3, metalness: 0.3,
+    });
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.2), lamp);
+    head.position.set(EXIT_RELEASE_POST.x, 1.26, EXIT_RELEASE_POST.z);
+    head.rotation.x = -0.42;
+    // The holding door — hinged on its east edge, swings south when freed.
+    const doorPivot = new THREE.Group();
+    doorPivot.position.set(EXIT_RELEASE_DOOR.x + EXIT_RELEASE_DOOR.w / 2, 0, EXIT_RELEASE_DOOR.z);
+    doorPivot.rotation.y = EXIT_RELEASE_DOOR.yaw - (released ? 1.85 : 0);
+    const doorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x3a4143, roughness: 0.42, metalness: 0.78, emissive: 0x18211f, emissiveIntensity: 0.5,
+    });
+    const door = new THREE.Mesh(new THREE.BoxGeometry(EXIT_RELEASE_DOOR.w, EXIT_RELEASE_DOOR.h, 0.1), doorMaterial);
+    door.position.set(-EXIT_RELEASE_DOOR.w / 2, EXIT_RELEASE_DOOR.h / 2, 0);
+    // A lit strip along the top edge — powered hardware, not scrap.
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(EXIT_RELEASE_DOOR.w - 0.24, 0.06, 0.12), lamp);
+    strip.position.set(-EXIT_RELEASE_DOOR.w / 2, EXIT_RELEASE_DOOR.h - 0.12, 0);
+    doorPivot.add(door, strip);
+    group.add(post, head, doorPivot);
+    group.traverse((child) => { child.userData.surfaceKind = 'metal'; });
+    this.scene.add(group);
+    const collider = new THREE.Box3(
+      new THREE.Vector3(EXIT_RELEASE_DOOR.x - 1.0, 0, EXIT_RELEASE_DOOR.z - 0.3),
+      new THREE.Vector3(EXIT_RELEASE_DOOR.x + 1.0, EXIT_RELEASE_DOOR.h, EXIT_RELEASE_DOOR.z + 0.3),
+    );
+    if (!released) (this.collisionBoxes ??= []).push(collider);
+    this.exitRelease = { group, doorPivot, lamp, collider, opening: false, open: released ? 1 : 0 };
+  }
+
+  private exitReleaseInRange() {
+    const release = this.exitRelease;
+    if (!release || release.opening || release.open > 0) return false;
+    if (this.senaChoiceOpen === true) return false;
+    if (!(this.cordonPatrol ?? []).some((actor) => actor.alive)) return false;
+    const position = this.player?.position;
+    if (!position) return false;
+    return distance2D(position.x, position.z, EXIT_RELEASE_POST.x, EXIT_RELEASE_POST.z) < EXIT_RELEASE_RANGE;
+  }
+
+  // One pull does the whole beat: the caption names what the cordon is
+  // doing, the klaxon answers, the door swings, the held civilians take the
+  // north lane out. `exitReleased` is written once — before the checkpoint.
+  private pullExitRelease() {
+    const release = this.exitRelease;
+    const narrative = (this.narrative ??= {});
+    if (!release || narrative.exitReleased) return;
+    narrative.exitReleased = true;
+    release.opening = true;
+    this.collisionBoxes = (this.collisionBoxes ?? []).filter((box) => box !== release.collider);
+    this.audio.klaxon?.(
+      { x: EXIT_RELEASE_POST.x, y: 1.3, z: EXIT_RELEASE_POST.z },
+      this.camera?.position ?? { x: 0, y: 1.6, z: 0 },
+      this.cameraYaw ?? 0,
+    );
+    this.emitSubtitle('Nia', 'The north exit is locked. They’ve left people in there.');
+    this.emitToast('North exit released', 'The holding door is open', 'success');
+    // The crowd steps out a beat behind the klaxon so the door reads as the
+    // cause — then Aurel's send-off lands after Nia's line clears.
+    const timeout = setTimeout(() => {
+      this.releaseCordonCivilians();
+      this.queueSubtitle('Aurel', 'Go. North side.', 2400);
+      (this.timeouts ??= new Set()).delete(timeout);
+    }, 900);
+    (this.timeouts ??= new Set()).add(timeout);
+    this.saveCheckpoint();
+  }
+
+  private releaseCordonCivilians() {
+    if (!this.scene) return;
+    for (let i = 0; i < EXIT_RELEASE_CIVILIANS; i += 1) {
+      const civilian = this.addActor(
+        `citizen-release-${i + 1}`,
+        'civilian',
+        4.7 + seeded(i, 510) * 0.4,
+        EXIT_RELEASE_DOOR.z - 1.0 - seeded(i, 511) * 0.5,
+        [0x8a7a54, 0xa89a70, 0x6e6450, 0x958a68][i % 4],
+        0x8c7a5a,
+        42,
+      );
+      civilian.vignette = 'run';
+      civilian.wanderAngle = 0;
+      civilian.flee = 16;
+      civilian.fleeHeading = 0; // north — out of the cordon, up the approach.
+    }
+  }
+
+  // The speaker exchange fires the first time the cordon commits — the cone
+  // alarm tripped or a rifle already answering. Combat proceeds under it.
+  private fireCordonVox() {
+    const narrative = (this.narrative ??= {});
+    if (narrative.voxHeard) return;
+    narrative.voxHeard = true;
+    this.audio.radioBark?.(
+      { x: 0, y: 5, z: -54 },
+      this.camera?.position ?? { x: 0, y: 1.6, z: 0 },
+      this.cameraYaw ?? 0,
+      false,
+    );
+    CORDON_VOX_LINES.forEach(([speaker, text], index) => {
+      this.queueSubtitle(speaker, text, index * 2900);
+    });
+    this.saveCheckpoint();
   }
 
   private dropCordonProps(props: { meshes: THREE.Object3D[]; boxes: THREE.Box3[] }) {
@@ -7022,6 +7190,21 @@ export class HeavensGateEngine {
     if (this.cordonProps) this.dropCordonProps(this.cordonProps);
     this.cordonGeneration = (this.cordonGeneration ?? 0) + 1;
     this.breadcrumbTarget = null;
+    // The release — and anyone it freed — are part of the same one-shot beat.
+    const release = this.exitRelease;
+    if (release) {
+      this.scene?.remove(release.group);
+      this.disposeObject(release.group);
+      this.collisionBoxes = (this.collisionBoxes ?? []).filter((box) => box !== release.collider);
+      this.exitRelease = null;
+    }
+    const freed = (this.actors ?? []).filter((actor) => actor.id.startsWith('citizen-release-'));
+    freed.forEach((actor) => {
+      this.rayTargets = withoutSubtree(this.rayTargets ?? [], actor.group);
+      this.scene?.remove(actor.group);
+      this.disposeObject(actor.group);
+    });
+    if (freed.length) this.actors = this.actors.filter((actor) => !freed.includes(actor));
   }
 
   private updateCordon(delta: number) {
@@ -7074,9 +7257,20 @@ export class HeavensGateEngine {
         // The alarm is up — the posted line becomes ordinary combat AI.
         this.cordonAlerted = true;
         this.breadcrumbTarget = null;
+        this.fireCordonVox();
       }
     } else if (this.missionIndex === 0) {
       this.heat = Math.max(0, (this.heat ?? 0) - delta * 3.1);
+    }
+
+    // The Vox beat also fires when the cordon commits without the cone —
+    // a guard opening up on sight, or one already down.
+    const patrol = this.cordonPatrol ?? [];
+    if (this.missionIndex === 0 && !this.cordonAlerted
+      && patrol.some((actor) => !actor.alive || actor.aiState?.phase === 'combat')) {
+      this.cordonAlerted = true;
+      this.breadcrumbTarget = null;
+      this.fireCordonVox();
     }
 
     const clearingDistance = distance2D(playerPosition.x, playerPosition.z, CORDON_CLEARING.x, CORDON_CLEARING.z);
@@ -7089,6 +7283,39 @@ export class HeavensGateEngine {
     if (this.breadcrumbTarget) {
       const nearFlank = distance2D(playerPosition.x, playerPosition.z, this.breadcrumbTarget.x, this.breadcrumbTarget.z) < 3.2;
       if (nearFlank || this.cordonPassed || this.cordonAlerted || this.missionIndex !== 0) this.breadcrumbTarget = null;
+    }
+
+    // The released door swings on its hinge until it rests open.
+    const release = this.exitRelease;
+    if (release?.opening) {
+      release.open = Math.min(1, release.open + delta * 1.6);
+      release.doorPivot.rotation.y = EXIT_RELEASE_DOOR.yaw - 1.85 * release.open;
+      if (release.open >= 1) release.opening = false;
+    }
+
+    // Resolution — slipped the clearing or the whole posted line is down.
+    // The cost line plays only when the release was never pulled; Beat F's
+    // aftermath lands after a held breath (longer if the cost line spoke).
+    if (this.missionIndex === 0 && !this.cordonResolved
+      && (this.cordonPassed || (this.cordonAlerted && patrol.every((actor) => !actor.alive)))) {
+      this.cordonResolved = true;
+      if (this.narrative?.exitReleased !== true) this.exitCostAt = elapsed + 2.6;
+      if (this.narrative?.aftermathHeard !== true) {
+        this.aftermathAt = elapsed + (this.exitCostAt !== null ? 8.4 : AFTERMATH_QUIET);
+      }
+    }
+    if (this.exitCostAt !== null && elapsed >= this.exitCostAt) {
+      this.exitCostAt = null;
+      this.emitSubtitle('Nia', 'They held those people the whole time.');
+    }
+    if (this.aftermathAt !== null && elapsed >= this.aftermathAt) {
+      this.aftermathAt = null;
+      const narrative = (this.narrative ??= {});
+      if (!narrative.aftermathHeard) {
+        narrative.aftermathHeard = true;
+        AFTERMATH_LINES.forEach(([speaker, text], index) => this.queueSubtitle(speaker, text, index * 2700));
+        this.saveCheckpoint();
+      }
     }
   }
 

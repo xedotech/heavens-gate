@@ -446,6 +446,40 @@ export class AudioEngine {
     this.tone(1180 + level * 700, 0.06, 'triangle', 0.008 + level * 0.012, 0.06, this.effectsBus, 1520 + level * 720);
   }
 
+  // Exit-release klaxon — a two-tone alarm off the release panel, high-low
+  // square blasts through a bandpass so it reads as infrastructure waking.
+  klaxon(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(source, listener, yaw, occluded);
+    const gain = Math.min(mix.gain * 1.1, 0.09);
+    if (gain < 0.002) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan;
+    master.gain.value = gain;
+    filter.type = 'bandpass';
+    filter.frequency.value = Math.min(1500, mix.cutoff);
+    filter.Q.value = 1.1;
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const voices: AudioScheduledSourceNode[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const high = this.tone(920, 0.22, 'square', 0.5, i * 0.62, filter);
+      const low = this.tone(614, 0.24, 'square', 0.44, i * 0.62 + 0.29, filter);
+      if (high) voices.push(high);
+      if (low) voices.push(low);
+    }
+    let remaining = voices.length;
+    const cleanup = () => { filter.disconnect(); pan.disconnect(); master.disconnect(); };
+    if (!remaining) cleanup();
+    voices.forEach((voice) => voice.addEventListener('ended', () => {
+      remaining -= 1;
+      if (remaining === 0) cleanup();
+    }, { once: true }));
+  }
+
   // Traffic horn — the classic two-tone square blare, spatialized like
   // pedestrian chatter. Sometimes a double-tap when the driver is angry.
   honk(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {

@@ -100,6 +100,9 @@ export interface SaveState {
     senaDelivered?: boolean;
     senaAsked?: boolean;
     cordonSeen?: boolean;
+    voxHeard?: boolean;
+    exitReleased?: boolean;
+    aftermathHeard?: boolean;
   };
   updatedAt: number;
 }
