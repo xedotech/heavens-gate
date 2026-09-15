@@ -324,6 +324,39 @@ const AFTERMATH_LINES: Array<[string, string]> = [
   ['Aurel', 'That wasn’t the question.'],
 ];
 
+// The quiet Seraph — a rifle that stopped being one. He waits slumped at
+// the clearing's east edge once the cordon resolves; talking is optional
+// but it's the only signpost toward the chapel.
+const QUIET_SERAPH_POS = { x: 7.2, z: -49.5, yaw: 2.45 };
+const QUIET_SERAPH_LINES: Array<[string, string]> = [
+  ['Seraph', 'You’re the courier. I’m done shooting.'],
+  ['Aurel', 'That supposed to make us even?'],
+  ['Seraph', 'No. It makes me tired.'],
+  ['Seraph', 'They held people in the north line. I didn’t stop it.'],
+  ['Seraph', 'Ask the chapel what it kept. I’m not your fight anymore.'],
+  ['Aurel', 'Then stay down.'],
+];
+const QUIET_SERAPH_LINES_FREED: Array<[string, string]> = [
+  ['Seraph', 'You’re the courier. I’m done shooting.'],
+  ['Aurel', 'That supposed to make us even?'],
+  ['Seraph', 'No. It makes me tired.'],
+  ['Seraph', 'You let them out. Below, that counts.'],
+  ['Seraph', 'Ask the chapel what it kept. I’m not your fight anymore.'],
+  ['Aurel', 'Then stay down.'],
+];
+// The chapel witness — what the candles kept. Stands at the altar of Saint
+// Orison (-72, 48), translucent, only after the Seraph points the way.
+const WITNESS_POS = { x: -75.4, z: 48 };
+const WITNESS_SPAWN_RANGE = 22;
+const WITNESS_TRIGGER_RANGE = 2.6;
+const WITNESS_LINES: Array<[string, string]> = [
+  ['The Witness', 'Courier.'],
+  ['Aurel', 'Another ghost.'],
+  ['The Witness', 'She stood where you’re standing. Signed your name before you ever carried it.'],
+  ['Aurel', 'Who told her it?'],
+  ['The Witness', 'The bell did. It always does.'],
+];
+
 export class HeavensGateEngine {
   readonly audio = new AudioEngine();
 
@@ -609,6 +642,16 @@ export class HeavensGateEngine {
   private exitCostAt: number | null = null;
   private aftermathAt: number | null = null;
   private cordonResolved = false;
+  // The quiet Seraph is a real actor (killable — his corpse is the
+  // consequence); the chapel witness is a translucent echo, not a person.
+  private quietSeraph: Actor | null = null;
+  private chapelWitness: {
+    group: THREE.Group;
+    materials: THREE.MeshStandardMaterial[];
+    light: THREE.PointLight;
+    bornAt: number;
+    triggeredAt: number | null;
+  } | null = null;
 
   private hudTimer = 0;
   private fpsTimer = 0;
@@ -4505,7 +4548,26 @@ export class HeavensGateEngine {
     this.exitCostAt = null;
     this.aftermathAt = null;
     this.cordonResolved = false;
+    // The witness and the quiet Seraph are per-session beats — strike
+    // whatever a previous state left, then re-raise only what's still owed.
+    const quiet = this.quietSeraph;
+    if (quiet) {
+      this.rayTargets = withoutSubtree(this.rayTargets ?? [], quiet.group);
+      this.scene?.remove(quiet.group);
+      this.disposeObject(quiet.group);
+      this.actors = (this.actors ?? []).filter((actor) => actor !== quiet);
+      this.quietSeraph = null;
+    }
+    const witness = this.chapelWitness;
+    if (witness) {
+      this.scene?.remove(witness.group);
+      this.disposeObject(witness.group);
+      this.chapelWitness = null;
+    }
     if (this.missionIndex === 0 && this.narrative?.cordonSeen === true) this.spawnCordon(false);
+    // If a save landed after the cordon resolved but before the talk, he's
+    // still waiting — the cordon re-resolving also respawns him in-session.
+    if (this.missionIndex === 0 && this.narrative?.aftermathHeard === true) this.spawnQuietSeraph();
     this.echoes.forEach((echo) => {
       echo.activated = this.echoesActivated.has(echo.id);
       echo.group.visible = !echo.activated;
@@ -4759,6 +4821,7 @@ export class HeavensGateEngine {
     this.updateMission();
     this.updateSena();
     this.updateCordon(delta);
+    this.updateWitness();
     this.updateCamera(delta);
     this.updateHeat(delta);
     this.updateHUD(delta);
@@ -5857,6 +5920,9 @@ export class HeavensGateEngine {
     });
     this.radioSignals = frameRadio.slice(-48);
     this.audio.setIntensity(clamp(this.heat / 100 + (this.missionIndex === 5 ? 0.45 : 0), 0, 1));
+    // The city bed breathes against the score — the Veil hushes it, combat
+    // presses it up, calm streets sit at the baseline wash.
+    this.audio.setCityBedLevel(this.veilActive ? 0.22 : clamp(0.42 + this.heat / 220 + (this.missionIndex === 5 ? 0.2 : 0), 0, 1));
   }
 
   private moveActor(actor: Actor, direction: THREE.Vector3, speed: number, delta: number) {
@@ -6615,6 +6681,10 @@ export class HeavensGateEngine {
       this.pullExitRelease();
       return;
     }
+    if (this.quietSeraphInRange()) {
+      this.startQuietSeraph();
+      return;
+    }
     const nearbyVehicle = this.vehicles
       .filter((vehicle) => !vehicle.occupied)
       .sort((a, b) => a.group.position.distanceTo(this.player.position) - b.group.position.distanceTo(this.player.position))[0];
@@ -6815,6 +6885,7 @@ export class HeavensGateEngine {
       // The exit release only exists while the cordon stands — and only
       // honestly while Sena's choice isn't borrowing the interact key.
       if (!prompt && this.exitReleaseInRange()) prompt = { action: interact, label: 'Pull the exit release' };
+      if (!prompt && this.quietSeraphInRange()) prompt = { action: interact, label: 'Approach the Seraph' };
       const vehicle = prompt ? undefined : this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
       if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.spec.name}` };
       if (!prompt && this.elapsed - this.lastAltarAt > 12) {
@@ -7160,6 +7231,107 @@ export class HeavensGateEngine {
     this.saveCheckpoint();
   }
 
+  // A Seraph who stopped — posted, unarmed in practice, leaning at the
+  // clearing's edge. Civilian kind keeps him off the combat AI and the
+  // hostile minimap layer; posted keeps him from fleeing his own beat.
+  private spawnQuietSeraph() {
+    if (this.quietSeraph || !this.scene || this.missionIndex !== 0) return;
+    if (this.narrative?.seraphHeard === true) return;
+    const actor = this.addActor('seraph-quiet', 'civilian', QUIET_SERAPH_POS.x, QUIET_SERAPH_POS.z, 0x39424c, 0x9fb2c4, 42);
+    actor.posted = true;
+    actor.vignette = 'lean';
+    actor.spawnYaw = QUIET_SERAPH_POS.yaw;
+    this.quietSeraph = actor;
+  }
+
+  private quietSeraphInRange() {
+    const seraph = this.quietSeraph;
+    if (!seraph?.alive || !seraph.group.visible || !this.player) return false;
+    if (this.missionIndex !== 0 || this.narrative?.seraphHeard === true) return false;
+    return distance2D(this.player.position.x, this.player.position.z, seraph.group.position.x, seraph.group.position.z) < 3.2;
+  }
+
+  private startQuietSeraph() {
+    const narrative = (this.narrative ??= {});
+    if (narrative.seraphHeard) return;
+    narrative.seraphHeard = true;
+    // His fourth line answers what the player actually did at the door.
+    const lines = narrative.exitReleased === true ? QUIET_SERAPH_LINES_FREED : QUIET_SERAPH_LINES;
+    lines.forEach(([speaker, text], index) => this.queueSubtitle(speaker, text, index * 2700 + 300));
+    this.audio.ui(true);
+    this.saveCheckpoint();
+  }
+
+  // The witness isn't an actor — it's a kept memory, a translucent figure
+  // that breathes at the altar until the courier gets close enough to hear.
+  private spawnChapelWitness() {
+    if (!this.scene || this.chapelWitness) return;
+    const { group, materials } = this.humanoid('chapel-witness', 0x2b3b52, 0xa8c4e8);
+    group.position.set(WITNESS_POS.x, 0, WITNESS_POS.z);
+    group.rotation.y = -Math.PI / 2;
+    materials.forEach((material) => {
+      material.transparent = true;
+      material.opacity = 0.32;
+      material.depthWrite = false;
+      material.emissive = new THREE.Color(0x6f8fc4);
+      material.emissiveIntensity = 0.55;
+    });
+    const light = new THREE.PointLight(0x9ab8ff, 2.5, 9, 1.8);
+    light.position.set(0, 2.1, 0);
+    group.add(light);
+    this.scene.add(group);
+    this.chapelWitness = { group, materials, light, bornAt: this.elapsed ?? 0, triggeredAt: null };
+  }
+
+  private triggerChapelWitness() {
+    const witness = this.chapelWitness;
+    const narrative = (this.narrative ??= {});
+    if (!witness || narrative.chapelWitnessed) return;
+    narrative.chapelWitnessed = true;
+    witness.triggeredAt = this.elapsed ?? 0;
+    this.audio.whisperBlip?.();
+    WITNESS_LINES.forEach(([speaker, text], index) => this.queueSubtitle(speaker, text, index * 2700 + 250));
+    this.saveCheckpoint();
+  }
+
+  private updateWitness() {
+    const player = this.player;
+    if (!player || this.missionIndex !== 0) return;
+    const narrative = this.narrative;
+    if (!this.chapelWitness && narrative?.seraphHeard === true && narrative?.chapelWitnessed !== true) {
+      const zone = this.chapelZone;
+      if (zone && player.position.distanceTo(zone.getCenter(this.tmpMove)) < WITNESS_SPAWN_RANGE) {
+        this.spawnChapelWitness();
+      }
+    }
+    const witness = this.chapelWitness;
+    if (!witness) return;
+    const elapsed = this.elapsed ?? 0;
+    if (witness.triggeredAt === null) {
+      const age = elapsed - witness.bornAt;
+      const shimmer = 0.32 + Math.sin(age * 1.7) * 0.08;
+      witness.materials.forEach((material) => { material.opacity = shimmer; });
+      witness.light.intensity = 2.5 + Math.sin(age * 2.3) * 0.9;
+      if (player.position.distanceTo(witness.group.position) < WITNESS_TRIGGER_RANGE) this.triggerChapelWitness();
+      return;
+    }
+    const t = elapsed - witness.triggeredAt;
+    if (t <= 13.8) {
+      // The candles lean in — the light climbs while the lines play.
+      witness.light.intensity = Math.min(14, 2.5 + t * 6);
+      witness.materials.forEach((material) => { material.opacity = Math.min(0.5, 0.32 + t * 0.04); });
+      return;
+    }
+    const fade = clamp((t - 13.8) / 2.2, 0, 1);
+    witness.materials.forEach((material) => { material.opacity = 0.5 * (1 - fade); });
+    witness.light.intensity = 14 * (1 - fade);
+    if (fade >= 1) {
+      this.scene?.remove(witness.group);
+      this.disposeObject(witness.group);
+      this.chapelWitness = null;
+    }
+  }
+
   private dropCordonProps(props: { meshes: THREE.Object3D[]; boxes: THREE.Box3[] }) {
     props.meshes.forEach((mesh) => {
       this.scene?.remove(mesh);
@@ -7299,6 +7471,7 @@ export class HeavensGateEngine {
     if (this.missionIndex === 0 && !this.cordonResolved
       && (this.cordonPassed || (this.cordonAlerted && patrol.every((actor) => !actor.alive)))) {
       this.cordonResolved = true;
+      this.spawnQuietSeraph();
       if (this.narrative?.exitReleased !== true) this.exitCostAt = elapsed + 2.6;
       if (this.narrative?.aftermathHeard !== true) {
         this.aftermathAt = elapsed + (this.exitCostAt !== null ? 8.4 : AFTERMATH_QUIET);

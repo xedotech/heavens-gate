@@ -103,6 +103,8 @@ export interface SaveState {
     voxHeard?: boolean;
     exitReleased?: boolean;
     aftermathHeard?: boolean;
+    seraphHeard?: boolean;
+    chapelWitnessed?: boolean;
   };
   updatedAt: number;
 }
