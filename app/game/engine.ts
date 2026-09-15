@@ -7604,6 +7604,8 @@ export class HeavensGateEngine {
   private emitSubtitle(speaker: string, text: string, duration = 3600) {
     if (!this.settings.subtitles) return;
     const line: SubtitleLine = { id: ++this.subtitleId, speaker, text, duration };
+    // Aurel's face actually mouths his lines — the viseme driver was built
+    // but never wired to dialogue.
     if (speaker.toLowerCase().includes('aurel')) this.heroCharacter?.speak(duration / 1000, this.subtitleId);
     this.callbacks.onSubtitle(line);
   }
