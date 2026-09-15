@@ -54,6 +54,33 @@ describe('audio routing lifecycle', () => {
     audio.dispose();
   });
 
+  it('runs the city bed safely before unlock and idempotently after', async () => {
+    const audio = new AudioEngine();
+    // Deferred before the gesture: intent is stored, nothing is built yet.
+    expect(() => {
+      audio.startCityBed();
+      audio.setCityBedLevel(0.8);
+      audio.stopCityBed();
+    }).not.toThrow();
+    audio.startCityBed();
+    await audio.unlock();
+    const context = Context.instances[0];
+    const built = context.nodes.length;
+    expect(() => {
+      audio.startCityBed();
+      audio.setCityBedLevel(1);
+      vi.advanceTimersByTime(120000); // gust/thump/horn schedulers fire
+      audio.setCityBedLevel(0);
+      audio.stopCityBed();
+      vi.advanceTimersByTime(2000); // fade-out teardown lands
+      audio.startCityBed(); // rebuild after stop
+      audio.setCityBed(false);
+      audio.setCityBed(true);
+    }).not.toThrow();
+    expect(context.nodes.length).toBeGreaterThan(built);
+    audio.dispose();
+  });
+
   it('creates the engine oscillator in the new context after disposal', async () => {
     const audio = new AudioEngine();
     await audio.unlock();

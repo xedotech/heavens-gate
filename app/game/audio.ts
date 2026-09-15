@@ -4,6 +4,21 @@ import { spatialGunshotMix, type SoundPosition } from './spatial-audio';
 
 type Wave = OscillatorType;
 
+// One live city-bed graph: a level-scaled master gain feeding the ambient
+// bus, the looped layer sources, and the three self-rescheduling timers that
+// keep wind and distant events non-repeating. Captured by teardown so a bed
+// fading out can die without disturbing its replacement.
+type CityBed = {
+  master: GainNode;
+  windFilter: BiquadFilterNode | null;
+  windGain: GainNode | null;
+  sources: AudioScheduledSourceNode[];
+  nodes: AudioNode[];
+  gustTimer: ReturnType<typeof setTimeout> | null;
+  thumpTimer: ReturnType<typeof setTimeout> | null;
+  hornTimer: ReturnType<typeof setTimeout> | null;
+};
+
 // Recorded foley families → manifest clip ids. Every family keeps its synth
 // fallback while clips are pending or failed verification.
 const SAMPLE_FAMILIES: Record<string, string[]> = {
@@ -36,9 +51,9 @@ export class AudioEngine {
   private rainIsClip = false;
   private samples = new Map<string, AudioBuffer[]>();
   private samplesLoading = false;
-  private citySources: AudioScheduledSourceNode[] = [];
-  private cityNodes: AudioNode[] = [];
-  private cityTimer: ReturnType<typeof setInterval> | null = null;
+  private cityBed: CityBed | null = null;
+  private cityBedWanted = false;
+  private cityBedLevel = 0.5;
   private scoreTimer: ReturnType<typeof setInterval> | null = null;
   private scoreStep = 0;
   private intensity = 0;
@@ -88,6 +103,7 @@ export class AudioEngine {
       }
 
       this.startAmbient();
+      if (this.cityBedWanted) this.buildCityBed();
       void this.loadSamples();
     }
     if (this.context.state !== 'running') await this.context.resume();
@@ -817,81 +833,218 @@ export class AudioEngine {
     }
   }
 
-  // The "city is alive" bed: layered noise for traffic rumble and wind, plus a
-  // scheduler that fires distant honks and crowd murmurs on loose intervals.
-  setCityBed(active: boolean) {
-    if (!this.context || !this.ambientBus) return;
-    if (active && !this.citySources.length) {
-      const now = this.context.currentTime;
-      const rumbleBuffer = this.createNoiseBuffer(4);
-      if (rumbleBuffer) {
-        const source = this.context.createBufferSource();
-        const filter = this.context.createBiquadFilter();
-        const gain = this.context.createGain();
-        source.buffer = rumbleBuffer;
-        source.loop = true;
-        filter.type = 'lowpass';
-        filter.frequency.value = 130;
-        gain.gain.value = 0.055;
-        source.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.ambientBus);
-        source.start(now);
-        this.citySources.push(source);
-        this.cityNodes.push(filter, gain);
-      }
-      const windBuffer = this.createNoiseBuffer(3);
-      if (windBuffer) {
-        const source = this.context.createBufferSource();
-        const filter = this.context.createBiquadFilter();
-        const gain = this.context.createGain();
-        source.buffer = windBuffer;
-        source.loop = true;
-        filter.type = 'bandpass';
-        filter.frequency.value = 820;
-        filter.Q.value = 0.35;
-        gain.gain.value = 0.014;
-        source.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.ambientBus);
-        source.start(now);
-        this.citySources.push(source);
-        this.cityNodes.push(filter, gain);
-      }
-      if (!this.cityTimer) this.cityTimer = setInterval(() => this.cityEvent(), 900);
-      return;
-    }
-    if (!active) {
-      this.citySources.forEach((source) => {
-        try { source.stop(); } catch { /* Already stopped. */ }
-        source.disconnect();
-      });
-      this.cityNodes.forEach((node) => node.disconnect());
-      this.citySources = [];
-      this.cityNodes = [];
-      if (this.cityTimer) clearInterval(this.cityTimer);
-      this.cityTimer = null;
-    }
+  // The ambient city bed — the layer that keeps the world alive when nothing
+  // is happening. startCityBed/stopCityBed own the lifecycle, setCityBedLevel
+  // is the intensity fader the engine maps calm/combat/veil states onto:
+  // 0 = silent, ~0.5 = baseline street, 1 = heightened aftermath. All three
+  // are safe before the AudioContext unlocks — intent is stored and the graph
+  // is built (or rebuilt) inside unlock().
+  startCityBed() {
+    this.cityBedWanted = true;
+    this.buildCityBed();
   }
 
-  private cityEvent() {
-    if (!this.context || this.context.state !== 'running' || !this.ambientBus) return;
-    const roll = Math.random();
-    if (roll < 0.42) {
-      // Distant two-tone horn, heavily low-passed so it reads as far away.
-      const root = 260 + Math.random() * 120;
-      const delay = Math.random() * 0.6;
-      this.tone(root, 0.16, 'square', 0.012, delay, this.ambientBus, root * 0.92);
-      if (Math.random() > 0.5) this.tone(root * 0.81, 0.14, 'square', 0.01, delay + 0.18, this.ambientBus, root * 0.74);
-    } else if (roll < 0.72) {
-      // Crowd murmur swell — short bandpassed noise wobble.
-      this.noise(0.7 + Math.random() * 0.8, 0.008 + Math.random() * 0.01, 300 + Math.random() * 500, this.ambientBus);
-    } else if (roll < 0.86) {
-      // Skateboard/drone flyover — a filtered tone gliding upward.
-      const root = 180 + Math.random() * 160;
-      this.tone(root, 1.4, 'sine', 0.006, Math.random() * 0.4, this.ambientBus, root * 2.2);
+  setCityBedLevel(level: number) {
+    this.cityBedLevel = clamp(level, 0, 1);
+    const bed = this.cityBed;
+    if (!bed || !this.context) return;
+    // ~1s to converge — a fader move, never a click.
+    bed.master.gain.setTargetAtTime(this.cityBedTarget(), this.context.currentTime, 0.35);
+  }
+
+  stopCityBed() {
+    this.cityBedWanted = false;
+    const bed = this.cityBed;
+    if (!bed || !this.context) return;
+    this.cityBed = null;
+    // Fade under the noise floor before teardown so stopping mid-gust never
+    // clicks; the captured bed dies even if a new one starts meanwhile.
+    bed.master.gain.setTargetAtTime(0.0001, this.context.currentTime, 0.4);
+    setTimeout(() => this.tearDownCityBed(bed), 1600);
+  }
+
+  // Legacy on/off surface — kept for callers wired against the old API.
+  setCityBed(active: boolean) {
+    if (active) this.startCityBed();
+    else this.stopCityBed();
+  }
+
+  private cityBedTarget() {
+    // Full bed ≈ 0.06 into the ambient bus — well under the score layer, so
+    // speech and music sit ~24dB above it.
+    return this.cityBedLevel * 0.06;
+  }
+
+  private buildCityBed() {
+    if (!this.context || !this.ambientBus || this.cityBed || !this.cityBedWanted) return;
+    const context = this.context;
+    const now = context.currentTime;
+    const master = context.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.setTargetAtTime(this.cityBedTarget(), now, 0.9);
+    master.connect(this.ambientBus);
+    const bed: CityBed = {
+      master,
+      windFilter: null,
+      windGain: null,
+      sources: [],
+      nodes: [master],
+      gustTimer: null,
+      thumpTimer: null,
+      hornTimer: null,
+    };
+    this.cityBed = bed;
+
+    // Rain wash — pink-leaning looped noise through a soft lowpass. 3.ogg is
+    // already claimed by setRainBed, so the bed synthesizes its own, quieter.
+    const rainBuffer = this.createNoiseBuffer(5);
+    if (rainBuffer) {
+      const source = context.createBufferSource();
+      const filter = context.createBiquadFilter();
+      const gain = context.createGain();
+      source.buffer = rainBuffer;
+      source.loop = true;
+      filter.type = 'lowpass';
+      filter.frequency.value = 1150;
+      filter.Q.value = 0.4;
+      gain.gain.value = 0.4;
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(master);
+      source.start(now);
+      bed.sources.push(source);
+      bed.nodes.push(filter, gain);
     }
-    // else: silence — gaps are part of the illusion.
+
+    // Wind — a band wandering 300-700Hz under two detuned LFOs (7s/9s-ish
+    // beating), plus a slow random-walk retune every 7-15s so the gust
+    // pattern never audibly repeats.
+    const windBuffer = this.createNoiseBuffer(4);
+    if (windBuffer) {
+      const source = context.createBufferSource();
+      const filter = context.createBiquadFilter();
+      const gain = context.createGain();
+      source.buffer = windBuffer;
+      source.loop = true;
+      filter.type = 'bandpass';
+      filter.frequency.value = 480;
+      filter.Q.value = 0.7;
+      gain.gain.value = 0.26;
+      const lfo = context.createOscillator();
+      lfo.frequency.value = 0.07;
+      const lfoGain = context.createGain();
+      lfoGain.gain.value = 170;
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+      const gustLfo = context.createOscillator();
+      gustLfo.frequency.value = 0.11;
+      const gustDepth = context.createGain();
+      gustDepth.gain.value = 0.09;
+      gustLfo.connect(gustDepth);
+      gustDepth.connect(gain.gain);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(master);
+      source.start(now);
+      lfo.start(now);
+      gustLfo.start(now);
+      bed.sources.push(source, lfo, gustLfo);
+      bed.nodes.push(filter, gain, lfoGain, gustDepth);
+      bed.windFilter = filter;
+      bed.windGain = gain;
+    }
+
+    // Sparse-event schedulers. Every timer checks the bed is still current,
+    // so a fading predecessor can never fire into the replacement mix.
+    const gust = () => {
+      if (this.cityBed !== bed) return;
+      if (this.context && this.context.state === 'running' && bed.windFilter && bed.windGain) {
+        const at = this.context.currentTime;
+        bed.windFilter.frequency.setTargetAtTime(300 + Math.random() * 400, at, 2.2);
+        bed.windGain.gain.setTargetAtTime(0.18 + Math.random() * (0.16 + this.cityBedLevel * 0.22), at, 2.8);
+      }
+      bed.gustTimer = setTimeout(gust, 7000 + Math.random() * 8000);
+    };
+    const thump = () => {
+      if (this.cityBed !== bed) return;
+      this.cityBedThump(bed);
+      bed.thumpTimer = setTimeout(thump, this.cityBedSpacing(20, 40));
+    };
+    const horn = () => {
+      if (this.cityBed !== bed) return;
+      this.cityBedHorn(bed);
+      bed.hornTimer = setTimeout(horn, this.cityBedSpacing(45, 90));
+    };
+    bed.gustTimer = setTimeout(gust, 5000 + Math.random() * 7000);
+    bed.thumpTimer = setTimeout(thump, this.cityBedSpacing(14, 30));
+    bed.hornTimer = setTimeout(horn, this.cityBedSpacing(30, 90));
+  }
+
+  // Higher levels tighten event spacing: ×1.35 at level 0 down to ×0.65 at 1.
+  private cityBedSpacing(minSeconds: number, maxSeconds: number) {
+    const span = maxSeconds - minSeconds;
+    return (minSeconds + Math.random() * span) * (1.35 - this.cityBedLevel * 0.7) * 1000;
+  }
+
+  // A far-off muffled impact — low noise whomp plus a decaying sub-bloom,
+  // randomized enough that no two thumps read as a loop.
+  private cityBedThump(bed: CityBed) {
+    if (!this.context || this.context.state !== 'running' || this.cityBedLevel < 0.02) return;
+    const level = 0.7 + this.cityBedLevel * 0.6;
+    this.noise(0.5 + Math.random() * 0.7, (0.1 + Math.random() * 0.1) * level, 90 + Math.random() * 80, bed.master);
+    this.tone(44 + Math.random() * 22, 0.45 + Math.random() * 0.35, 'sine', (0.14 + Math.random() * 0.12) * level, Math.random() * 0.05, bed.master, 30 + Math.random() * 12);
+  }
+
+  // A rare distant horn — two detuned low voices swelling through a heavy
+  // lowpass over ~1.5s, like traffic heard through several blocks.
+  private cityBedHorn(bed: CityBed) {
+    const context = this.context;
+    if (!context || context.state !== 'running' || this.cityBedLevel < 0.02) return;
+    const now = context.currentTime;
+    const level = (0.7 + this.cityBedLevel * 0.6) * (0.09 + Math.random() * 0.06);
+    const root = 90 + Math.random() * 50;
+    const filter = context.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 420;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, level), now + 0.55);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.5);
+    filter.connect(gain);
+    gain.connect(bed.master);
+    const low = context.createOscillator();
+    low.type = 'sine';
+    low.frequency.value = root;
+    const high = context.createOscillator();
+    high.type = 'triangle';
+    high.frequency.value = root * (1.006 + Math.random() * 0.004);
+    low.connect(filter);
+    high.connect(filter);
+    low.start(now);
+    high.start(now);
+    low.stop(now + 1.55);
+    high.stop(now + 1.55);
+    let remaining = 2;
+    const cleanup = () => { low.disconnect(); high.disconnect(); filter.disconnect(); gain.disconnect(); };
+    const done = () => { remaining -= 1; if (remaining === 0) cleanup(); };
+    low.addEventListener('ended', done, { once: true });
+    high.addEventListener('ended', done, { once: true });
+  }
+
+  private tearDownCityBed(bed: CityBed) {
+    if (bed.gustTimer) clearTimeout(bed.gustTimer);
+    if (bed.thumpTimer) clearTimeout(bed.thumpTimer);
+    if (bed.hornTimer) clearTimeout(bed.hornTimer);
+    bed.gustTimer = null;
+    bed.thumpTimer = null;
+    bed.hornTimer = null;
+    bed.sources.forEach((source) => {
+      try { source.stop(); } catch { /* Already stopped. */ }
+      source.disconnect();
+    });
+    bed.nodes.forEach((node) => node.disconnect());
+    bed.sources = [];
+    bed.nodes = [];
   }
 
   setEngine(speed: number, active: boolean) {
@@ -921,7 +1074,12 @@ export class AudioEngine {
   dispose() {
     if (this.scoreTimer) clearInterval(this.scoreTimer);
     this.scoreTimer = null;
-    this.setCityBed(false);
+    this.cityBedWanted = false;
+    if (this.cityBed) {
+      const bed = this.cityBed;
+      this.cityBed = null;
+      this.tearDownCityBed(bed);
+    }
     if (this.veilBed) {
       const bed = this.veilBed;
       this.veilBed = null;
