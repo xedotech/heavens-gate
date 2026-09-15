@@ -139,14 +139,15 @@ describe('checkpoint validation and repair', () => {
     expect(normalizeSave(checkpoint())).not.toHaveProperty('narrative');
     const save = normalizeSave({
       ...checkpoint(),
-      narrative: { senaDelivered: true, senaAsked: 'yes', unknownBeat: true } as unknown as SaveState['narrative'],
+      narrative: { senaDelivered: true, senaAsked: 'yes', cordonSeen: true, unknownBeat: true } as unknown as SaveState['narrative'],
     });
-    expect(save?.narrative).toEqual({ senaDelivered: true });
+    expect(save?.narrative).toEqual({ senaDelivered: true, cordonSeen: true });
     expect(normalizeSave({ ...checkpoint(), narrative: { futureFlag: true } })).not.toHaveProperty('narrative');
     expect(normalizeSave({ ...checkpoint(), narrative: 'delivered' })).not.toHaveProperty('narrative');
-    // Both flags round-trip untouched so a reload replays Sena's idle, not her scene.
-    expect(normalizeSave(checkpoint({ narrative: { senaDelivered: true, senaAsked: false } })))
-      .toMatchObject({ narrative: { senaDelivered: true, senaAsked: false } });
+    // The flags round-trip untouched so a reload replays Sena's idle and the
+    // posted cordon, not their scenes.
+    expect(normalizeSave(checkpoint({ narrative: { senaDelivered: true, senaAsked: false, cordonSeen: true } })))
+      .toMatchObject({ narrative: { senaDelivered: true, senaAsked: false, cordonSeen: true } });
   });
 
   it('preserves the chosen ending across repeated epilogue checkpoints but not a new campaign', () => {

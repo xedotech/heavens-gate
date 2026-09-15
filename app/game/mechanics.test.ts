@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clamp,
+  cordonConeDetect,
   damp,
   difficultyDamage,
   distance2D,
@@ -37,6 +38,22 @@ describe('core mechanics', () => {
   it('calculates planar distance for navigation', () => {
     expect(distance2D(0, 0, 3, 4)).toBe(5);
     expect(distance2D(-2, -3, -2, -3)).toBe(0);
+  });
+
+  it('reads a posted cordon cone as facing + range, not a radius', () => {
+    const yaw = 0; // facing +z — the station-approach cordon watches north.
+    expect(cordonConeDetect(0, -45, yaw, 0, -35, 24, 0.62)).toBe(true);
+    // Same distance, behind the line: outside the half-angle.
+    expect(cordonConeDetect(0, -45, yaw, 0, -55, 24, 0.62)).toBe(false);
+    // Just inside the edge of the cone and just past it.
+    const edge = 0.6;
+    expect(cordonConeDetect(0, -45, yaw, Math.sin(edge) * 10, -45 + Math.cos(edge) * 10, 24, 0.62)).toBe(true);
+    expect(cordonConeDetect(0, -45, yaw, Math.sin(0.8) * 10, -45 + Math.cos(0.8) * 10, 24, 0.62)).toBe(false);
+    // Out of range still fails even dead ahead; point-blank always reads.
+    expect(cordonConeDetect(0, -45, yaw, 0, -20, 24, 0.62)).toBe(false);
+    expect(cordonConeDetect(0, -45, yaw, 0, -45, 24, 0.62)).toBe(true);
+    // A rotated watch direction follows the yaw.
+    expect(cordonConeDetect(0, -45, Math.PI / 2, 8, -45, 24, 0.62)).toBe(true);
   });
 
   it('maps Choir heat to five response tiers', () => {

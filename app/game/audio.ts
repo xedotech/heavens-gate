@@ -438,6 +438,14 @@ export class AudioEngine {
     this.tone(confirm ? 660 : 440, 0.09, 'sine', 0.045, 0, this.effectsBus, confirm ? 880 : 520);
   }
 
+  // Cordon detection tell — a short rising chirp that climbs as a posted
+  // patrol's attention hardens. Caller rate-limits; intensity 0..1.
+  detectionTell(intensity = 0.5) {
+    const level = clamp(intensity, 0, 1);
+    this.tone(560 + level * 360, 0.13, 'sine', 0.02 + level * 0.022, 0, this.effectsBus, 940 + level * 560);
+    this.tone(1180 + level * 700, 0.06, 'triangle', 0.008 + level * 0.012, 0.06, this.effectsBus, 1520 + level * 720);
+  }
+
   // Traffic horn — the classic two-tone square blare, spatialized like
   // pedestrian chatter. Sometimes a double-tap when the driver is angry.
   honk(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {

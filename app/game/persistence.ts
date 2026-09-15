@@ -68,6 +68,7 @@ function normalizeNarrative(value: Record<string, unknown>): SaveState['narrativ
   const narrative: NonNullable<SaveState['narrative']> = {};
   if (typeof value.senaDelivered === 'boolean') narrative.senaDelivered = value.senaDelivered;
   if (typeof value.senaAsked === 'boolean') narrative.senaAsked = value.senaAsked;
+  if (typeof value.cordonSeen === 'boolean') narrative.cordonSeen = value.cordonSeen;
   return Object.keys(narrative).length ? narrative : undefined;
 }
 

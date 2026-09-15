@@ -371,7 +371,8 @@ export default function GameShell() {
         engineRef.current = engine;
         await engine.initialize();
         // QA hook — lets the smoke/frame tools drive and inspect a live engine.
-        if (process.env.NODE_ENV !== 'production') (window as unknown as { __hg?: HeavensGateEngine }).__hg = engine;
+        // Opt-in via ?qa=1 so production builds stay clean by default.
+        if (new URLSearchParams(window.location.search).has('qa')) (window as unknown as { __hg?: HeavensGateEngine }).__hg = engine;
       } catch (initializationError) {
         if (disposed) return;
         window.clearTimeout(slowBootTimer);

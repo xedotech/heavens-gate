@@ -99,6 +99,7 @@ export interface SaveState {
   narrative?: {
     senaDelivered?: boolean;
     senaAsked?: boolean;
+    cordonSeen?: boolean;
   };
   updatedAt: number;
 }

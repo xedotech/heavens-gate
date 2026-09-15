@@ -11,8 +11,9 @@ import puppeteer from 'puppeteer-core';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const outDir = join(ROOT, 'artifacts/qa-sena');
 mkdirSync(outDir, { recursive: true });
-const URL_ARG = process.argv.find((a) => a.startsWith('--url='))?.slice(6)
+const RAW_URL = process.argv.find((a) => a.startsWith('--url='))?.slice(6)
   ?? 'http://localhost:3000';
+const URL_ARG = RAW_URL.includes('?') ? RAW_URL : `${RAW_URL}?qa=1`;
 
 const candidates = [
   process.env.HG_BROWSER,
@@ -44,11 +45,13 @@ try {
     () => [...document.querySelectorAll('.title-menu button')].some((b) => /campaign/i.test(b.textContent || '')),
     { timeout: 90_000 },
   );
+  // Engine boots while the title shows — wait for it before clicking so
+  // start() can't no-op on a mid-init engine (mode stays 'attract').
+  await page.waitForFunction(() => window.__hg?.player, { timeout: 120_000 });
   await page.evaluate(() => {
     const btn = [...document.querySelectorAll('.title-menu button')].find((b) => /campaign/i.test(b.textContent || ''));
     btn.click();
   });
-  await page.waitForFunction(() => window.__hg?.player, { timeout: 120_000 });
   await new Promise((r) => setTimeout(r, 6000)); // world settle
 
   const state = await page.evaluate(() => {
@@ -105,6 +108,34 @@ try {
   await shot(page, 'sena-5-bell.png');
   await new Promise((r) => setTimeout(r, 2500));
   await shot(page, 'sena-6-after.png');
+
+  // Cordon materializes ~12s after the bell — fast-forward, then look south
+  // at the blockade line and screenshot it.
+  await page.evaluate(() => { const e = window.__hg; e.elapsed = (e.cordonAt ?? e.elapsed) + 0.1; });
+  let cordonUp = null;
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    cordonUp = await page.evaluate(() => {
+      const e = window.__hg;
+      return {
+        patrol: (e.cordonPatrol ?? []).length,
+        scans: (e.cordonScans ?? []).filter((s) => s.mesh.visible).length,
+        heat: +e.heat?.toFixed(1),
+      };
+    });
+    console.log('cordon poll', JSON.stringify(cordonUp));
+    if (cordonUp.patrol >= 3) break;
+  }
+  await page.evaluate(() => {
+    const e = window.__hg;
+    const c = e.cordonPatrol?.[0]?.group?.position;
+    if (c) {
+      e.player.position.set(c.x, 0.02, c.z + 14);
+      e.cameraYaw = Math.atan2(e.player.position.x - c.x, e.player.position.z - c.z) + Math.PI;
+    }
+  });
+  await new Promise((r) => setTimeout(r, 1800));
+  await shot(page, 'sena-7-cordon.png');
 
   const finalState = await page.evaluate(() => ({
     narrative: window.__hg?.narrative,

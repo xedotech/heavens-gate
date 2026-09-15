@@ -35,6 +35,7 @@ import {
 } from './combat';
 import {
   clamp,
+  cordonConeDetect,
   damp,
   difficultyDamage,
   distance2D,
@@ -96,8 +97,12 @@ interface Actor {
   damagePulse: number;
   lastDamageAmount: number;
   vignette?: 'wander' | 'idle' | 'talk' | 'lean' | 'run';
-  /** Posted civilians (Sena) hold their spot instead of wandering or fleeing. */
+  /** Posted actors hold their spot instead of wandering or fleeing. */
   posted?: boolean;
+  /** Cordon overwatch stance — true keeps the rifle raised, false low ready. */
+  overwatchAim?: boolean;
+  /** Facing a posted enemy eases back to while it holds the line. */
+  spawnYaw?: number;
   vignetteTimer?: number;
   hitReact?: number;
   hitReactSide?: number;
@@ -273,6 +278,28 @@ const SENA_BELL_LINES: Array<[string, string]> = [
 // The lamp she tends — the last one on the approach, outside the mission
 // radius so the delivery plays before the gate can complete the operation.
 const SENA_LAMP_SPOT = { x: 0, z: -35.6 };
+
+// The cordon beat — a Seraph line materializes across the station approach
+// ~12 s after the bell tolls. Posted guards face north (the approach the
+// player walks down), rifles overwatching a marked cone each.
+const CORDON_POSTS: Array<{ x: number; z: number; yaw: number; aim: boolean }> = [
+  { x: -5.2, z: -44.8, yaw: 0.1, aim: true },
+  { x: -1.7, z: -45.4, yaw: -0.05, aim: false },
+  { x: 1.8, z: -45.2, yaw: 0.06, aim: true },
+  { x: 5.3, z: -44.6, yaw: -0.12, aim: false },
+];
+const CORDON_BARRIERS: Array<{ x: number; y: number; z: number; yaw: number }> = [
+  { x: -2.6, y: 0, z: -43.3, yaw: 0.1 },
+  { x: 2.7, y: 0, z: -43.1, yaw: -0.08 },
+];
+// The waterline — the flank Nia reroutes the breadcrumbs to, around the
+// cordon's east shoulder and into the clearing edge.
+const CORDON_FLANK = { x: 12.5, z: -48 };
+const CORDON_CLEARING = { x: 0, z: -54, radius: 6 };
+const CORDON_CONE_RANGE = 24;
+const CORDON_CONE_HALF_ANGLE = 0.62;
+const CORDON_HEAT_RATE = 2.1;
+const CORDON_SPAWN_DELAY = 12;
 
 export class HeavensGateEngine {
   readonly audio = new AudioEngine();
@@ -525,13 +552,27 @@ export class HeavensGateEngine {
   // are per-session timers so the bell beat can never double-fire.
   private sena: Actor | null = null;
   private senaLamp: THREE.Vector3 | null = null;
-  private narrative: { senaDelivered?: boolean; senaAsked?: boolean } = {};
+  private narrative: { senaDelivered?: boolean; senaAsked?: boolean; cordonSeen?: boolean } = {};
   private senaChoiceOpen = false;
   private senaChoiceAt = 0;
   private senaChoiceDeadline = 0;
   private senaTalkingUntil = 0;
   private bellAt: number | null = null;
   private bellFired = false;
+
+  // The cordon beat: spawned actors, their marked cones, and the tracked
+  // barrier props (so a reset can strike them). `cordonSeen` lives on the
+  // persisted narrative slice; the rest are per-session beat state.
+  private cordonPatrol: Actor[] = [];
+  private cordonScans: Array<{ actor: Actor; mesh: THREE.Object3D; material: THREE.MeshBasicMaterial }> = [];
+  private cordonProps: { meshes: THREE.Object3D[]; boxes: THREE.Box3[] } | null = null;
+  private cordonGeneration = 0;
+  private cordonAt: number | null = null;
+  private cordonAlerted = false;
+  private cordonPassed = false;
+  private cordonTellCooldown = 0;
+  private cordonConeGeometry: THREE.CircleGeometry | null = null;
+  private breadcrumbTarget: THREE.Vector3 | null = null;
 
   private hudTimer = 0;
   private fpsTimer = 0;
@@ -2026,6 +2067,8 @@ export class HeavensGateEngine {
       nodeFilter?: (name: string) => boolean;
       collider?: { w: number; d: number; h: number } | 'none';
       emissiveGlass?: number;
+      /** Collects the spawned meshes + collider boxes so a beat can strike them. */
+      track?: { meshes: THREE.Object3D[]; boxes: THREE.Box3[] };
     } = {},
   ): Promise<boolean> {
     if (!placements.length) return false;
@@ -2096,6 +2139,7 @@ export class HeavensGateEngine {
         }
         this.scene.add(mesh);
         this.rayTargets.push(mesh);
+        options.track?.meshes.push(mesh);
       });
       if (options.collider && options.collider !== 'none') {
         const { w, d, h } = options.collider;
@@ -2105,10 +2149,12 @@ export class HeavensGateEngine {
           const s = Math.abs(Math.sin(spot.yaw));
           const hx = (w / 2) * c + (d / 2) * s;
           const hz = (w / 2) * s + (d / 2) * c;
-          this.collisionBoxes.push(new THREE.Box3(
+          const box = new THREE.Box3(
             new THREE.Vector3(spot.x - hx, spot.y, spot.z - hz),
             new THREE.Vector3(spot.x + hx, spot.y + h, spot.z + hz),
-          ));
+          );
+          this.collisionBoxes.push(box);
+          options.track?.boxes.push(box);
         });
       }
       return true;
@@ -3388,11 +3434,13 @@ export class HeavensGateEngine {
   }
 
   private updateBreadcrumb(time: number) {
-    if (!this.breadcrumb || !this.objectiveMarker?.visible) {
+    // The cordon beat reroutes the dots to the waterline flank while it is
+    // up; otherwise they run to the objective marker as usual.
+    const target = this.breadcrumbTarget ?? this.objectiveMarker?.position ?? null;
+    if (!this.breadcrumb || !target || (!this.breadcrumbTarget && !this.objectiveMarker?.visible)) {
       if (this.breadcrumb) this.breadcrumb.mesh.visible = false;
       return;
     }
-    const target = this.objectiveMarker.position;
     const from = this.currentVehicle?.group.position ?? this.player.position;
     const distance = distance2D(from.x, from.z, target.x, target.z);
     if (distance < 10 || distance > 260) {
@@ -4403,6 +4451,15 @@ export class HeavensGateEngine {
         actor.group.visible = false;
       }
     });
+    // The cordon is per-session scenery: strike whatever a previous state
+    // left, then re-post it only when a mid-beat save says it already stood.
+    this.clearCordon();
+    this.cordonAt = null;
+    this.cordonAlerted = false;
+    this.cordonPassed = false;
+    this.cordonTellCooldown = 0;
+    this.breadcrumbTarget = null;
+    if (this.missionIndex === 0 && this.narrative?.cordonSeen === true) this.spawnCordon(false);
     this.echoes.forEach((echo) => {
       echo.activated = this.echoesActivated.has(echo.id);
       echo.group.visible = !echo.activated;
@@ -4655,6 +4712,7 @@ export class HeavensGateEngine {
     this.updateEffects(delta);
     this.updateMission();
     this.updateSena();
+    this.updateCordon(delta);
     this.updateCamera(delta);
     this.updateHeat(delta);
     this.updateHUD(delta);
@@ -5722,6 +5780,21 @@ export class HeavensGateEngine {
           const direction = destination.sub(actorPosition).setY(0).normalize();
           this.moveActor(actor, direction, actor.speed * (aiStep.decision.action === 'search' ? 0.78 : 0.58), delta);
           actor.group.rotation.y = Math.atan2(direction.x, direction.z);
+        } else if (actor.posted === true && this.missionIndex === 0) {
+          // Cordon overwatch — no patrol-wander. Hold the post, square back
+          // to the watched approach, rifle raised or at low ready per post.
+          const holdYaw = actor.spawnYaw ?? actor.group.rotation.y;
+          let yawDiff = holdYaw - actor.group.rotation.y;
+          while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+          while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+          actor.group.rotation.y += yawDiff * Math.min(1, delta * 2.6);
+          actor.group.position.x = actor.spawn.x + Math.sin(time * 0.3 + actorIndex) * 0.04;
+          this.animateActorLod(actor, 0, delta);
+          if (actor.rig) {
+            actor.rig.arms[1].rotation.x = actor.overwatchAim ? -1.18 : -0.55;
+            actor.rig.arms[1].rotation.z = -0.05;
+            actor.rig.arms[0].rotation.x = actor.overwatchAim ? -0.38 : -0.2;
+          }
         } else {
           actor.wanderAngle += Math.sin(time * 0.2 + actorIndex) * delta * 0.18;
           const offset = this.tmpMove.copy(actor.spawn).sub(actor.group.position).setY(0);
@@ -6094,6 +6167,8 @@ export class HeavensGateEngine {
       this.emitToast('Sentinel broken', 'Heavy patrol neutralized', 'success');
     } else if (actor.id.startsWith('stalker-')) {
       this.emitToast('Stalker silenced', 'Fast patrol neutralized', 'success');
+    } else if (actor.id.startsWith('cordon-')) {
+      this.emitToast('Seraph patrol down', 'The cordon has a gap', 'success');
     } else if (actor.id.startsWith('reinforce-')) {
       this.emitToast('Hunter down', 'Reinforcement destroyed', 'success');
     } else if (actor.kind === 'drone') {
@@ -6810,6 +6885,8 @@ export class HeavensGateEngine {
     this.closeSenaChoice();
     const elapsed = this.elapsed ?? 0;
     this.senaTalkingUntil = elapsed + 15;
+    // The cordon answer to the toll — materializes on the approach ~12 s in.
+    this.cordonAt = elapsed + CORDON_SPAWN_DELAY;
     // From below the platform — the toll is essential, so it is captioned
     // rather than carried on audio alone.
     this.audio.bell?.({ x: 0, y: -5, z: -56 }, this.camera?.position ?? { x: 0, y: 1.6, z: 0 }, this.cameraYaw ?? 0);
@@ -6853,6 +6930,159 @@ export class HeavensGateEngine {
     });
     this.scene.add(group);
     this.pushEffect({ object: group, life: 2.5, total: 2.5, mode: 'fade' });
+  }
+
+  // Beat C tail — the Seraph cordon materializes across the station approach
+  // after the bell: a posted line, a marked detection cone per rifle, and
+  // Nia's reroute to the waterline. Fully skippable — crossing the cone with
+  // heat over the alarm threshold just wakes the normal combat AI.
+  private spawnCordon(radio: boolean) {
+    if (!this.scene || this.missionIndex !== 0 || (this.cordonPatrol ?? []).length) return;
+    const patrol = (this.cordonPatrol ??= []);
+    const scans = (this.cordonScans ??= []);
+    CORDON_POSTS.forEach((post, index) => {
+      const actor = this.addActor(`cordon-seraph-${index + 1}`, 'enemy', post.x, post.z, 0x2c2622, 0xe8a34c, 96);
+      actor.posted = true;
+      actor.overwatchAim = post.aim;
+      actor.spawnYaw = post.yaw;
+      actor.speed = 2.55;
+      actor.group.scale.multiplyScalar(1.06);
+      actor.group.rotation.y = post.yaw;
+      patrol.push(actor);
+      // The marked cone — a faint wedge on the pavement each rifle watches.
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xd65a45, transparent: true, opacity: 0.05,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const geometry = (this.cordonConeGeometry ??= new THREE.CircleGeometry(
+        CORDON_CONE_RANGE, 20, -Math.PI / 2 - CORDON_CONE_HALF_ANGLE, CORDON_CONE_HALF_ANGLE * 2,
+      ));
+      const pivot = new THREE.Group();
+      const wedge = new THREE.Mesh(geometry, material);
+      wedge.rotation.x = -Math.PI / 2;
+      pivot.add(wedge);
+      pivot.position.set(post.x, 0.07, post.z);
+      pivot.rotation.y = post.yaw;
+      this.scene.add(pivot);
+      scans.push({ actor, mesh: pivot, material });
+    });
+    const props = (this.cordonProps ??= { meshes: [], boxes: [] });
+    const generation = (this.cordonGeneration = (this.cordonGeneration ?? 0) + 1);
+    void this.instancedProp('concrete_road_barrier', CORDON_BARRIERS.map((spot) => ({ ...spot })), {
+      targetHeight: 1.1, collider: { w: 2.4, d: 0.6, h: 1.1 }, track: props,
+    }).then(() => {
+      // A reset mid-load must not leave barrier strays behind.
+      if (this.cordonGeneration !== generation) this.dropCordonProps(props);
+    });
+    this.breadcrumbTarget = new THREE.Vector3(CORDON_FLANK.x, 0, CORDON_FLANK.z);
+    if (radio) {
+      // Queued past the bell replies so the radio beat never clips them.
+      const base = this.settings?.reducedMotion ? 6600 : 4300;
+      this.queueSubtitle('Nia', 'Cordon’s up on Meridian. Four rifles. They’ll see you before you see the door.', base);
+      this.queueSubtitle('Nia', 'Veil works on eyes, not on locks. Take the waterline.', base + 4300);
+      (this.narrative ??= {}).cordonSeen = true;
+      this.saveCheckpoint();
+    }
+  }
+
+  private dropCordonProps(props: { meshes: THREE.Object3D[]; boxes: THREE.Box3[] }) {
+    props.meshes.forEach((mesh) => {
+      this.scene?.remove(mesh);
+      this.rayTargets = withoutSubtree(this.rayTargets ?? [], mesh);
+      this.disposeObject(mesh);
+    });
+    const dropped = new Set(props.boxes);
+    this.collisionBoxes = (this.collisionBoxes ?? []).filter((box) => !dropped.has(box));
+    props.meshes.length = 0;
+    props.boxes.length = 0;
+  }
+
+  private clearCordon() {
+    const patrol = this.cordonPatrol ?? [];
+    patrol.forEach((actor) => {
+      this.rayTargets = withoutSubtree(this.rayTargets ?? [], actor.group);
+      this.scene?.remove(actor.group);
+      this.disposeObject(actor.group);
+    });
+    if (patrol.length) this.actors = (this.actors ?? []).filter((actor) => !patrol.includes(actor));
+    this.cordonPatrol = [];
+    (this.cordonScans ?? []).forEach((scan) => {
+      this.scene?.remove(scan.mesh);
+      this.disposeObject(scan.mesh);
+    });
+    this.cordonScans = [];
+    this.cordonConeGeometry = null;
+    if (this.cordonProps) this.dropCordonProps(this.cordonProps);
+    this.cordonGeneration = (this.cordonGeneration ?? 0) + 1;
+    this.breadcrumbTarget = null;
+  }
+
+  private updateCordon(delta: number) {
+    const elapsed = this.elapsed ?? 0;
+    // The line materializes on the approach while the opening is still live.
+    if ((this.cordonAt ?? 0) > 0 && elapsed >= (this.cordonAt ?? 0)) {
+      if (this.missionIndex === 0) this.spawnCordon(true);
+      this.cordonAt = null;
+    }
+    const scans = this.cordonScans ?? [];
+    if (!(this.cordonPatrol ?? []).length) return;
+    const playerPosition = this.currentVehicle?.group.position ?? this.player?.position;
+    if (!playerPosition) return;
+
+    // Detection tension, not instant combat: inside a posted cone with a
+    // real sight line, heat builds ~2/s toward the standing alarm at heat>6.
+    // The Veil works on eyes — it and broken sight lines bleed it back down.
+    const canDetect = this.missionIndex === 0 && !this.cordonAlerted && !this.veilActive;
+    const range = CORDON_CONE_RANGE * (this.crouching ? 0.55 : 1);
+    let spotted = false;
+    scans.forEach((scan) => {
+      const guard = scan.actor;
+      const watching = guard.alive && guard.group.visible;
+      let seeing = false;
+      if (watching && canDetect) {
+        seeing = cordonConeDetect(
+          guard.group.position.x, guard.group.position.z, guard.group.rotation.y,
+          playerPosition.x, playerPosition.z, range, CORDON_CONE_HALF_ANGLE,
+        ) && this.hasLineOfSight(
+          (this.tmpLosFrom ??= new THREE.Vector3()).copy(guard.group.position).setY(guard.group.position.y + 1.55),
+          (this.tmpLosTo ??= new THREE.Vector3()).copy(playerPosition).setY(playerPosition.y + 1.4),
+        );
+      }
+      spotted = spotted || seeing;
+      scan.mesh.visible = watching && this.missionIndex === 0 && !this.cordonAlerted;
+      scan.material.opacity = damp(scan.material.opacity, seeing ? 0.16 : 0.045, 8, delta);
+    });
+
+    if (spotted) {
+      this.heat = clamp((this.heat ?? 0) + delta * CORDON_HEAT_RATE, 0, 100);
+      // Pin the combat clock so the ambient cooldown can't fight the build.
+      this.lastCombat = elapsed;
+      this.cordonTellCooldown = (this.cordonTellCooldown ?? 0) - delta;
+      if (this.cordonTellCooldown <= 0) {
+        const level = clamp(this.heat / 8, 0, 1);
+        this.audio.detectionTell?.(level);
+        this.cordonTellCooldown = 0.9 - level * 0.45;
+      }
+      if (this.heat > 6) {
+        // The alarm is up — the posted line becomes ordinary combat AI.
+        this.cordonAlerted = true;
+        this.breadcrumbTarget = null;
+      }
+    } else if (this.missionIndex === 0) {
+      this.heat = Math.max(0, (this.heat ?? 0) - delta * 3.1);
+    }
+
+    const clearingDistance = distance2D(playerPosition.x, playerPosition.z, CORDON_CLEARING.x, CORDON_CLEARING.z);
+    if (!this.cordonPassed && !this.cordonAlerted
+      && this.missionIndex <= 1 && clearingDistance <= CORDON_CLEARING.radius) {
+      this.cordonPassed = true;
+      this.breadcrumbTarget = null;
+      this.emitSubtitle('Aurel', 'Past them.');
+    }
+    if (this.breadcrumbTarget) {
+      const nearFlank = distance2D(playerPosition.x, playerPosition.z, this.breadcrumbTarget.x, this.breadcrumbTarget.z) < 3.2;
+      if (nearFlank || this.cordonPassed || this.cordonAlerted || this.missionIndex !== 0) this.breadcrumbTarget = null;
+    }
   }
 
   private updateHeat(delta: number) {

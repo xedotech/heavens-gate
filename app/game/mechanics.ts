@@ -17,6 +17,22 @@ export function distance2D(ax: number, az: number, bx: number, bz: number) {
   return Math.hypot(ax - bx, az - bz);
 }
 
+// A posted guard's forward cone: inside range and within the half-angle of
+// the facing yaw. Zero distance always reads as seen.
+export function cordonConeDetect(
+  guardX: number, guardZ: number, guardYaw: number,
+  targetX: number, targetZ: number,
+  range: number, halfAngle: number,
+) {
+  const dx = targetX - guardX;
+  const dz = targetZ - guardZ;
+  const distance = Math.hypot(dx, dz);
+  if (distance > range) return false;
+  if (distance < 0.001) return true;
+  const alignment = (dx * Math.sin(guardYaw) + dz * Math.cos(guardYaw)) / distance;
+  return alignment >= Math.cos(halfAngle);
+}
+
 export function heatTier(heat: number) {
   if (heat >= 80) return 5;
   if (heat >= 60) return 4;
