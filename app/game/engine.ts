@@ -96,6 +96,8 @@ interface Actor {
   damagePulse: number;
   lastDamageAmount: number;
   vignette?: 'wander' | 'idle' | 'talk' | 'lean' | 'run';
+  /** Posted civilians (Sena) hold their spot instead of wandering or fleeing. */
+  posted?: boolean;
   vignetteTimer?: number;
   hitReact?: number;
   hitReactSide?: number;
@@ -248,6 +250,29 @@ const MISSION_SPAWNS: [number, number, number][] = [
   [0, 0, -44],
   [0, 0, -40],
 ];
+
+// Beat B/C of the opening script — the parcel exchange with Sena at Saint
+// Orison's edge, then the bell that should not be able to ring.
+const SENA_DELIVERY_LINES: Array<[string, string]> = [
+  ['Sena', 'Set it there. Dry side.'],
+  ['Aurel', 'Which side is dry?'],
+  ['Sena', 'It was, this morning.'],
+  ['Aurel', 'Need a signature.'],
+  ['Sena', 'Mine or the name on the order?'],
+  ['Aurel', 'Whoever paid for it.'],
+  ['Sena', 'She did. Years ago.'],
+];
+const SENA_REPLY_ASKED = 'My wife. She ordered a spare for everything. I used to complain about the space.';
+const SENA_REPLY_SIGNED = 'Thank you.';
+const SENA_BELL_LINES: Array<[string, string]> = [
+  ['Sena', 'That isn’t possible.'],
+  ['Aurel', 'Power’s back?'],
+  ['Sena', 'They took the bell down.'],
+  ['Nia', 'Every channel. Stay where you are.'],
+];
+// The lamp she tends — the last one on the approach, outside the mission
+// radius so the delivery plays before the gate can complete the operation.
+const SENA_LAMP_SPOT = { x: 0, z: -35.6 };
 
 export class HeavensGateEngine {
   readonly audio = new AudioEngine();
@@ -495,6 +520,18 @@ export class HeavensGateEngine {
   private elapsed = 0;
   private worldHours = 3.28;
   private lastSave: SaveState | null = null;
+
+  // The Bell Below scene state: `narrative` is the persisted slice; the rest
+  // are per-session timers so the bell beat can never double-fire.
+  private sena: Actor | null = null;
+  private senaLamp: THREE.Vector3 | null = null;
+  private narrative: { senaDelivered?: boolean; senaAsked?: boolean } = {};
+  private senaChoiceOpen = false;
+  private senaChoiceAt = 0;
+  private senaChoiceDeadline = 0;
+  private senaTalkingUntil = 0;
+  private bellAt: number | null = null;
+  private bellFired = false;
 
   private hudTimer = 0;
   private fpsTimer = 0;
@@ -2143,6 +2180,8 @@ export class HeavensGateEngine {
     [{ x: -72.6, z: 60.6, yaw: 2.3 }, { x: -63.8, z: 55.2, yaw: 2.4 }].forEach((bench) => {
       if (!blocked(bench.x, bench.z, 1.0)) { benches.push({ ...bench, y: 0 }); take(bench.x, bench.z, 1.0); }
     });
+    // Sena's bench beside the lamp she tends on the Saint Orison approach.
+    if (!blocked(-2.6, -32.2, 1.0)) { benches.push({ x: -2.6, y: 0, z: -32.2, yaw: -2.0 }); take(-2.6, -32.2, 1.0); }
     void this.instancedProp('painted_wooden_bench', benches, { targetHeight: 0.95, collider: { w: 1.9, d: 0.7, h: 0.95 } });
 
     // Manhole covers flush with the asphalt — visible, never blocking.
@@ -2321,7 +2360,7 @@ export class HeavensGateEngine {
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.anisotropy = 4;
         const material = new THREE.MeshBasicMaterial({ map: texture, polygonOffset: true, polygonOffsetFactor: -2 });
-        const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), material, 10);
+        const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), material, 11);
         mesh.renderOrder = 1;
         const dummy = new THREE.Object3D();
         // Same wall placement math as the procedural posters (variant 0).
@@ -2346,6 +2385,29 @@ export class HeavensGateEngine {
           dummy.scale.set(1.05 * scale, 1.5 * scale, 1);
           dummy.updateMatrix();
           mesh.setMatrixAt(i, dummy.matrix);
+        }
+        // One fixed poster on the facade nearest Sena's lamp — the notice she
+        // keeps glancing at while she works the approach.
+        if (buildingData.length) {
+          let host = buildingData[0];
+          buildingData.forEach((building) => {
+            if (Math.hypot(building.position.x - SENA_LAMP_SPOT.x, building.position.z - SENA_LAMP_SPOT.z)
+              < Math.hypot(host.position.x - SENA_LAMP_SPOT.x, host.position.z - SENA_LAMP_SPOT.z)) host = building;
+          });
+          const towardX = SENA_LAMP_SPOT.x - host.position.x;
+          const towardZ = SENA_LAMP_SPOT.z - host.position.z;
+          if (Math.abs(towardX) > Math.abs(towardZ)) {
+            const side = Math.sign(towardX) || 1;
+            dummy.position.set(host.position.x + side * (host.scale.x * 0.5 + 0.052), 1.9, host.position.z);
+            dummy.rotation.set(0, side > 0 ? Math.PI / 2 : -Math.PI / 2, 0);
+          } else {
+            const side = Math.sign(towardZ) || 1;
+            dummy.position.set(host.position.x, 1.9, host.position.z + side * (host.scale.z * 0.5 + 0.052));
+            dummy.rotation.set(0, side > 0 ? 0 : Math.PI, 0);
+          }
+          dummy.scale.set(1.15, 1.65, 1);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(10, dummy.matrix);
         }
         mesh.instanceMatrix.needsUpdate = true;
         this.scene.add(mesh);
@@ -3753,6 +3815,29 @@ export class HeavensGateEngine {
       }
     }
 
+    // Sena — Saint Orison's caretaker, posted at the last lamp on the
+    // approach. Warm umber coat and a copper scarf set her apart from the
+    // Crown palette; `posted` keeps her at the lamp until the cordon beat.
+    let senaLamp = (this.streetLamps ?? [])[0] ?? null;
+    (this.streetLamps ?? []).forEach((lamp) => {
+      if (!senaLamp || Math.hypot(lamp.x - SENA_LAMP_SPOT.x, lamp.z - SENA_LAMP_SPOT.z)
+        < Math.hypot(senaLamp.x - SENA_LAMP_SPOT.x, senaLamp.z - SENA_LAMP_SPOT.z)) senaLamp = lamp;
+    });
+    this.senaLamp = new THREE.Vector3(senaLamp?.x ?? SENA_LAMP_SPOT.x, 0, senaLamp?.z ?? SENA_LAMP_SPOT.z);
+    const sena = this.addActor(
+      'sena',
+      'civilian',
+      this.senaLamp.x + 0.95,
+      this.senaLamp.z + 0.75,
+      0x5c4a38,
+      0x8a6242,
+      42,
+    );
+    sena.posted = true;
+    sena.vignette = 'idle';
+    this.addCivilianAccessory(sena, 'scarf', 0xb5764a);
+    this.sena = sena;
+
     [[62, 26], [-58, 4], [102, 95], [-110, 78], [8, -100], [88, -72]].forEach(([x, z], index) => {
       this.createDrone(`choir-drone-${index + 1}`, x, z);
     });
@@ -4261,6 +4346,18 @@ export class HeavensGateEngine {
     this.lastCombat = this.elapsed - 8;
     this.gameOverSent = false;
     this.choiceRequested = false;
+    // Scene beats restore from the save: a delivered Sena goes back to tending
+    // her lamp — no repeat dialogue, and the bell never tolls twice.
+    this.narrative = save?.narrative ? { ...save.narrative } : {};
+    this.senaChoiceOpen = false;
+    this.senaChoiceAt = 0;
+    this.senaChoiceDeadline = 0;
+    this.senaTalkingUntil = 0;
+    this.bellFired = false;
+    // A delivered receipt in the save means the scene already ran — Sena just
+    // tends her lamp and the bell never tolls twice.
+    this.bellAt = null;
+    this.callbacks?.onDialogueChoice?.(null);
     this.veilActive = false;
     this.veilTimer = 0;
     this.veilCooldown = 0;
@@ -4557,6 +4654,7 @@ export class HeavensGateEngine {
     this.updateWeaponSway(delta);
     this.updateEffects(delta);
     this.updateMission();
+    this.updateSena();
     this.updateCamera(delta);
     this.updateHeat(delta);
     this.updateHUD(delta);
@@ -4590,7 +4688,12 @@ export class HeavensGateEngine {
       this.emitToast(`Photo grade: ${grade.name}`, grade.hint, 'info');
     }
     if (this.wasActionPressed('reload')) this.startReload();
-    if (this.wasActionPressed('veil')) this.toggleVeil();
+    // While Sena's prompt is up, E/Q answer her instead of interacting/veiling.
+    const senaAnswering = this.senaChoiceOpen === true;
+    if (this.wasActionPressed('veil')) {
+      if (senaAnswering) this.chooseDialogueOption(1);
+      else this.toggleVeil();
+    }
     if (this.wasActionPressed('pulse')) this.usePulse();
     if (this.wasActionPressed('weaponSwap')) this.cycleWeapon();
     if (this.wasActionPressed('melee')) this.tryMelee();
@@ -4599,7 +4702,10 @@ export class HeavensGateEngine {
       this.shoulderSide = -(this.shoulderSide ?? 1);
       this.emitToast('Shoulder swapped', this.shoulderSide > 0 ? 'Camera favors the right shoulder' : 'Camera favors the left shoulder', 'info');
     }
-    if (this.wasActionPressed('interact')) this.interact();
+    if (this.wasActionPressed('interact')) {
+      if (senaAnswering) this.chooseDialogueOption(0);
+      else this.interact();
+    }
   }
 
   private isActionHeld(action: KeybindAction) {
@@ -5423,12 +5529,33 @@ export class HeavensGateEngine {
       actor.hitReact = Math.max(0, (actor.hitReact ?? 0) - delta * 2.6);
 
       if (actor.kind === 'civilian') {
-        const threatened = actor.flee > 0 || (this.heat > 12 && distance < 22);
+        const posted = actor.posted === true && this.missionIndex === 0;
+        const threatened = !posted && (actor.flee > 0 || (this.heat > 12 && distance < 22));
         if (threatened) {
           actor.flee = Math.max(actor.flee, 3.5);
           const away = this.tmpMove.copy(actor.group.position).sub(playerPosition).setY(0).normalize();
           this.moveActor(actor, away, actor.speed * 2.25, delta);
           actor.flee -= delta;
+        } else if (posted) {
+          // Tending loop: she faces the lamp — or Aurel while the delivery
+          // exchange runs — and one arm keeps a slow wipe against the glass.
+          const focus = (this.elapsed < (this.senaTalkingUntil ?? 0) || this.senaChoiceOpen)
+            ? playerPosition
+            : this.senaLamp;
+          if (focus) {
+            const dx = focus.x - actor.group.position.x;
+            const dz = focus.z - actor.group.position.z;
+            if (dx * dx + dz * dz > 0.04) {
+              actor.group.rotation.y = Math.atan2(dx, dz);
+            }
+          }
+          actor.group.position.x = actor.spawn.x + Math.sin(time * 0.32 + actorIndex) * 0.05;
+          this.animateActorLod(actor, 0, delta);
+          if (actor.rig) {
+            const reach = Math.max(0, Math.sin(time * 0.9));
+            actor.rig.arms[0].rotation.x = -0.35 - reach * 0.85;
+            actor.rig.arms[0].rotation.z = -0.14;
+          }
         } else if (actor.vignette === 'talk') {
           // Conversation loop: face partner, gesture sway, occasional blip.
           actor.group.position.y = Math.sin(time * 1.6 + actorIndex) * 0.015;
@@ -6355,6 +6482,10 @@ export class HeavensGateEngine {
       this.exitVehicle();
       return;
     }
+    if (this.senaInRange()) {
+      this.startSenaDelivery();
+      return;
+    }
     const nearbyVehicle = this.vehicles
       .filter((vehicle) => !vehicle.occupied)
       .sort((a, b) => a.group.position.distanceTo(this.player.position) - b.group.position.distanceTo(this.player.position))[0];
@@ -6551,7 +6682,8 @@ export class HeavensGateEngine {
     const interact = `${this.bindingLabel('interact')} / Y`;
     if (this.currentVehicle) prompt = { action: interact, label: 'Exit Seraph' };
     else {
-      const vehicle = this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
+      if (this.senaInRange()) prompt = { action: interact, label: 'Talk to Sena' };
+      const vehicle = prompt ? undefined : this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
       if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.spec.name}` };
       if (!prompt && this.elapsed - this.lastAltarAt > 12) {
         const altarDistance = this.altarDistance();
@@ -6569,6 +6701,158 @@ export class HeavensGateEngine {
       this.lastInteraction = signature;
       this.callbacks.onInteraction(prompt);
     }
+  }
+
+  // Sena takes the delivery before the altar/vehicle checks — her prompt only
+  // exists while the parcel is still on Aurel during the opening operation.
+  private senaInRange() {
+    const sena = this.sena;
+    if (!sena?.alive || !sena.group.visible || !this.player) return false;
+    if (this.missionIndex !== 0 || this.narrative?.senaDelivered) return false;
+    return sena.group.position.distanceTo(this.player.position) < 3.4;
+  }
+
+  private queueSubtitle(speaker: string, text: string, delayMs: number) {
+    const timeouts = (this.timeouts ??= new Set());
+    const timeout = setTimeout(() => {
+      this.emitSubtitle(speaker, text);
+      timeouts.delete(timeout);
+    }, delayMs);
+    timeouts.add(timeout);
+  }
+
+  private startSenaDelivery() {
+    const narrative = (this.narrative ??= {});
+    if (narrative.senaDelivered) return;
+    narrative.senaDelivered = true;
+    const elapsed = this.elapsed ?? 0;
+    this.senaTalkingUntil = elapsed + 20.5;
+    // Briefing cadence — one line at a time so subtitles never stack or clip.
+    SENA_DELIVERY_LINES.forEach(([speaker, text], index) => {
+      this.queueSubtitle(speaker, text, index * 2600 + 350);
+    });
+    this.senaChoiceAt = elapsed + 18.2;
+    this.bellAt = elapsed + 23.6;
+    this.audio.ui(true);
+    // The receipt records delivery exactly once — persisted before the beat.
+    this.saveCheckpoint();
+  }
+
+  private openSenaChoice() {
+    this.senaChoiceOpen = true;
+    this.senaChoiceDeadline = (this.elapsed ?? 0) + 14;
+    this.senaTalkingUntil = (this.elapsed ?? 0) + 14;
+    this.callbacks?.onDialogueChoice?.({
+      prompt: 'Sena waits on the receipt.',
+      options: [
+        { action: `${this.bindingLabel('interact')} / Y`, label: '“Who was she?”', detail: 'Ask about the name on the order' },
+        { action: `${this.bindingLabel('veil')} / LB`, label: '“Your signature will do.”', detail: 'Close the delivery' },
+      ],
+    });
+  }
+
+  private closeSenaChoice() {
+    if (!this.senaChoiceOpen) return;
+    this.senaChoiceOpen = false;
+    this.callbacks?.onDialogueChoice?.(null);
+  }
+
+  chooseDialogueOption(index: number) {
+    if (!this.senaChoiceOpen) return;
+    this.closeSenaChoice();
+    const narrative = (this.narrative ??= {});
+    const asked = index === 0;
+    narrative.senaAsked = asked;
+    const elapsed = this.elapsed ?? 0;
+    this.senaTalkingUntil = elapsed + 7;
+    this.emitSubtitle('Aurel', asked ? 'Who was she?' : 'Your signature will do.');
+    this.queueSubtitle('Sena', asked ? SENA_REPLY_ASKED : SENA_REPLY_SIGNED, 2400);
+    // The answer gets its moment — the bell lands about four seconds after it.
+    this.bellAt = elapsed + 10;
+    this.audio.ui(asked);
+    this.saveCheckpoint();
+  }
+
+  private updateSena() {
+    const sena = this.sena;
+    if (!sena) return;
+    const narrative = this.narrative;
+    const elapsed = this.elapsed ?? 0;
+    const playerPosition = this.currentVehicle?.group.position ?? this.player?.position;
+    const distance = playerPosition ? sena.group.position.distanceTo(playerPosition) : 0;
+    if (this.senaChoiceOpen) {
+      // Walking away, waiting too long, or the cordon arriving first all
+      // close the question — the delivery stands either way.
+      if (distance > 9 || this.missionIndex !== 0 || elapsed > this.senaChoiceDeadline) {
+        this.closeSenaChoice();
+        if ((this.bellAt ?? 0) > 0) this.bellAt = Math.max(this.bellAt ?? 0, elapsed + 4.2);
+      }
+    } else if (
+      this.missionIndex === 0 && sena.alive
+      && narrative?.senaDelivered && narrative.senaAsked === undefined
+      && !this.bellFired && (this.senaChoiceAt ?? 0) > 0 && elapsed >= this.senaChoiceAt
+      && distance < 9
+    ) {
+      this.openSenaChoice();
+    }
+    if (
+      narrative?.senaDelivered && !this.bellFired && !this.senaChoiceOpen
+      && (this.bellAt ?? 0) > 0 && elapsed >= (this.bellAt ?? 0)
+    ) {
+      if (this.missionIndex === 0) this.fireBell();
+      else this.bellAt = null; // The cordon came first — the bell stays silent.
+    }
+  }
+
+  private fireBell() {
+    if (this.bellFired) return;
+    this.bellFired = true;
+    this.closeSenaChoice();
+    const elapsed = this.elapsed ?? 0;
+    this.senaTalkingUntil = elapsed + 15;
+    // From below the platform — the toll is essential, so it is captioned
+    // rather than carried on audio alone.
+    this.audio.bell?.({ x: 0, y: -5, z: -56 }, this.camera?.position ?? { x: 0, y: 1.6, z: 0 }, this.cameraYaw ?? 0);
+    this.emitSubtitle('Below the platform', 'A bell tolls — once — deep under Saint Orison.');
+    if (this.settings?.reducedMotion) {
+      // Reduced-motion skips the flash: the glimpse is a captioned beat.
+      this.queueSubtitle('Below the platform', 'Silent figures fill the platform for a breath — then no one is there.', 3400);
+    } else {
+      this.lightningFlash = 1;
+      this.spawnBellEchoes();
+    }
+    const replies = this.sena?.alive ? SENA_BELL_LINES : SENA_BELL_LINES.filter(([speaker]) => speaker !== 'Sena');
+    const base = this.settings?.reducedMotion ? 6600 : 4400;
+    replies.forEach(([speaker, text], index) => {
+      this.queueSubtitle(speaker, text, base + index * 2700);
+    });
+  }
+
+  // The platform, briefly occupied — the civilian figure read as dark
+  // translucent shapes, cleared by the standard fade/dispose effect pass.
+  private spawnBellEchoes() {
+    if (!this.scene) return;
+    const group = new THREE.Group();
+    const spots: Array<[number, number]> = [
+      [-4.2, -51.8], [2.6, -55.2], [0.4, -58.6], [-6.6, -55.6],
+      [5.4, -50.4], [1.6, -48.8], [-2.2, -60.2], [7.4, -57.8],
+    ];
+    spots.forEach(([x, z], index) => {
+      const echo = this.humanoid(`citizen-bell-echo-${index}`, 0x0a0d12, 0x0a0d12);
+      echo.group.position.set(x, 0, z);
+      echo.group.rotation.y = seeded(index, 380) * Math.PI * 2;
+      echo.materials.forEach((material) => {
+        material.transparent = true;
+        material.opacity = 0.58;
+        material.color.setHex(0x06090d);
+        material.emissive.setHex(0x000000);
+        material.emissiveIntensity = 0;
+        material.depthWrite = false;
+      });
+      group.add(echo.group);
+    });
+    this.scene.add(group);
+    this.pushEffect({ object: group, life: 2.5, total: 2.5, mode: 'fade' });
   }
 
   private updateHeat(delta: number) {
@@ -7129,6 +7413,7 @@ export class HeavensGateEngine {
         ...this.weaponPools,
         [this.weaponId]: { ammo: this.ammo, reserve: this.reserveAmmo },
       },
+      ...(Object.keys(this.narrative ?? {}).length ? { narrative: { ...this.narrative } } : {}),
       ending,
       updatedAt: Date.now(),
     }, this.lastSave);

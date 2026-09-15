@@ -1138,6 +1138,54 @@ kbd {
   text-transform: uppercase;
 }
 
+/* In-HUD dialogue picker — the final-verdict choice language shrunk to a
+   chip row so play and camera stay live underneath it. */
+.dialogue-choice {
+  position: absolute;
+  bottom: 24%;
+  left: 50%;
+  width: min(460px, 92vw);
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-strong);
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
+.dialogue-choice .eyebrow {
+  margin-bottom: 8px;
+}
+
+.dialogue-choice .choice-grid {
+  gap: 8px;
+}
+
+.dialogue-choice .choice-grid button {
+  min-height: 0;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.dialogue-choice .choice-grid button small {
+  margin-bottom: 2px;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.dialogue-choice .choice-grid button strong {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .tutorial-strip {
   position: absolute;
   top: 22px;

@@ -602,6 +602,39 @@ export class AudioEngine {
     });
   }
 
+  // The toll under Saint Orison — a low sine stack struck by a noise mallet,
+  // always occluded-lowpassed so it reads as sounding through the street.
+  bell(source: SoundPosition, listener: SoundPosition, yaw: number) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(source, listener, yaw, true);
+    const gain = Math.min(mix.gain * 1.5, 0.24);
+    if (gain < 0.002) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan;
+    master.gain.value = gain;
+    filter.type = 'lowpass';
+    filter.frequency.value = Math.min(1200, mix.cutoff);
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const voices: AudioScheduledSourceNode[] = [];
+    const strike = this.noise(0.5, 0.5, 210, filter);
+    if (strike) voices.push(strike);
+    [55, 82.41, 110, 164.81].forEach((note, index) => {
+      const voice = this.tone(note, 3.6 - index * 0.55, 'sine', 0.4 - index * 0.09, index * 0.04, filter, note * 0.982);
+      if (voice) voices.push(voice);
+    });
+    let remaining = voices.length;
+    const cleanup = () => { filter.disconnect(); pan.disconnect(); master.disconnect(); };
+    if (!remaining) cleanup();
+    voices.forEach((voice) => voice.addEventListener('ended', () => {
+      remaining -= 1;
+      if (remaining === 0) cleanup();
+    }, { once: true }));
+  }
+
   pulse() {
     this.tone(65, 0.65, 'sine', 0.12, 0, this.effectsBus, 520);
     this.noise(0.28, 0.09, 920);

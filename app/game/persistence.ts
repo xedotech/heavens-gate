@@ -62,6 +62,15 @@ export function normalizeSettings(value: unknown): GameSettings {
   };
 }
 
+// Scene-beat flags stay strictly optional: absent stays absent, and keys this
+// build doesn't know are dropped rather than carried forward blindly.
+function normalizeNarrative(value: Record<string, unknown>): SaveState['narrative'] | undefined {
+  const narrative: NonNullable<SaveState['narrative']> = {};
+  if (typeof value.senaDelivered === 'boolean') narrative.senaDelivered = value.senaDelivered;
+  if (typeof value.senaAsked === 'boolean') narrative.senaAsked = value.senaAsked;
+  return Object.keys(narrative).length ? narrative : undefined;
+}
+
 function normalizeWeaponAmmo(value: Record<string, unknown>): SaveState['weaponAmmo'] {
   const pools: NonNullable<SaveState['weaponAmmo']> = {};
   WEAPON_ORDER.forEach((id) => {
@@ -115,6 +124,7 @@ export function normalizeSave(value: unknown): SaveState | null {
     ...(value.replays !== undefined ? { replays: finite(value.replays, 0, 0, 9, true) } : {}),
     elapsed: finite(value.elapsed, 0, 0, Number.MAX_SAFE_INTEGER / 1000),
     ...(ending ? { ending } : {}),
+    ...(record(value.narrative) && normalizeNarrative(value.narrative) ? { narrative: normalizeNarrative(value.narrative) } : {}),
     updatedAt: finite(value.updatedAt, 0, 0, 8.64e15, true),
   };
 }

@@ -134,6 +134,21 @@ describe('checkpoint validation and repair', () => {
     expect(normalizeSave(checkpoint({ missionIndex: 2, ending: 'open' }))).not.toHaveProperty('ending');
   });
 
+  it('keeps only recognized narrative booleans and drops the field when it is empty', () => {
+    // Old saves simply lack the field — it must stay absent after repair.
+    expect(normalizeSave(checkpoint())).not.toHaveProperty('narrative');
+    const save = normalizeSave({
+      ...checkpoint(),
+      narrative: { senaDelivered: true, senaAsked: 'yes', unknownBeat: true } as unknown as SaveState['narrative'],
+    });
+    expect(save?.narrative).toEqual({ senaDelivered: true });
+    expect(normalizeSave({ ...checkpoint(), narrative: { futureFlag: true } })).not.toHaveProperty('narrative');
+    expect(normalizeSave({ ...checkpoint(), narrative: 'delivered' })).not.toHaveProperty('narrative');
+    // Both flags round-trip untouched so a reload replays Sena's idle, not her scene.
+    expect(normalizeSave(checkpoint({ narrative: { senaDelivered: true, senaAsked: false } })))
+      .toMatchObject({ narrative: { senaDelivered: true, senaAsked: false } });
+  });
+
   it('preserves the chosen ending across repeated epilogue checkpoints but not a new campaign', () => {
     for (const ending of ['open', 'seal'] as const) {
       const prior = checkpoint({ missionIndex: 7, ending });

@@ -39,6 +39,7 @@ import {
   INITIAL_HUD,
   MISSIONS,
   type CharacterSkin,
+  type DialogueChoicePrompt,
   type Difficulty,
   type GameSettings,
   type HUDState,
@@ -265,6 +266,7 @@ export default function GameShell() {
   const [subtitle, setSubtitle] = useState<SubtitleLine | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [interaction, setInteraction] = useState<InteractionPrompt | null>(null);
+  const [dialogueChoice, setDialogueChoice] = useState<DialogueChoicePrompt | null>(null);
   const [muted, setMuted] = useState(false);
   const [tutorial, setTutorial] = useState(false);
   const [ending, setEnding] = useState<'open' | 'seal' | null>(null);
@@ -336,6 +338,7 @@ export default function GameShell() {
         },
         onToast: addToast,
         onInteraction: setInteraction,
+        onDialogueChoice: setDialogueChoice,
         onPauseRequested: () => {
           engineRef.current?.pause();
           setScreen('paused');
@@ -367,6 +370,8 @@ export default function GameShell() {
         }
         engineRef.current = engine;
         await engine.initialize();
+        // QA hook — lets the smoke/frame tools drive and inspect a live engine.
+        if (process.env.NODE_ENV !== 'production') (window as unknown as { __hg?: HeavensGateEngine }).__hg = engine;
       } catch (initializationError) {
         if (disposed) return;
         window.clearTimeout(slowBootTimer);
@@ -659,6 +664,19 @@ export default function GameShell() {
           )}
 
           {interaction && <div className="interaction-prompt"><kbd>{interaction.action}</kbd><span>{interaction.label}</span></div>}
+          {dialogueChoice && (
+            <section className="dialogue-choice" role="dialog" aria-label={dialogueChoice.prompt}>
+              <p className="eyebrow">{dialogueChoice.prompt}</p>
+              <div className="choice-grid">
+                {dialogueChoice.options.map((option, index) => (
+                  <button key={option.label} type="button" onClick={() => engineRef.current?.chooseDialogueOption(index)}>
+                    <kbd>{option.action}</kbd>
+                    <span><small>{option.label}</small>{option.detail && <strong>{option.detail}</strong>}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           {tutorial && (
             <div className="tutorial-strip" role="status">
               <span><kbd>{[settings.keybinds.moveForward, settings.keybinds.moveLeft, settings.keybinds.moveBackward, settings.keybinds.moveRight].map(formatBinding).join(' / ')}</kbd> Move</span><span><kbd>{formatBinding(settings.keybinds.sprint)}</kbd> Sprint</span><span><kbd>{formatBinding(settings.keybinds.crouch)}</kbd> Crouch · slide</span><span><kbd>{formatBinding(settings.keybinds.dodge)} / B</kbd> Dodge</span><span><kbd>RMB / LT</kbd> Aim</span><span><kbd>LMB / RT</kbd> Fire</span><span><kbd>{formatBinding(settings.keybinds.interact)}</kbd> Interact</span><span><kbd>{formatBinding(settings.keybinds.weaponSwap)} / wheel / ↓</kbd> Swap</span><span><kbd>{formatBinding(settings.keybinds.inspect)}</kbd> Inspect</span>

@@ -285,6 +285,22 @@ async function main() {
     return canvas ? `${canvas.width}x${canvas.height}` : null;
   });
   await step(`10-${switchTier}-play-late`, () => sleep(9000));
+  // Walk the approach toward Saint Orison (0, -54): swing the view back off
+  // the look step's yaw, then run the road. Sena's lamp is the last before
+  // the gate — the shot lands wherever the keys actually reach.
+  await step('11-sena', async () => {
+    const canvas = await page.$('canvas.world-canvas');
+    const box = await canvas.boundingBox();
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    await page.mouse.move(cx + 300, cy);
+    await page.mouse.move(cx, cy, { steps: 20 });
+    await page.keyboard.down('Shift');
+    await page.keyboard.down('w');
+    await sleep(4500);
+    await page.keyboard.up('w');
+    await page.keyboard.up('Shift');
+  });
 
   const report = {
     browser: executablePath,

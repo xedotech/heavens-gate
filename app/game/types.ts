@@ -95,6 +95,11 @@ export interface SaveState {
   replays?: number;
   elapsed: number;
   ending?: 'open' | 'seal';
+  /** Scene-beat flags — additive and optional so older saves load unchanged. */
+  narrative?: {
+    senaDelivered?: boolean;
+    senaAsked?: boolean;
+  };
   updatedAt: number;
 }
 
@@ -177,6 +182,18 @@ export interface InteractionPrompt {
   action: string;
 }
 
+export interface DialogueChoiceOption {
+  /** Key hint shown on the option chip (e.g. "E / Y"). */
+  action: string;
+  label: string;
+  detail?: string;
+}
+
+export interface DialogueChoicePrompt {
+  prompt: string;
+  options: DialogueChoiceOption[];
+}
+
 export type MissionKind = 'reach' | 'eliminate' | 'vehicle' | 'drive' | 'echoes' | 'boss' | 'choice' | 'complete';
 
 export interface MissionDefinition {
@@ -202,6 +219,8 @@ export interface EngineCallbacks {
   onPauseRequested: () => void;
   onGameOver: () => void;
   onChoiceRequested: () => void;
+  /** Small in-HUD dialogue picker — null dismisses it. Optional so embedders can ignore it. */
+  onDialogueChoice?: (choice: DialogueChoicePrompt | null) => void;
   onCampaignComplete: (ending: 'open' | 'seal') => void;
   onError: (message: string) => void;
   onSave: (save: SaveState) => void;
