@@ -51,6 +51,7 @@ export function normalizeSettings(value: unknown): GameSettings {
     subtitles: typeof source.subtitles === 'boolean' ? source.subtitles : DEFAULT_SETTINGS.subtitles,
     subtitleSize: choice(source.subtitleSize, ['standard', 'large'], DEFAULT_SETTINGS.subtitleSize),
     aimAssist: typeof source.aimAssist === 'boolean' ? source.aimAssist : DEFAULT_SETTINGS.aimAssist,
+    aimToggle: typeof source.aimToggle === 'boolean' ? source.aimToggle : DEFAULT_SETTINGS.aimToggle,
     rotateMinimap: typeof source.rotateMinimap === 'boolean' ? source.rotateMinimap : DEFAULT_SETTINGS.rotateMinimap,
     reducedMotion: typeof source.reducedMotion === 'boolean' ? source.reducedMotion : DEFAULT_SETTINGS.reducedMotion,
     highContrast: typeof source.highContrast === 'boolean' ? source.highContrast : DEFAULT_SETTINGS.highContrast,

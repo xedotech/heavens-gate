@@ -409,6 +409,7 @@ export class HeavensGateEngine {
   private gamepadAxes = { moveX: 0, moveY: 0, lookX: 0, lookY: 0, aim: 0, shoot: 0 };
   private mouseShootHeld = false;
   private mouseAimHeld = false;
+  private aimToggled = false;
   private shotCooldown = 0;
   private weaponRecoil = 0;
   private shotIndex = 0;
@@ -528,7 +529,8 @@ export class HeavensGateEngine {
       if (retry) void retry.catch(() => {});
     }
     if (event.button === 2) {
-      this.mouseAimHeld = true;
+      if (this.settings.aimToggle) this.aimToggled = !this.aimToggled;
+      else this.mouseAimHeld = true;
       return;
     }
     this.mouseShootHeld = true;
@@ -543,7 +545,7 @@ export class HeavensGateEngine {
 
   private readonly onPointerUp = (event: PointerEvent) => {
     if (event.button === 0) this.mouseShootHeld = false;
-    if (event.button === 2) this.mouseAimHeld = false;
+    if (event.button === 2 && !this.settings.aimToggle) this.mouseAimHeld = false;
   };
 
   private readonly onWheel = (event: WheelEvent) => {
@@ -3961,6 +3963,7 @@ export class HeavensGateEngine {
     this.gamepadAxes = this.input.gamepadAxes;
     this.mouseShootHeld = false;
     this.mouseAimHeld = false;
+    this.aimToggled = false;
     this.clearTouchInput();
   }
 
@@ -4028,7 +4031,7 @@ export class HeavensGateEngine {
 
   private isAiming() {
     if (this.currentVehicle) return false;
-    return this.mouseAimHeld || this.gamepadAxes.aim > 0.2 || this.touchAim;
+    return this.mouseAimHeld || this.aimToggled || this.gamepadAxes.aim > 0.2 || this.touchAim;
   }
 
   setTouchMove(x: number, y: number) {
@@ -5061,6 +5064,7 @@ export class HeavensGateEngine {
       this.gameOverSent = true;
       this.mouseShootHeld = false;
       this.mouseAimHeld = false;
+      this.aimToggled = false;
       this.audio.setEngine(0, false);
       // Death cam: brief orbit before the game-over screen, with a recap line
       // naming whatever fired the killing shot.
@@ -5704,6 +5708,7 @@ export class HeavensGateEngine {
 
   private enterVehicle(vehicle: Vehicle) {
     this.currentVehicle = vehicle;
+    this.aimToggled = false;
     vehicle.occupied = true;
     vehicle.bodyMaterial.emissive.setHex(0x4c3612);
     vehicle.bodyMaterial.emissiveIntensity = 0.5;

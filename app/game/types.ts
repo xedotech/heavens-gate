@@ -65,6 +65,8 @@ export interface GameSettings {
   subtitles: boolean;
   subtitleSize: 'standard' | 'large';
   aimAssist: boolean;
+  /** When on, clicking aim toggles ADS instead of holding it. */
+  aimToggle: boolean;
   rotateMinimap: boolean;
   reducedMotion: boolean;
   highContrast: boolean;
@@ -242,6 +244,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   subtitles: true,
   subtitleSize: 'standard',
   aimAssist: true,
+  aimToggle: false,
   rotateMinimap: false,
   reducedMotion: false,
   highContrast: false,
