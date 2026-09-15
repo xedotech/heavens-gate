@@ -39,11 +39,16 @@ function scheduleApply(fn: () => void) {
 function drainApplyQueue() {
   applyQueue.shift()?.();
   if (applyQueue.length) nextFrame();
-  else applyScheduled = false;
+  else {
+    applyScheduled = false;
+    ScannedSurfaceMaterial.onQueueDrained?.();
+  }
 }
 
 /** Owns one shared material and its maps. All downloads are self-hosted. */
 export class ScannedSurfaceMaterial {
+  /** Called when the apply queue fully drains — the engine prewarms compiles. */
+  static onQueueDrained: (() => void) | null = null;
   readonly material: THREE.MeshStandardMaterial;
   private controller: AbortController | null = null;
   private currentTier: ScanTier | null = null;

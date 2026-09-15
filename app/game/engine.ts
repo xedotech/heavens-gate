@@ -734,6 +734,13 @@ export class HeavensGateEngine {
     this.resize();
     this.createComposer();
     this.applyQuality();
+    // Scanned surfaces bind maps staggered per frame; when the queue drains,
+    // compile the touched programs off the critical path instead of letting
+    // the next rendered frame pay every compile at once.
+    ScannedSurfaceMaterial.onQueueDrained = () => {
+      const compile = this.renderer?.compileAsync?.bind(this.renderer);
+      if (compile && this.scene && this.camera) void compile(this.scene, this.camera).catch(() => {});
+    };
   }
 
   private createComposer() {
@@ -7705,6 +7712,7 @@ export class HeavensGateEngine {
       this.heroCharacter = null;
     }
     this.audio.dispose();
+    ScannedSurfaceMaterial.onQueueDrained = null;
     this.scannedSurfaces.forEach((surface) => surface.dispose());
     this.scannedSurfaces = [];
     this.scannedGround = null;
