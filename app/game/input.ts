@@ -86,6 +86,94 @@ export function gamepadLookDelta(axes: Pick<GamepadAxes, 'lookX' | 'lookY'>, sen
   return { yaw: -finiteClamped(axes.lookX, -1, 1) * speed, pitch: -finiteClamped(axes.lookY, -1, 1) * speed };
 }
 
+/* ------------------------------------------------------------------------ */
+/* Touch input — analog stick response curve and smoothed look-drag.         */
+/* ------------------------------------------------------------------------ */
+
+/** Inner deadzone of the touch move stick, as a fraction of its radius. */
+export const TOUCH_STICK_DEADZONE = 0.12;
+
+/**
+ * Radial response for the touch move stick. Inside the deadzone the stick
+ * reports zero; past it an ease-out cubic ramps to full deflection at the rim,
+ * so small pushes answer quickly while the rim still means "full speed".
+ * Direction is preserved exactly and the output magnitude never exceeds 1.
+ */
+export function touchStickResponse(
+  deltaX: number,
+  deltaY: number,
+  radius: number,
+  deadzone = TOUCH_STICK_DEADZONE,
+) {
+  const length = Math.hypot(deltaX, deltaY);
+  if (!Number.isFinite(length) || !Number.isFinite(radius) || radius <= 0 || length <= 0) {
+    return { x: 0, y: 0 };
+  }
+  const radial = Math.min(length / radius, 1);
+  if (radial <= deadzone) return { x: 0, y: 0 };
+  const t = (radial - deadzone) / (1 - deadzone);
+  const magnitude = 1 - (1 - t) * (1 - t) * (1 - t);
+  return { x: (deltaX / length) * magnitude, y: (deltaY / length) * magnitude };
+}
+
+/** /s — how hard tracked velocity chases the measured finger velocity. */
+export const TOUCH_LOOK_RESPONSE = 15;
+/** /s — exponential decay of leftover velocity once deltas stop arriving. */
+export const TOUCH_LOOK_DECAY = 10;
+/** px/s — a glide slower than this is snapped to zero to end the tail. */
+export const TOUCH_LOOK_MIN_SPEED = 1.5;
+
+/**
+ * Velocity model for the touch look-drag. Raw pointer deltas are queued via
+ * push() as they arrive; advance() runs once per animation frame and returns
+ * the smoothed camera delta for that frame.
+ *
+ * While deltas keep arriving, velocity is low-passed toward the measured
+ * finger speed (time constant ≈ 1/TOUCH_LOOK_RESPONSE ≈ 65ms of effective lag)
+ * so single jittery or coalesced events cannot spike the camera. Once deltas
+ * stop — finger held still or lifted — leftover velocity bleeds off
+ * exponentially, which produces the inertial "fling" of a shipped mobile port.
+ */
+export class TouchLookSmoother {
+  private vx = 0;
+  private vy = 0;
+  private pendingX = 0;
+  private pendingY = 0;
+
+  push(deltaX: number, deltaY: number) {
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return;
+    this.pendingX += deltaX;
+    this.pendingY += deltaY;
+  }
+
+  reset() {
+    this.vx = 0;
+    this.vy = 0;
+    this.pendingX = 0;
+    this.pendingY = 0;
+  }
+
+  advance(dtSeconds: number, response = TOUCH_LOOK_RESPONSE, decay = TOUCH_LOOK_DECAY) {
+    const dt = Number.isFinite(dtSeconds) ? Math.min(Math.max(dtSeconds, 0.0001), 0.05) : 1 / 60;
+    if (this.pendingX !== 0 || this.pendingY !== 0) {
+      const track = 1 - Math.exp(-dt * response);
+      this.vx += (this.pendingX / dt - this.vx) * track;
+      this.vy += (this.pendingY / dt - this.vy) * track;
+      this.pendingX = 0;
+      this.pendingY = 0;
+    } else if (this.vx !== 0 || this.vy !== 0) {
+      const damp = Math.exp(-dt * decay);
+      this.vx *= damp;
+      this.vy *= damp;
+      if (Math.hypot(this.vx, this.vy) < TOUCH_LOOK_MIN_SPEED) {
+        this.vx = 0;
+        this.vy = 0;
+      }
+    }
+    return { dx: this.vx * dt, dy: this.vy * dt };
+  }
+}
+
 function acceptsLegacyCrouch(bindings: Keybinds) {
   return bindings.crouch === DEFAULT_KEYBINDS.crouch && !Object.values(bindings).includes('control');
 }

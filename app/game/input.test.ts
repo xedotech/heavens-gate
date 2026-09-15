@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { GAMEPAD_ACTION_BUTTONS, GameInputState, gamepadLookDelta, isGameplayBinding, type GamepadSnapshot } from './input';
+import {
+  GAMEPAD_ACTION_BUTTONS,
+  GameInputState,
+  TouchLookSmoother,
+  gamepadLookDelta,
+  isGameplayBinding,
+  touchStickResponse,
+  type GamepadSnapshot,
+} from './input';
 import { assignKeybind } from './keybinds';
 import { DEFAULT_KEYBINDS, type KeybindAction } from './types';
 
@@ -205,6 +213,98 @@ describe('standard gamepad input', () => {
       }
       expect(yaw).toBeCloseTo(-0.65 * 2.1);
       expect(pitch).toBeCloseTo(-0.65 * 2.1 * 0.5);
+    }
+  });
+});
+
+describe('touch stick response', () => {
+  const radius = 46;
+
+  it('zeros the deadzone, reaches full deflection at the rim, and clamps past it', () => {
+    expect(touchStickResponse(0, 0, radius)).toEqual({ x: 0, y: 0 });
+    expect(touchStickResponse(0.11 * radius, 0, radius)).toEqual({ x: 0, y: 0 });
+    const justOutside = touchStickResponse(0.13 * radius, 0, radius);
+    expect(justOutside.x).toBeGreaterThan(0);
+    expect(justOutside.x).toBeLessThan(0.1);
+    expect(touchStickResponse(radius, 0, radius).x).toBe(1);
+    expect(touchStickResponse(2 * radius, 0, radius).x).toBe(1);
+    expect(touchStickResponse(-radius, 0, radius).x).toBe(-1);
+  });
+
+  it('preserves direction and normalizes diagonals to magnitude 1', () => {
+    const diagonal = touchStickResponse(radius, radius, radius);
+    expect(Math.hypot(diagonal.x, diagonal.y)).toBeCloseTo(1);
+    expect(diagonal.x).toBeCloseTo(diagonal.y);
+    const partial = touchStickResponse(0.6 * radius, 0, radius);
+    expect(partial.x).toBeGreaterThan(0.5);
+    expect(partial.x).toBeLessThan(1);
+  });
+
+  it('is monotonic in deflection and guards non-finite input', () => {
+    let previous = 0;
+    for (let deflection = 0; deflection <= radius * 1.5; deflection += 2) {
+      const { x } = touchStickResponse(deflection, 0, radius);
+      expect(x).toBeGreaterThanOrEqual(previous);
+      previous = x;
+    }
+    expect(touchStickResponse(Number.NaN, 0, radius)).toEqual({ x: 0, y: 0 });
+    expect(touchStickResponse(10, 0, 0)).toEqual({ x: 0, y: 0 });
+    expect(touchStickResponse(10, 0, Number.NaN)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('touch look smoothing', () => {
+  it('ramps to finger velocity instead of applying deltas 1:1, then tracks it', () => {
+    const smoother = new TouchLookSmoother();
+    const dt = 1 / 60;
+    const steps: number[] = [];
+    for (let frame = 0; frame < 30; frame += 1) {
+      smoother.push(10, 0); // a steady 600 px/s drag
+      steps.push(smoother.advance(dt).dx);
+    }
+    expect(steps[0]).toBeGreaterThan(0);
+    expect(steps[0]).toBeLessThan(4); // smoothed attack, not the raw delta
+    expect(steps[29]).toBeCloseTo(10, 1); // converged to the finger's velocity
+  });
+
+  it('glides after the finger stops and comes to a complete rest', () => {
+    const smoother = new TouchLookSmoother();
+    const dt = 1 / 60;
+    for (let frame = 0; frame < 30; frame += 1) {
+      smoother.push(10, 0);
+      smoother.advance(dt);
+    }
+    let glide = 0;
+    let frames = 0;
+    for (let frame = 0; frame < 600; frame += 1) {
+      const { dx } = smoother.advance(dt);
+      glide += dx;
+      frames = frame;
+      if (dx === 0) break;
+    }
+    expect(glide).toBeGreaterThan(0); // inertia carries the camera forward
+    expect(frames).toBeLessThan(600); // but it terminates — no endless crawl
+  });
+
+  it('ignores non-finite deltas, resets cleanly, and stays stable across frame rates', () => {
+    const smoother = new TouchLookSmoother();
+    smoother.push(Number.NaN, Infinity);
+    expect(smoother.advance(1 / 60)).toEqual({ dx: 0, dy: 0 });
+    smoother.push(8, 0);
+    smoother.advance(1 / 60);
+    smoother.reset();
+    expect(smoother.advance(1 / 60)).toEqual({ dx: 0, dy: 0 });
+
+    for (const frameRate of [30, 60, 120]) {
+      const rated = new TouchLookSmoother();
+      const dt = 1 / frameRate;
+      let applied = 0;
+      for (let frame = 0; frame < frameRate; frame += 1) {
+        rated.push(300 * dt, 0); // one second of a 300 px/s drag
+        applied += rated.advance(dt).dx;
+      }
+      expect(applied).toBeGreaterThan(255);
+      expect(applied).toBeLessThan(310);
     }
   });
 });
