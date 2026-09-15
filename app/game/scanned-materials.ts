@@ -19,6 +19,29 @@ export interface ScannedSurfaceOptions {
   onApplied?: (material: THREE.MeshStandardMaterial) => void;
 }
 
+// Applying a scanned stage binds new maps -> the next rendered frame compiles
+// a fresh program variant. A dozen surfaces landing in one tick made a single
+// frame do every compile at once (observed: a multi-second stall burst on weak
+// GPUs). Queue applications across frames so each frame compiles at most one.
+const applyQueue: Array<() => void> = [];
+let applyScheduled = false;
+const nextFrame = () =>
+  typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame(drainApplyQueue)
+    : setTimeout(drainApplyQueue, 0);
+function scheduleApply(fn: () => void) {
+  applyQueue.push(fn);
+  if (!applyScheduled) {
+    applyScheduled = true;
+    nextFrame();
+  }
+}
+function drainApplyQueue() {
+  applyQueue.shift()?.();
+  if (applyQueue.length) nextFrame();
+  else applyScheduled = false;
+}
+
 /** Owns one shared material and its maps. All downloads are self-hosted. */
 export class ScannedSurfaceMaterial {
   readonly material: THREE.MeshStandardMaterial;
@@ -78,7 +101,13 @@ export class ScannedSurfaceMaterial {
           pending.forEach((texture) => this.releaseTexture(texture));
           throw new Error('Material load superseded');
         }
-        this.applyMaps(roles, pending);
+        scheduleApply(() => {
+          if (superseded()) {
+            pending.forEach((texture) => this.releaseTexture(texture));
+          } else {
+            this.applyMaps(roles, pending);
+          }
+        });
       }
     } catch (error) {
       if (!this.disposed && this.controller === controller) {
