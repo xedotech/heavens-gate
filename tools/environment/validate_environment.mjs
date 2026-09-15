@@ -8,7 +8,10 @@ import { validateScanManifest } from '../../app/game/scan-delivery.mjs';
 const root = path.resolve('public/assets/environment');
 const manifestDirs = [root];
 for (const entry of await readdir(root, { withFileTypes: true })) {
-  if (entry.isDirectory() && existsSync(path.join(root, entry.name, 'manifest.json'))) manifestDirs.push(path.join(root, entry.name));
+  const manifestPath = path.join(root, entry.name, 'manifest.json');
+  if (!entry.isDirectory() || !existsSync(manifestPath)) continue;
+  const candidate = JSON.parse(await readFile(manifestPath, 'utf8'));
+  if (candidate?.maps) manifestDirs.push(path.join(root, entry.name));
 }
 const results = [];
 let assets = 0;

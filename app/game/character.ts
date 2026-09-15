@@ -361,7 +361,12 @@ export class HeroCharacter {
       }
       this.actions.set(motion, action);
     }
+    // Stay hidden until the idle clip has evaluated once — the source rig's
+    // bind pose must never flash on screen before the first mixer update.
+    object.visible = false;
     this.setMotion('idle', 0);
+    this.mixer.update(0);
+    object.visible = true;
   }
 
   setMotion(motion: CharacterMotion, fade = 0.18) {

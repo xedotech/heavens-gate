@@ -1,7 +1,22 @@
 import { clamp } from './mechanics';
+import { acquireAssetStream, assetEntryIsSafe, fetchVerifiedBytes, releaseAssetStream, type VerifiedAssetEntry } from './props';
 import { spatialGunshotMix, type SoundPosition } from './spatial-audio';
 
 type Wave = OscillatorType;
+
+// Recorded foley families → manifest clip ids. Every family keeps its synth
+// fallback while clips are pending or failed verification.
+const SAMPLE_FAMILIES: Record<string, string[]> = {
+  'footstep-street': ['footstep-concrete-000', 'footstep-concrete-001', 'footstep-concrete-002', 'footstep-concrete-003', 'footstep-concrete-004'],
+  'footstep-stone': ['hard-footstep1', 'hard-footstep2', 'hard-footstep3', 'hard-footstep4', 'heel-reverb2', 'heel-reverb4'],
+  'impact-metal': ['impactmetal-light-000', 'impactmetal-light-001', 'impactmetal-light-002', 'impactmetal-light-003', 'impactmetal-light-004'],
+  'impact-generic': ['impactgeneric-light-000', 'impactgeneric-light-001', 'impactgeneric-light-002', 'impactgeneric-light-003', 'impactgeneric-light-004'],
+  'impact-soft': ['impactsoft-medium-000', 'impactsoft-medium-001', 'impactsoft-medium-002', 'impactsoft-medium-003', 'impactsoft-medium-004'],
+  'impact-punch': ['impactpunch-medium-000', 'impactpunch-medium-001', 'impactpunch-medium-002', 'impactpunch-medium-003', 'impactpunch-medium-004'],
+  'impact-glass': ['impactglass-light-000', 'impactglass-light-001', 'impactglass-light-002'],
+  cloth: ['320138--owlstorm--blanket-movement-2', '320142--owlstorm--blanket-movement-4', '320144--owlstorm--blanket-movement-6'],
+  rain: ['3'],
+};
 
 export class AudioEngine {
   private context: AudioContext | null = null;
@@ -18,6 +33,9 @@ export class AudioEngine {
   private engineFilter: BiquadFilterNode | null = null;
   private rainSource: AudioBufferSourceNode | null = null;
   private rainGain: GainNode | null = null;
+  private rainIsClip = false;
+  private samples = new Map<string, AudioBuffer[]>();
+  private samplesLoading = false;
   private citySources: AudioScheduledSourceNode[] = [];
   private cityNodes: AudioNode[] = [];
   private cityTimer: ReturnType<typeof setInterval> | null = null;
@@ -70,8 +88,65 @@ export class AudioEngine {
       }
 
       this.startAmbient();
+      void this.loadSamples();
     }
     if (this.context.state !== 'running') await this.context.resume();
+  }
+
+  // Fetch + verify + decode every clip after the first user gesture. Failures
+  // leave families absent — the synth layers underneath keep working.
+  private async loadSamples() {
+    const context = this.context;
+    if (!context || typeof context.decodeAudioData !== 'function' || this.samplesLoading || this.samples.size) return;
+    this.samplesLoading = true;
+    try {
+      await acquireAssetStream();
+      let manifest: { clips?: VerifiedAssetEntry[] };
+      try {
+        const manifestResponse = await fetch('/assets/audio/manifest.json', { cache: 'no-store' });
+        if (!manifestResponse.ok) return;
+        manifest = (await manifestResponse.json()) as { clips?: VerifiedAssetEntry[] };
+      } finally {
+        releaseAssetStream();
+      }
+      for (const [family, ids] of Object.entries(SAMPLE_FAMILIES)) {
+        const buffers: AudioBuffer[] = [];
+        for (const id of ids) {
+          const clip = manifest.clips?.find((candidate) => candidate.id === id);
+          if (!assetEntryIsSafe(clip)) continue;
+          try {
+            const bytes = await fetchVerifiedBytes('/assets/audio/', clip);
+            if (this.context !== context) return; // context was rebuilt mid-load
+            buffers.push(await context.decodeAudioData(bytes));
+          } catch { /* a bad clip only loses its variant */ }
+        }
+        if (buffers.length) this.samples.set(family, buffers);
+      }
+      // Upgrade the running rain bed to the recorded loop if it started early.
+      if (this.rainSource && !this.rainIsClip && this.samples.has('rain')) this.setRainBed(true);
+    } catch {
+      // No foley — synthesized cues still carry the mix.
+    } finally {
+      this.samplesLoading = false;
+    }
+  }
+
+  // Random variant through the effects bus with ±8% rate jitter. Returns
+  // false while the family is empty so callers can fall back to synth.
+  private playSample(family: string, gain: number, rate = 1) {
+    if (!this.context || !this.effectsBus) return false;
+    const variants = this.samples.get(family);
+    if (!variants?.length) return false;
+    const source = this.context.createBufferSource();
+    const amp = this.context.createGain();
+    source.buffer = variants[Math.floor(Math.random() * variants.length)];
+    if (source.playbackRate) source.playbackRate.value = rate * (0.92 + Math.random() * 0.16);
+    amp.gain.value = gain;
+    source.connect(amp);
+    amp.connect(this.effectsBus);
+    source.start();
+    source.onended = () => { source.disconnect(); amp.disconnect(); };
+    return true;
   }
 
   // 0 = open street, 1 = fully enclosed — ramps the slapback send and dips
@@ -271,6 +346,34 @@ export class AudioEngine {
     }, { once: true }));
   }
 
+  // A pellet striking world geometry — a material-matched crack spatialized
+  // like enemy gunfire. Silent while foley samples are pending or absent.
+  surfaceImpact(source: SoundPosition, listener: SoundPosition, yaw: number, occluded: boolean, material: 'glass' | 'metal' | 'generic' = 'generic') {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(source, listener, yaw, occluded);
+    const level = Math.min(mix.gain * 0.85, 0.075);
+    if (level < 0.002) return;
+    const family = material === 'glass' ? 'impact-glass' : material === 'metal' ? 'impact-metal' : 'impact-generic';
+    const variants = this.samples.get(family);
+    if (!variants?.length) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan;
+    master.gain.value = level;
+    filter.type = 'lowpass';
+    filter.frequency.value = mix.cutoff;
+    const clip = this.context.createBufferSource();
+    clip.buffer = variants[Math.floor(Math.random() * variants.length)];
+    if (clip.playbackRate) clip.playbackRate.value = 0.9 + Math.random() * 0.2;
+    clip.connect(filter);
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    clip.start();
+    clip.onended = () => { clip.disconnect(); filter.disconnect(); pan.disconnect(); master.disconnect(); };
+  }
+
   // Ambient pedestrian chatter — short filtered murmurs spatialized like
   // enemy shots so a conversation reads from the direction it happens in.
   pedestrianBlip(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {
@@ -443,6 +546,8 @@ export class AudioEngine {
   }
 
   swap() {
+    // Cloth rustle under the holster click — also fires on the inspect draw.
+    this.playSample('cloth', 0.4);
     this.tone(240, 0.05, 'square', 0.028);
     this.tone(170, 0.07, 'square', 0.036, 0.055, this.effectsBus, 120);
   }
@@ -464,6 +569,9 @@ export class AudioEngine {
 
   footstep(run = false, surface: 'street' | 'stone' | 'veil' = 'street') {
     const jitter = 0.9 + Math.random() * 0.2;
+    // Recorded foley first — synth layers stay as the pending/failed fallback.
+    if (surface === 'street' && this.playSample('footstep-street', run ? 0.5 : 0.3, run ? 1.06 : 0.98)) return;
+    if (surface === 'stone' && this.playSample('footstep-stone', run ? 0.5 : 0.3, run ? 1.05 : 0.95)) return;
     if (surface === 'stone') {
       // Interior flagstones — a hard click and a bright scuff that the
       // chapel slapback then smears into the room.
@@ -556,6 +664,8 @@ export class AudioEngine {
   }
 
   meleeHit() {
+    // Foley punch under the synth thud — the two layers share the hit.
+    this.playSample('impact-punch', 0.5);
     this.noise(0.1, 0.2, 700);
     this.tone(85, 0.22, 'sine', 0.2, 0, this.effectsBus, 40);
     this.tone(300, 0.08, 'square', 0.05, 0.01, this.effectsBus, 140);
@@ -570,6 +680,7 @@ export class AudioEngine {
   crash(intensity = 1) {
     const amount = clamp(intensity, 0.2, 1);
     // Metal crunch + low thud + glass scatter.
+    this.playSample('impact-metal', 0.55 * amount);
     this.noise(0.22, 0.2 * amount, 900);
     this.tone(68, 0.3, 'sine', 0.16 * amount, 0, this.effectsBus, 30);
     this.noise(0.45, 0.06 * amount, 3200);
@@ -597,16 +708,24 @@ export class AudioEngine {
 
   setRainBed(active: boolean) {
     if (!this.context || !this.ambientBus) return;
+    const clip = active ? this.samples.get('rain')?.[0] : null;
+    // The recorded loop may have landed after the synth bed started — swap
+    // beds so "prefer the clip" holds even mid-shower.
+    if (active && this.rainSource && Boolean(clip) !== this.rainIsClip) {
+      try { this.rainSource.stop(); } catch { /* already stopped */ }
+      this.rainSource.disconnect();
+      this.rainSource = null;
+    }
     if (active && !this.rainSource) {
-      const buffer = this.createNoiseBuffer(4);
+      const buffer = clip ?? this.createNoiseBuffer(4);
       if (!buffer) return;
       const source = this.context.createBufferSource();
       const filter = this.context.createBiquadFilter();
       const gain = this.context.createGain();
       source.buffer = buffer;
       source.loop = true;
-      filter.type = 'highpass';
-      filter.frequency.value = 750;
+      filter.type = clip ? 'lowpass' : 'highpass';
+      filter.frequency.value = clip ? 5600 : 750;
       gain.gain.value = 0.0001;
       source.connect(filter);
       filter.connect(gain);
@@ -614,11 +733,12 @@ export class AudioEngine {
       source.start();
       this.rainSource = source;
       this.rainGain = gain;
+      this.rainIsClip = Boolean(clip);
       this.ambientNodes.push(filter, gain);
       this.ambientSources.push(source);
     }
     if (this.rainGain) {
-      this.rainGain.gain.setTargetAtTime(active ? 0.016 : 0.0001, this.context.currentTime, 1.1);
+      this.rainGain.gain.setTargetAtTime(active ? (this.rainIsClip ? 0.045 : 0.016) : 0.0001, this.context.currentTime, 1.1);
     }
   }
 
@@ -758,6 +878,9 @@ export class AudioEngine {
     this.engineBus = null;
     this.rainSource = null;
     this.rainGain = null;
+    this.rainIsClip = false;
+    this.samples.clear();
+    this.samplesLoading = false;
     this.engineOscillator = null;
     this.engineFilter = null;
     this.ambientSources = [];

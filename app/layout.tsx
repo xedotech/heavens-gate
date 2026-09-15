@@ -10,6 +10,7 @@ export const metadata: Metadata = {
   metadataBase: siteUrl,
   title: "Heaven's Gate — Open World Prototype",
   description: 'An original open-source celestial-noir action game built for modern desktop browsers and gamepads.',
+  icons: { icon: '/favicon.svg' },
   alternates: { canonical: '/' },
   openGraph: {
     title: "Heaven's Gate",

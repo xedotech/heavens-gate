@@ -63,9 +63,14 @@ describe('persisted settings validation', () => {
     expect(normalized.keybinds).not.toBe(DEFAULT_SETTINGS.keybinds);
   });
 
+  it('keeps ultra quality and rejects unknown tiers', () => {
+    expect(normalizeSettings({ quality: 'ultra' }).quality).toBe('ultra');
+    expect(normalizeSettings({ quality: 'insane' }).quality).toBe(DEFAULT_SETTINGS.quality);
+  });
+
   it('validates every enum, boolean and numeric range without coercing strings', () => {
     const normalized = normalizeSettings({
-      quality: 'ultra', characterSkin: '__proto__', difficulty: null, volume: -4,
+      quality: 'insane', characterSkin: '__proto__', difficulty: null, volume: -4,
       sensitivity: Infinity, hudScale: 8, subtitles: 'false', reducedMotion: true, highContrast: 1,
     });
     expect(normalized).toMatchObject({

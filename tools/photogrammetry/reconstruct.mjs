@@ -2,6 +2,7 @@
 // Photogrammetry pipeline: photo directory -> textured GLB.
 // COLMAP (CPU SfM) -> OpenMVS (dense cloud -> mesh -> texture) -> Blender (GLB).
 // Usage: node tools/photogrammetry/reconstruct.mjs --photos <dir> --out <dir> [--name slug] [--refine]
+//        [--max-image-size px] [--matcher exhaustive|sequential]
 import { mkdirSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -15,8 +16,10 @@ const photos = path.resolve(arg('photos', ''));
 const out = path.resolve(arg('out', ''));
 const name = arg('name', path.basename(out) || 'scan');
 const refine = process.argv.includes('--refine');
+const maxImageSize = Number(arg('max-image-size', '1600'));
+const matcher = arg('matcher', 'exhaustive');
 if (!photos || !out || !existsSync(photos)) {
-  console.error('Usage: reconstruct.mjs --photos <dir> --out <dir> [--name slug] [--refine]');
+  console.error('Usage: reconstruct.mjs --photos <dir> --out <dir> [--name slug] [--refine] [--max-image-size px] [--matcher exhaustive|sequential]');
   process.exit(1);
 }
 const images = readdirSync(photos).filter((f) => /\.(jpe?g|png|tiff?|webp)$/i.test(f) && statSync(path.join(photos, f)).size > 10_000);
@@ -44,8 +47,14 @@ const run = (label, exe, args, cwd = work, done = null) => {
 };
 
 run('feature extraction', COLMAP, ['feature_extractor', '--database_path', db, '--image_path', photos,
-  '--ImageReader.single_camera', '1', '--FeatureExtraction.use_gpu', '0', '--FeatureExtraction.num_threads', '4'], work, db);
-run('exhaustive matching', COLMAP, ['exhaustive_matcher', '--database_path', db, '--FeatureMatching.use_gpu', '0', '--FeatureMatching.num_threads', '4'], work, null);
+  '--ImageReader.single_camera', '1', '--FeatureExtraction.use_gpu', '0', '--FeatureExtraction.num_threads', '4',
+  '--FeatureExtraction.max_image_size', String(maxImageSize)], work, db);
+if (matcher === 'sequential') {
+  run('sequential matching', COLMAP, ['sequential_matcher', '--database_path', db, '--FeatureMatching.use_gpu', '0',
+    '--FeatureMatching.num_threads', '4', '--SequentialMatching.loop_detection', '1'], work, null);
+} else {
+  run('exhaustive matching', COLMAP, ['exhaustive_matcher', '--database_path', db, '--FeatureMatching.use_gpu', '0', '--FeatureMatching.num_threads', '4'], work, null);
+}
 run('sparse mapping', COLMAP, ['mapper', '--database_path', db, '--image_path', photos, '--output_path', sparse], work, path.join(sparse, '0', 'cameras.bin'));
 if (!existsSync(path.join(sparse, '0', 'cameras.bin'))) { console.error('[reconstruct] no sparse model produced — photos may lack overlap'); process.exit(1); }
 run('undistort', COLMAP, ['image_undistorter', '--image_path', photos, '--input_path', path.join(sparse, '0'), '--output_path', dense, '--output_type', 'COLMAP'], work, path.join(dense, 'run-colmap-geometric.sh'));

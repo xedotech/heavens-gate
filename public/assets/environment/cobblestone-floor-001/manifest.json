@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "cobblestone-floor-001",
+  "label": "cobblestone floor 001",
+  "author": "Poly Haven",
+  "source": "Poly Haven CC0 (production-resources intake)",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "2k": {
+      "albedo": {
+        "file": "cobblestone-floor-001-albedo-2k-4fb4e4f44e09.webp",
+        "sha256": "4fb4e4f44e095dd621133c42d670b5c7ea70e443d18b79e05434335a9ddfcebb",
+        "bytes": 1186566,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "cobblestone-floor-001-normal-2k-b2a1049f2aab.webp",
+        "sha256": "b2a1049f2aabfb1ab9ee7fe96dd858f27b21eb2e8abb453119d7eea3e7158c4b",
+        "bytes": 7530224,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "cobblestone-floor-001-arm-2k-a993d86594ca.webp",
+        "sha256": "a993d86594cacc87ac747e32aa9935381c5ddfd92f100042f5b0f732d4b31270",
+        "bytes": 2580254,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    },
+    "1k": {
+      "albedo": {
+        "file": "cobblestone-floor-001-albedo-1k-ca419e0187ab.webp",
+        "sha256": "ca419e0187aba84813097a346c6de84b5c50daaa6a26cb337a59e3aee5a09cde",
+        "bytes": 301688,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "cobblestone-floor-001-normal-1k-761ab45ba7a3.webp",
+        "sha256": "761ab45ba7a34a60f55a23756fa307a0e5859fa56423f501f3dd56f38a6ce865",
+        "bytes": 1936114,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "cobblestone-floor-001-arm-1k-65d81f00daca.webp",
+        "sha256": "65d81f00daca8a097a35b6ce780192ee5fb24c393d205a4b7777c8cb7981c6b4",
+        "bytes": 662484,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    }
+  }
+}

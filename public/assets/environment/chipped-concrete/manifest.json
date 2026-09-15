@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "chipped-concrete",
+  "label": "chipped concrete",
+  "author": "Poly Haven",
+  "source": "Poly Haven CC0 (production-resources intake)",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "2k": {
+      "albedo": {
+        "file": "chipped-concrete-albedo-2k-a8873e874aa6.webp",
+        "sha256": "a8873e874aa6c4a29b515303689d5dbb737125957dcaa40095ba44607d951bd9",
+        "bytes": 821024,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "chipped-concrete-normal-2k-70d7d394e3cb.webp",
+        "sha256": "70d7d394e3cb0d35a8106867b0371524318c27ffa198c442ca5a6327fb481e9b",
+        "bytes": 6664250,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "chipped-concrete-arm-2k-f38c0e00fb8e.webp",
+        "sha256": "f38c0e00fb8e6f03e286b662ca2beb1ae2b7a900b57367dc884f914d22616d67",
+        "bytes": 3327232,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    },
+    "1k": {
+      "albedo": {
+        "file": "chipped-concrete-albedo-1k-2351e4ec2d78.webp",
+        "sha256": "2351e4ec2d78e171f7180b27cce2da41aabe3a793f05a2f7bcf4bad21d9984ff",
+        "bytes": 199466,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "chipped-concrete-normal-1k-732801f22115.webp",
+        "sha256": "732801f2211564ff319cee5079eb9c3b1de28871609008215920f2156fdae903",
+        "bytes": 1783982,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "chipped-concrete-arm-1k-ca06a270b74d.webp",
+        "sha256": "ca06a270b74d6b5434c8351790b2ea1ad68ac290a9c3245e30549cf77aacdc82",
+        "bytes": 881382,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    }
+  }
+}

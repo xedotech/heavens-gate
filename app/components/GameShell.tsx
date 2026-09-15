@@ -24,6 +24,7 @@ import {
   Target,
   Volume2,
   VolumeX,
+  X,
   Zap,
 } from 'lucide-react';
 import type { HeavensGateEngine } from '../game/engine';
@@ -493,6 +494,15 @@ export default function GameShell() {
     }
   };
 
+  useEffect(() => {
+    if (!saveNotice && !settingsNotice) return undefined;
+    const timer = setTimeout(() => {
+      setSaveNotice(null);
+      setSettingsNotice(null);
+    }, 12_000);
+    return () => clearTimeout(timer);
+  }, [saveNotice, settingsNotice]);
+
   const startGame = async (continueSave: boolean) => {
     if (error) return;
     setTutorial(true);
@@ -680,11 +690,13 @@ export default function GameShell() {
         <div className={`subtitle${settings.subtitleSize === 'large' ? ' large' : ''}`} role="status" aria-live="polite"><strong>{subtitle.speaker}</strong><span>{subtitle.text}</span></div>
       )}
 
-      <div className="toast-stack" aria-live="polite">
-        {toasts.map((toast) => (
-          <article className={`toast toast-${toast.tone ?? 'info'}`} key={toast.id}><span aria-hidden="true" /><div><strong>{toast.title}</strong>{toast.detail && <p>{toast.detail}</p>}</div></article>
-        ))}
-      </div>
+      {screen === 'playing' && (
+        <div className="toast-stack" aria-live="polite">
+          {toasts.map((toast) => (
+            <article className={`toast toast-${toast.tone ?? 'info'}`} key={toast.id}><span aria-hidden="true" /><div><strong>{toast.title}</strong>{toast.detail && <p>{toast.detail}</p>}</div></article>
+          ))}
+        </div>
+      )}
 
       {screen === 'paused' && (
         <section className="menu-screen pause-screen" aria-labelledby="pause-title">
@@ -747,9 +759,9 @@ export default function GameShell() {
         <section className="menu-screen settings-screen" aria-labelledby="settings-title">
           <div className="panel-header"><button className="back-button" type="button" onClick={() => setScreen(returnScreen)}><ArrowLeft aria-hidden="true" /> Back</button><div><p className="eyebrow">System calibration</p><h1 id="settings-title">Settings</h1></div></div>
           <div className="settings-grid">
-            <fieldset><legend>Graphics</legend><p>Choose the render budget. Resolution adapts if frame rate drops.</p><div className="segmented-control">
-              {(['low', 'medium', 'high'] as Quality[]).map((quality) => <button type="button" key={quality} className={settings.quality === quality ? 'selected' : ''} onClick={() => updateSettings({ quality })}>{quality}<small>{quality === 'low' ? 'Performance' : quality === 'medium' ? 'Balanced' : 'Cinematic'}</small></button>)}
-            </div></fieldset>
+            <fieldset><legend>Graphics</legend><p>Choose the render budget. Resolution adapts if frame rate drops.</p><div className="segmented-control quality-control">
+              {(['low', 'medium', 'high', 'ultra'] as Quality[]).map((quality) => <button type="button" key={quality} className={settings.quality === quality ? 'selected' : ''} onClick={() => updateSettings({ quality })}>{quality}<small>{quality === 'low' ? 'Performance' : quality === 'medium' ? 'Balanced' : quality === 'high' ? 'Cinematic' : 'Supersampled'}</small></button>)}
+            </div><small className="setting-note">Ultra renders above native resolution with 4× MSAA, 4K shadows, and dense rain — for strong GPUs.</small></fieldset>
             <fieldset className="skin-fieldset"><legend>Aurel // Character skins</legend><p>Six original physically shaded looks update live in the world. Faces, hair, eyes, armor, and civilians use the expanded human rendering system.</p><div className="segmented-control skin-control">
               {CHARACTER_SKINS.map((skin) => <button type="button" key={skin.id} className={settings.characterSkin === skin.id ? 'selected' : ''} onClick={() => updateSettings({ characterSkin: skin.id })}><span className={`skin-swatch skin-${skin.id}`} aria-hidden="true" /><span>{skin.name}</span><small>{skin.detail}</small></button>)}
             </div></fieldset>
@@ -859,6 +871,7 @@ export default function GameShell() {
         <aside className="storage-notice" role="status" aria-live="polite">
           <div><strong>Local storage</strong>{saveNotice && <p>{saveNotice}</p>}{settingsNotice && <p>{settingsNotice}</p>}</div>
           <button type="button" onClick={retryStorage}>Retry storage</button>
+          <button type="button" className="notice-dismiss" aria-label="Dismiss" onClick={() => { setSaveNotice(null); setSettingsNotice(null); }}><X aria-hidden="true" size={14} /></button>
         </aside>
       )}
 

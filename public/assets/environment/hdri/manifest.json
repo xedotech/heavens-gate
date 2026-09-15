@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "file": "cobblestone_street_night_1k.hdr",
+      "sha256": "83ed0528330e718f1030fda86c6bed5b30cb6ca4e8227daa2e14eb16aa8db0ae",
+      "bytes": 1759738,
+      "source": "Poly Haven CC0"
+    },
+    {
+      "file": "abandoned_church_1k.hdr",
+      "sha256": "318a3e23abca753a342e99a986becddc5500b8e3c1deeb4bc158ce2f0652b055",
+      "bytes": 1731164,
+      "source": "Poly Haven CC0"
+    }
+  ]
+}

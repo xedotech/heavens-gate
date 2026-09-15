@@ -43,7 +43,7 @@ function choice<T extends string>(value: unknown, options: readonly T[], fallbac
 export function normalizeSettings(value: unknown): GameSettings {
   const source = record(value) ? value : {};
   return {
-    quality: choice(source.quality, ['low', 'medium', 'high'], DEFAULT_SETTINGS.quality),
+    quality: choice(source.quality, ['low', 'medium', 'high', 'ultra'], DEFAULT_SETTINGS.quality),
     volume: finite(source.volume, DEFAULT_SETTINGS.volume, 0, 1),
     sensitivity: finite(source.sensitivity, DEFAULT_SETTINGS.sensitivity, 0.2, 1.4),
     fov: finite(source.fov, DEFAULT_SETTINGS.fov, 48, 78),

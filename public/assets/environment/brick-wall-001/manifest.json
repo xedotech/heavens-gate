@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "brick-wall-001",
+  "label": "brick wall 001",
+  "author": "Poly Haven",
+  "source": "Poly Haven CC0 (production-resources intake)",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "2k": {
+      "albedo": {
+        "file": "brick-wall-001-albedo-2k-6f2e4f7ec9db.webp",
+        "sha256": "6f2e4f7ec9dbcbe65ef983d728182e35f15ed642f929d9717abae93655503dd4",
+        "bytes": 804504,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "brick-wall-001-normal-2k-3c4db6db3ab1.webp",
+        "sha256": "3c4db6db3ab1f6579014c5bd031e73396fe9f83d49f5f372f48d8207fdae9adc",
+        "bytes": 7797278,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "brick-wall-001-arm-2k-538b07ffe52c.webp",
+        "sha256": "538b07ffe52c4f7eb50061c9bc398e2cc3adb423509feb24d2b44c9397835c2c",
+        "bytes": 3613246,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    },
+    "1k": {
+      "albedo": {
+        "file": "brick-wall-001-albedo-1k-be7f3a1b5918.webp",
+        "sha256": "be7f3a1b5918ede76ecb5b52c7ceefd3f85aef9fe6d51425d62610cae4f89a8e",
+        "bytes": 226844,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "brick-wall-001-normal-1k-cea0fe1d658f.webp",
+        "sha256": "cea0fe1d658f822ac956cd1ec8b92ad1e8ce177bf9fb5914c662f5e86e00a445",
+        "bytes": 1933242,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "brick-wall-001-arm-1k-72e5e68456ab.webp",
+        "sha256": "72e5e68456abfc4e645786521586fe2d09679c4e055f74c41730d33db80b1b48",
+        "bytes": 909804,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,306 @@
+{
+  "schemaVersion": 1,
+  "clips": [
+    {
+      "id": "footstep-concrete-000",
+      "file": "footstep_concrete_000.ogg",
+      "sha256": "d7267e183067757c92c169de2a379abea592cfca6b39bb2e8feea15221ad79fe",
+      "bytes": 5808,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-concrete-001",
+      "file": "footstep_concrete_001.ogg",
+      "sha256": "507a75eb19b897087855a3be3cf11a12d7fa37d143ad535eeebe0b8031c7325d",
+      "bytes": 6308,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-concrete-002",
+      "file": "footstep_concrete_002.ogg",
+      "sha256": "b21fa546d74941196b25da8a20b7010abd8c05c4fcf93545d1f344e66a664e13",
+      "bytes": 6255,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-concrete-003",
+      "file": "footstep_concrete_003.ogg",
+      "sha256": "8b513c2f0316324060b9174b8f28df6c2147418c506e6a53b77f18e149a5547b",
+      "bytes": 5805,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-concrete-004",
+      "file": "footstep_concrete_004.ogg",
+      "sha256": "24dd8db2413e5b81ad181e1205c12a1c7801da5f85715d471b92a4b2f632e45e",
+      "bytes": 5912,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-wood-000",
+      "file": "footstep_wood_000.ogg",
+      "sha256": "5f1c252942a220d658121bd9417448cd19649ded9fff2ff15f6e50899373ce8e",
+      "bytes": 5949,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-wood-001",
+      "file": "footstep_wood_001.ogg",
+      "sha256": "e4f68e1c9fd55b4dc8ca89ed2bbab6f200171bc54bdc18aa96b80d8e7336f462",
+      "bytes": 5929,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-wood-002",
+      "file": "footstep_wood_002.ogg",
+      "sha256": "9ff095b05cee5eec40b081defe3f0eef7232bb16d4865ce03b9f6dbab875cfdd",
+      "bytes": 5895,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-wood-003",
+      "file": "footstep_wood_003.ogg",
+      "sha256": "2a68a083daa9eda08fed0ea5da5280dfbe0de226196c576be02f95259dd139d9",
+      "bytes": 6207,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "footstep-wood-004",
+      "file": "footstep_wood_004.ogg",
+      "sha256": "b33e0854e2b3f6b6492e25c25ef8f90447a332f7c6bb25dd02edced9581d3441",
+      "bytes": 5799,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactmetal-light-000",
+      "file": "impactMetal_light_000.ogg",
+      "sha256": "33b5e6e37c6e9d54e07bf5a89b12c76e879f40c1ea83cdd82714df1d6f9fec6d",
+      "bytes": 7651,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactmetal-light-001",
+      "file": "impactMetal_light_001.ogg",
+      "sha256": "fba69c467ddd85da7b1d82e259f936b876d9ba6a3d6f1b24bdd10468e46bfe08",
+      "bytes": 6967,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactmetal-light-002",
+      "file": "impactMetal_light_002.ogg",
+      "sha256": "25a96f90a9a1f88a531e824e126f0519504625e5635e65a72e4f31611428db29",
+      "bytes": 6804,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactmetal-light-003",
+      "file": "impactMetal_light_003.ogg",
+      "sha256": "92d5db6bfc672d9dc1b4f390b2900504f013187fa36335472554fafefa9050b1",
+      "bytes": 9023,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactmetal-light-004",
+      "file": "impactMetal_light_004.ogg",
+      "sha256": "9b1c35820fba507081261f19ab5f461f69a5e2627a7d91acdb73ca3cfc997979",
+      "bytes": 6675,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactgeneric-light-000",
+      "file": "impactGeneric_light_000.ogg",
+      "sha256": "f0e982611e97512fee5f777986b67e8b435434b601f94992ec044f7e89fb5acb",
+      "bytes": 5827,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactgeneric-light-001",
+      "file": "impactGeneric_light_001.ogg",
+      "sha256": "c3cd1c073d186ae8fa35788ba94de581f1826e7427a7bb26490b2695fac18efa",
+      "bytes": 5636,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactgeneric-light-002",
+      "file": "impactGeneric_light_002.ogg",
+      "sha256": "d0bf60905b59ff630ffe01eb0edeeacd2504eaa8fb6523aeef7d2458b78264d3",
+      "bytes": 5795,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactgeneric-light-003",
+      "file": "impactGeneric_light_003.ogg",
+      "sha256": "0e8896706130f6bc88cdf1f0157aaacdbe88dce86cf0330f9136e44eb1209e81",
+      "bytes": 5792,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactgeneric-light-004",
+      "file": "impactGeneric_light_004.ogg",
+      "sha256": "f906fa3a37acc4372787b496efcedefa2856045d5ec9456a3bd6c303c0eabb41",
+      "bytes": 5747,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactsoft-medium-000",
+      "file": "impactSoft_medium_000.ogg",
+      "sha256": "7d3ba0bb5e60a11b5d3e558c141303dcf494256675fbf753c0d252d2cf0481e3",
+      "bytes": 5351,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactsoft-medium-001",
+      "file": "impactSoft_medium_001.ogg",
+      "sha256": "7642a4fd43e547afe4f7adfadb3dabb681c0ff512f52c1674bae30a726841faf",
+      "bytes": 5506,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactsoft-medium-002",
+      "file": "impactSoft_medium_002.ogg",
+      "sha256": "5069e3571a77d7f7aae9ef71d0364aa245fb7d64a7c8cc9956f221d03088c089",
+      "bytes": 5358,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactsoft-medium-003",
+      "file": "impactSoft_medium_003.ogg",
+      "sha256": "5c4a1f35fde7e14046931da7bc3d1b23736541b7190ba107e08a379c4ca43cd6",
+      "bytes": 5392,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactsoft-medium-004",
+      "file": "impactSoft_medium_004.ogg",
+      "sha256": "b0a4dea90eed47accf50b768beff1166f2f1486fb139e4d025b2427637624bca",
+      "bytes": 5438,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactpunch-medium-000",
+      "file": "impactPunch_medium_000.ogg",
+      "sha256": "486988aa2d6440ffc4c62a0e8ccf3c23673ba84424bd4723378d451b7255eb5c",
+      "bytes": 8800,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactpunch-medium-001",
+      "file": "impactPunch_medium_001.ogg",
+      "sha256": "e71d23abcc3f10d9d6bc9615b2a431fff70b12333a5fcdd9964457564ace4349",
+      "bytes": 8701,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactpunch-medium-002",
+      "file": "impactPunch_medium_002.ogg",
+      "sha256": "6492f9ccbc8d24dcef607bb1b48790b7870961474561f7fe5601e1c73a3018ef",
+      "bytes": 10399,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactpunch-medium-003",
+      "file": "impactPunch_medium_003.ogg",
+      "sha256": "2d7c719c05999e0532f4384e1018e04cd916db715140bf16dee2dff3f820e908",
+      "bytes": 9509,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactpunch-medium-004",
+      "file": "impactPunch_medium_004.ogg",
+      "sha256": "4a256878a3afb994ec9a4399336687748e68c7c136872c08c9c797d8c4e2464a",
+      "bytes": 10032,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactglass-light-000",
+      "file": "impactGlass_light_000.ogg",
+      "sha256": "d750cf88097d0c3e69920e6e14496e1444e1a9da01aa4cca8f5ec8cb44c57b4f",
+      "bytes": 6526,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactglass-light-001",
+      "file": "impactGlass_light_001.ogg",
+      "sha256": "05e513fbd42829060eb37855f8c3866722ec5c39a8937c9bfde518cc609effa2",
+      "bytes": 6544,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "impactglass-light-002",
+      "file": "impactGlass_light_002.ogg",
+      "sha256": "710db7451bb7857b9140dfe6afe4621ea2188ad65eda3919c569d1bb285b933d",
+      "bytes": 6562,
+      "license": "CC0-1.0 (Kenney)"
+    },
+    {
+      "id": "hard-footstep1",
+      "file": "hard-footstep1.wav",
+      "sha256": "070a981c4d334da3a4ad830b2d627cca34402859ff92594c4c0acf187e5efbea",
+      "bytes": 61486,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "hard-footstep2",
+      "file": "hard-footstep2.wav",
+      "sha256": "678a613ca81bb6c527c30073b79f0ca69775864f1f508069b9a2e233b4213246",
+      "bytes": 53294,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "hard-footstep3",
+      "file": "hard-footstep3.wav",
+      "sha256": "2d875f1a17adf4c5b1ec24871e6da9a0ae960e5fa0afbb5fba6ddc60b209ce53",
+      "bytes": 61486,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "hard-footstep4",
+      "file": "hard-footstep4.wav",
+      "sha256": "398474c950ae1010511b01e312896e8b3aa96f8abb6cf5199540c957cb5ae0c5",
+      "bytes": 72750,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "heel-reverb2",
+      "file": "heel-reverb2.wav",
+      "sha256": "34e7fd083d963693863af8023f034fac5286078e7aa1b936a9e960f8cf4e70d5",
+      "bytes": 362806,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "heel-reverb4",
+      "file": "heel-reverb4.wav",
+      "sha256": "ae145c6f8559b4a5651386214ea3bf8be4ffe1a937d1dfeb49f4f55d64ae1f62",
+      "bytes": 342174,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "320144--owlstorm--blanket-movement-6",
+      "file": "320144__owlstorm__blanket-movement-6.wav",
+      "sha256": "a082018a475c403f0168521c2bb6a443766f42a6da410a2e8a22cc3047d59ffb",
+      "bytes": 219602,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "320138--owlstorm--blanket-movement-2",
+      "file": "320138__owlstorm__blanket-movement-2.wav",
+      "sha256": "797e3917079898e11c8597721d9747cd619fc61a59fb9bfaf0e253b72d68d65b",
+      "bytes": 377110,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "320142--owlstorm--blanket-movement-4",
+      "file": "320142__owlstorm__blanket-movement-4.wav",
+      "sha256": "9b3c97b7ada8ee6ba2c05df379e4d89a6f4ba715cc90cdf11d4849f3aa0e05b0",
+      "bytes": 397878,
+      "license": "CC0-1.0 (Owlish Media)"
+    },
+    {
+      "id": "3",
+      "file": "3.ogg",
+      "sha256": "73a0f5ef19ed9f64599c0425b1fb52d857acfc42c0fd5eab85c4577ace18f0ed",
+      "bytes": 913769,
+      "license": "CC0-1.0"
+    }
+  ]
+}

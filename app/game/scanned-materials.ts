@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { acquireAssetStream, releaseAssetStream } from './props';
 import { scanTier, validateScanManifest, type ScanMap, type ScanTier } from './scan-contract';
 import type { Quality } from './types';
 
@@ -33,7 +34,7 @@ export class ScannedSurfaceMaterial {
     private readonly onUnavailable: () => void,
     private readonly options: ScannedSurfaceOptions = {},
   ) {
-    const fallback = options.fallback ?? { color: 0x0c1113, roughness: 0.88, metalness: 0 };
+    const fallback = options.fallback ?? { color: 0x1c2327, roughness: 0.88, metalness: 0 };
     this.material = new THREE.MeshStandardMaterial({
       color: fallback.color,
       roughness: fallback.roughness,
@@ -53,61 +54,101 @@ export class ScannedSurfaceMaterial {
   }
 
   private async load(tier: ScanTier, controller: AbortController) {
-    const pending: THREE.Texture[] = [];
-    const timeout = setTimeout(() => controller.abort(), 20_000);
     const apply = this.options.apply ?? {};
     const roles = (['albedo', 'normal', 'arm'] as const).filter((role) => apply[role] !== false);
     try {
-      const response = await fetch(this.manifestUrl, { cache: 'no-store', signal: controller.signal });
-      if (!response.ok) throw new Error(`Material manifest HTTP ${response.status}`);
-      const manifest = validateScanManifest(await response.json());
-      // Sequential decode limits transient memory while changing quality tiers.
-      for (const role of roles) {
-        pending.push(await this.texture(manifest.maps[tier][role], manifest.tileMeters, controller.signal));
+      const response = await this.fetchBytes(this.manifestUrl, 'no-store', controller.signal);
+      const manifest = validateScanManifest(JSON.parse(new TextDecoder().decode(response)));
+      const superseded = () => this.disposed || controller.signal.aborted || this.controller !== controller;
+      // Progressive: land the 1k set first so surfaces resolve quickly, then upgrade.
+      const stages = tier === '2k' ? (['1k', '2k'] as const) : ([tier] as const);
+      for (const stage of stages) {
+        const pending: THREE.Texture[] = [];
+        try {
+          // Sequential decode limits transient memory while changing quality tiers.
+          for (const role of roles) {
+            pending.push(await this.texture(manifest.maps[stage][role], manifest.tileMeters, controller));
+          }
+        } catch (error) {
+          pending.forEach((texture) => this.releaseTexture(texture));
+          if (stage !== tier && !superseded()) continue;
+          throw error;
+        }
+        if (superseded()) {
+          pending.forEach((texture) => this.releaseTexture(texture));
+          throw new Error('Material load superseded');
+        }
+        this.applyMaps(roles, pending);
       }
-      if (this.disposed || controller.signal.aborted || this.controller !== controller) throw new Error('Material load superseded');
-      const maps = Object.fromEntries(roles.map((role, i) => [role, pending[i]]));
-      const m = this.material;
-      if (maps.albedo) { m.map = maps.albedo; m.color.setHex(this.options.tint ?? 0xcccccc); }
-      if (maps.normal) {
-        m.normalMap = maps.normal;
-        if (this.options.normalScale) m.normalScale.setScalar(this.options.normalScale);
-      }
-      if (maps.arm) {
-        m.aoMap = maps.arm;
-        m.roughnessMap = maps.arm;
-        m.roughness = 1;
-        m.aoMapIntensity = this.options.aoIntensity ?? 0.65;
-        if (apply.metalnessMap !== false) { m.metalnessMap = maps.arm; m.metalness = 1; }
-        else m.metalness = this.options.metalness ?? m.metalness;
-      }
-      m.needsUpdate = true;
-      this.options.onApplied?.(m);
-      this.textures.forEach((texture) => this.releaseTexture(texture));
-      this.textures = pending;
-    } catch {
-      pending.forEach((texture) => this.releaseTexture(texture));
+    } catch (error) {
       if (!this.disposed && this.controller === controller) {
         this.currentTier = null;
+        // Surface the real reason — silent catches made early failures
+        // undiagnosable ("detail unavailable" toasts with no error).
+        console.warn(`[scanned-material] ${this.manifestUrl} failed:`, error);
         this.onUnavailable();
       }
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
-  private async texture(entry: ScanMap, tileMeters: number, signal: AbortSignal) {
+  private applyMaps(roles: readonly ('albedo' | 'normal' | 'arm')[], pending: THREE.Texture[]) {
+    const apply = this.options.apply ?? {};
+    const maps = Object.fromEntries(roles.map((role, i) => [role, pending[i]]));
+    const m = this.material;
+    if (maps.albedo) { m.map = maps.albedo; m.color.setHex(this.options.tint ?? 0xcccccc); }
+    if (maps.normal) {
+      m.normalMap = maps.normal;
+      if (this.options.normalScale) m.normalScale.setScalar(this.options.normalScale);
+    }
+    if (maps.arm) {
+      m.aoMap = maps.arm;
+      m.roughnessMap = maps.arm;
+      m.roughness = 1;
+      m.aoMapIntensity = this.options.aoIntensity ?? 0.65;
+      if (apply.metalnessMap !== false) { m.metalnessMap = maps.arm; m.metalness = 1; }
+      else m.metalness = this.options.metalness ?? m.metalness;
+    }
+    m.needsUpdate = true;
+    this.options.onApplied?.(m);
+    this.textures.forEach((texture) => this.releaseTexture(texture));
+    this.textures = pending;
+  }
+
+  private async fetchBytes(url: string, cache: RequestCache, parent: AbortSignal) {
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    parent.addEventListener('abort', onAbort);
+    try {
+      // Queue behind the shared asset-stream cap; the timeout starts once the
+      // slot is ours so waiting for a socket never counts against the fetch.
+      await acquireAssetStream(parent);
+      // Backstop for truly hung sockets only — on slow GPUs the event loop
+      // starves fetches during boot, and a tight timeout permanently cost
+      // players their scanned surfaces.
+      const timer = setTimeout(() => controller.abort(), 150_000);
+      try {
+        const response = await fetch(url, { cache, signal: controller.signal });
+        if (!response.ok) throw new Error(`Material fetch HTTP ${response.status}`);
+        return await response.arrayBuffer();
+      } finally {
+        clearTimeout(timer);
+        releaseAssetStream();
+      }
+    } finally {
+      parent.removeEventListener('abort', onAbort);
+    }
+  }
+
+  private async texture(entry: ScanMap, tileMeters: number, controller: AbortController) {
     const base = this.manifestUrl.slice(0, this.manifestUrl.lastIndexOf('/') + 1);
-    const response = await fetch(`${base}${entry.file}`, { cache: 'force-cache', signal });
-    if (!response.ok) throw new Error(`Material map HTTP ${response.status}`);
-    const bytes = await response.arrayBuffer();
+    const bytes = await this.fetchBytes(`${base}${entry.file}`, 'force-cache', controller.signal);
     if (bytes.byteLength !== entry.bytes) throw new Error('Material map length mismatch');
     if (!globalThis.crypto?.subtle) throw new Error('Material verification requires a secure context');
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
     if (sha256 !== entry.sha256) throw new Error('Material map hash mismatch');
     const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/webp' }), { imageOrientation: 'flipY', colorSpaceConversion: 'none' });
-    if (signal.aborted || this.disposed) { bitmap.close(); throw new Error('Material decode cancelled'); }
+    if (controller.signal.aborted || this.disposed) { bitmap.close(); throw new Error('Material decode cancelled'); }
     if (bitmap.width !== entry.width || bitmap.height !== entry.height) { bitmap.close(); throw new Error('Material dimensions mismatch'); }
     const texture = new THREE.Texture(bitmap);
     texture.colorSpace = entry.colorSpace === 'srgb' ? THREE.SRGBColorSpace : THREE.NoColorSpace;

@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "rusty-metal-02",
+  "label": "rusty metal 02",
+  "author": "Poly Haven",
+  "source": "Poly Haven CC0 (production-resources intake)",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "2k": {
+      "albedo": {
+        "file": "rusty-metal-02-albedo-2k-6833d3b7b7e8.webp",
+        "sha256": "6833d3b7b7e8610e7a1169fc82e6f4774b3c4b9a21051a78e7608381dab40e08",
+        "bytes": 673842,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "rusty-metal-02-normal-2k-412dbdbd9889.webp",
+        "sha256": "412dbdbd98891714527061096c53bfba05f1c23d1bd16d833b2733e18925709d",
+        "bytes": 3097052,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "rusty-metal-02-arm-2k-34171f5275ae.webp",
+        "sha256": "34171f5275ae40c8992d2cea60fb64b589733b467e215a4c2da15d27552be96d",
+        "bytes": 4148620,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    },
+    "1k": {
+      "albedo": {
+        "file": "rusty-metal-02-albedo-1k-a7388a6cd992.webp",
+        "sha256": "a7388a6cd992f8996098ba1ee21464005cdb0bb041f1839097120d2c5d2bea3c",
+        "bytes": 203148,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "rusty-metal-02-normal-1k-6f50c2fead96.webp",
+        "sha256": "6f50c2fead96c99746e89144d7cd5b37047ad5fdb1e221fd9cd35ae23449bf31",
+        "bytes": 1105880,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "rusty-metal-02-arm-1k-99fe4d792e2c.webp",
+        "sha256": "99fe4d792e2caa4471517e40044d664287098bf6c853747a124c263f59d09e4a",
+        "bytes": 1011804,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    }
+  }
+}

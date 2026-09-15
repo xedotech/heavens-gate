@@ -1,6 +1,6 @@
 import type { Vector3 } from 'three';
 
-export type Quality = 'low' | 'medium' | 'high';
+export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 export type Difficulty = 'story' | 'normal' | 'ascendant';
 export type CharacterSkin = 'seraph' | 'relic' | 'nocturne' | 'ash' | 'meridian' | 'voidborn';
 export type WeaponId = 'morrow' | 'psalm' | 'vesper';

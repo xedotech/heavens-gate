@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
@@ -57,7 +58,7 @@ import { FrameTimeSampler } from './performance';
 import { createCheckpoint, normalizeSave } from './persistence';
 import { UPGRADES, marksForActor } from './upgrades';
 import { ScannedSurfaceMaterial } from './scanned-materials';
-import { loadVerifiedProp } from './props';
+import { fetchVerifiedAsset, loadVerifiedProp } from './props';
 import { visibleInScene, withoutSubtree } from './scene-lifecycle';
 import {
   INITIAL_HUD,
@@ -289,6 +290,10 @@ export class HeavensGateEngine {
   private dodgeRemaining = 0;
   private dodgeCooldown = 0;
   private readonly dodgeDirection = new THREE.Vector3();
+  private vaultTimer = 0;
+  private vaultFrom = new THREE.Vector3();
+  private vaultTo = new THREE.Vector3();
+  private vaultPeak = 0;
   private walkPhase = 0;
   private footstepTimer = 0;
 
@@ -306,8 +311,13 @@ export class HeavensGateEngine {
   private scannedSurfaces: ScannedSurfaceMaterial[] = [];
   private chapelStone: THREE.MeshStandardMaterial | null = null;
   private chapelStoneDark: THREE.MeshStandardMaterial | null = null;
+  private chapelWood: THREE.MeshStandardMaterial | null = null;
   private propMetal: THREE.MeshStandardMaterial | null = null;
-  private propIron: THREE.MeshStandardMaterial | null = null;
+  private propRust: THREE.MeshStandardMaterial | null = null;
+  private streetLamps: Array<{ x: number; z: number; armX: number; armZ: number }> = [];
+  private hydrantSpots: Array<{ x: number; y: number; z: number; yaw: number }> = [];
+  private stoveLight: THREE.PointLight | null = null;
+  private chapelWindowAnchor: THREE.Vector3 | null = null;
   private effects: TimedEffect[] = [];
   private objectiveMarker: THREE.Group | null = null;
   private dust: THREE.Points | null = null;
@@ -357,6 +367,20 @@ export class HeavensGateEngine {
   private tmpPrevPos = new THREE.Vector3();
   private tmpShotSeg = new THREE.Vector3();
   private tmpColor = new THREE.Color();
+  private losDelta = new THREE.Vector3();
+  private losRay = new THREE.Ray();
+  private losHit = new THREE.Vector3();
+  private losBox = new THREE.Box3();
+  private camForward = new THREE.Vector3();
+  private camRight = new THREE.Vector3();
+  private camDesired = new THREE.Vector3();
+  private camConstrain = new THREE.Vector3();
+  private camLook = new THREE.Vector3();
+  private camLight = new THREE.Vector3();
+  private moveForward = new THREE.Vector3();
+  private moveRight = new THREE.Vector3();
+  private moveDesired = new THREE.Vector3();
+  private vehiclePrev = new THREE.Vector3();
   private contactShadows: THREE.InstancedMesh | null = null;
   private contactShadowMatrix = new THREE.Matrix4();
   private contactShadowPosition = new THREE.Vector3();
@@ -393,6 +417,8 @@ export class HeavensGateEngine {
   private corpses: Corpse[] = [];
   private drops: DropPickup[] = [];
   private envMapTexture: THREE.Texture | null = null;
+  private streetEnvTexture: THREE.Texture | null = null;
+  private chapelEnvTexture: THREE.Texture | null = null;
   private landDip = 0;
   private hurtKick = 0;
   private damageDirection: number | null = null;
@@ -638,15 +664,15 @@ export class HeavensGateEngine {
       const target = new THREE.WebGLRenderTarget(
         Math.max(1, size.x),
         Math.max(1, size.y),
-        { type: THREE.HalfFloatType, samples: this.settings.quality === 'high' ? 2 : 0 },
+        { type: THREE.HalfFloatType, samples: this.highTier() ? (this.settings.quality === 'ultra' ? 4 : 2) : 0 },
       );
       this.composer?.dispose();
       const composer = new EffectComposer(this.renderer, target);
       this.renderPass = new RenderPass(this.scene, this.camera);
       composer.addPass(this.renderPass);
-      // Ground-truth AO on high quality — it renders the scene itself, so the
-      // plain RenderPass gets disabled while it's active. This is the pass
-      // that finally grounds actors, cars, and facades into the street.
+      // Ground-truth AO on high quality — it multiplies AO over the RenderPass
+      // beauty (it does not draw the scene itself). This is the pass that
+      // grounds actors, cars, and facades into the street.
       this.gtaoPass = new GTAOPass(this.scene, this.camera, size.x, size.y);
       this.gtaoPass.updateGtaoMaterial({ radius: 0.45, distanceExponent: 2.4, thickness: 1.2, scale: 1.4 });
       this.gtaoPass.enabled = false;
@@ -707,6 +733,18 @@ export class HeavensGateEngine {
 
   private nextFrame() {
     return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+
+  // Resolves once the world has finished booting — derived-asset loads wait
+  // here so they never race the hero character on the boot critical path.
+  private whenReady() {
+    return new Promise<void>((resolve) => {
+      const check = () => {
+        if (this.disposed || this.initialized) resolve();
+        else window.setTimeout(check, 300);
+      };
+      check();
+    });
   }
 
   private createAtmosphere() {
@@ -844,6 +882,48 @@ export class HeavensGateEngine {
     } catch {
       // IBL is a visual enhancement; the light rig already carries the scene.
     }
+    // Real sky lands when the HDRIs verify + PMREM — the procedural dome above
+    // stays as the boot-time fallback and the failure path.
+    void this.loadHdriEnvironments();
+  }
+
+  private async loadHdriEnvironments() {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    try {
+      const load = async (file: string) => {
+        const { bytes } = await fetchVerifiedAsset('/assets/environment/hdri/manifest.json', 'files', file, '/assets/environment/hdri/');
+        // Blob URL keeps RGBE parsing inside the loader (correct flipY/type).
+        const url = URL.createObjectURL(new Blob([bytes]));
+        try {
+          const hdr = await new HDRLoader().setDataType(THREE.HalfFloatType).loadAsync(url);
+          hdr.mapping = THREE.EquirectangularReflectionMapping;
+          const texture = pmrem.fromEquirectangular(hdr).texture;
+          hdr.dispose();
+          return texture;
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      };
+      const [street, chapel] = await Promise.all([
+        load('cobblestone_street_night_1k.hdr'),
+        load('abandoned_church_1k.hdr'),
+      ]);
+      if (this.disposed) {
+        street.dispose();
+        chapel.dispose();
+        return;
+      }
+      this.streetEnvTexture = street;
+      this.chapelEnvTexture = chapel;
+      this.envMapTexture?.dispose();
+      this.envMapTexture = null;
+      this.scene.environment = this.chapelInterior ? chapel : street;
+      this.scene.environmentIntensity = this.chapelInterior ? 0.85 : 0.6;
+    } catch {
+      // Missing/unverifiable HDRIs keep the procedural dome — no visual hole.
+    } finally {
+      pmrem.dispose();
+    }
   }
 
   private createCity() {
@@ -861,6 +941,38 @@ export class HeavensGateEngine {
       aoIntensity: 0.5,
       fallback: { color: 0x10171a, roughness: 0.19, metalness: 0.55, envMapIntensity: 1.5 },
     });
+    // Three facade buckets — same silhouette and window canvas, but each gets
+    // its own scanned surface so the towers stop reading as one material.
+    const facadeMap = this.createFacadeTexture(false);
+    const facadeRoughness = this.createFacadeTexture(true);
+    const buildingMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: facadeMap,
+      roughnessMap: facadeRoughness,
+      roughness: 0.47,
+      metalness: 0.42,
+      emissive: 0x0d1111,
+      emissiveIntensity: 0.28,
+    });
+    const buildingMaterialWarm = new THREE.MeshStandardMaterial({
+      color: 0xf2ece4,
+      map: facadeMap,
+      roughnessMap: facadeRoughness,
+      roughness: 0.52,
+      metalness: 0.34,
+      emissive: 0x0d1111,
+      emissiveIntensity: 0.28,
+    });
+    const buildingMaterialCool = new THREE.MeshStandardMaterial({
+      color: 0xdfe4e8,
+      map: facadeMap,
+      roughnessMap: facadeRoughness,
+      roughness: 0.68,
+      metalness: 0.16,
+      emissive: 0x0d1111,
+      emissiveIntensity: 0.28,
+    });
+    this.phaseMaterials.push(buildingMaterial, buildingMaterialWarm, buildingMaterialCool);
     // Concrete-wall relief on the tower facades — normal only; the procedural
     // canvas albedo already carries the lit-window grid.
     const scannedFacade = new ScannedSurfaceMaterial('/assets/environment/concrete-wall-008/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
@@ -873,17 +985,70 @@ export class HeavensGateEngine {
         buildingMaterial.needsUpdate = true;
       },
     });
+    const chippedFacade = new ScannedSurfaceMaterial('/assets/environment/chipped-concrete/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
+      repeat: [3, 3],
+      apply: { albedo: false, arm: false },
+      normalScale: 1.0,
+      onApplied: (material) => {
+        buildingMaterialWarm.normalMap = material.normalMap;
+        buildingMaterialWarm.normalScale.setScalar(1.0);
+        buildingMaterialWarm.needsUpdate = true;
+      },
+    });
+    const plasterFacade = new ScannedSurfaceMaterial('/assets/environment/blue-plaster-weathered/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
+      repeat: [3, 3],
+      apply: { albedo: false, arm: false },
+      normalScale: 0.9,
+      onApplied: (material) => {
+        buildingMaterialCool.normalMap = material.normalMap;
+        buildingMaterialCool.normalScale.setScalar(0.9);
+        buildingMaterialCool.needsUpdate = true;
+      },
+    });
+    // The cool bucket also gets a real brick albedo — the only facade group
+    // whose windows live purely on the instanced overlay, so a scanned map
+    // can't misalign them.
+    const brickFacade = new ScannedSurfaceMaterial('/assets/environment/brick-wall-001/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
+      repeat: [3, 3],
+      apply: { normal: false, arm: false },
+      onApplied: (material) => {
+        buildingMaterialCool.map = material.map;
+        buildingMaterialCool.needsUpdate = true;
+      },
+    });
     const chapelFloor = new ScannedSurfaceMaterial('/assets/environment/stone-tiles-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Stone'), {
       repeat: [8, 7],
       tint: 0x6a6763,
       aoIntensity: 0.8,
       fallback: { color: 0x232120, roughness: 0.94 },
     });
-    const chapelBrick = new ScannedSurfaceMaterial('/assets/environment/dark-brick-wall/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Brick'), {
+    const chapelBrick = new ScannedSurfaceMaterial('/assets/environment/church-bricks-03/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Brick'), {
       repeat: [5, 3],
-      tint: 0x77706a,
+      tint: 0x8a8178,
       aoIntensity: 0.8,
       fallback: { color: 0x2e2c2a, roughness: 0.9, metalness: 0.05 },
+    });
+    const pewWood = new ScannedSurfaceMaterial('/assets/environment/wood-planks/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Wood'), {
+      repeat: [1.4, 1.4],
+      tint: 0x6b523a,
+      aoIntensity: 0.7,
+      fallback: { color: 0x3d2f22, roughness: 0.82 },
+    });
+    // Paved plaza + chapel court — real scanned floors over the ground plane.
+    const plazaConcrete = new ScannedSurfaceMaterial('/assets/environment/concrete-floor-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Plaza'), {
+      repeat: [14, 14],
+      apply: { metalnessMap: false },
+      tint: 0x8b8d8f,
+      metalness: 0.05,
+      aoIntensity: 0.7,
+      fallback: { color: 0x232629, roughness: 0.82 },
+    });
+    const chapelCobble = new ScannedSurfaceMaterial('/assets/environment/cobblestone-floor-001/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Cobble'), {
+      repeat: [12, 12],
+      apply: { metalnessMap: false },
+      tint: 0x77787c,
+      aoIntensity: 0.8,
+      fallback: { color: 0x242524, roughness: 0.9 },
     });
     const propMetalLoader = new ScannedSurfaceMaterial('/assets/environment/metal-plate/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Metal'), {
       repeat: [1.6, 1.6],
@@ -891,24 +1056,50 @@ export class HeavensGateEngine {
       aoIntensity: 0.55,
       fallback: { color: 0x39424a, roughness: 0.46, metalness: 0.5 },
     });
-    const propIronLoader = new ScannedSurfaceMaterial('/assets/environment/corrugated-iron-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Iron'), {
-      repeat: [2.4, 2.4],
-      tint: 0x7a6a5c,
-      aoIntensity: 0.7,
+    const propRustLoader = new ScannedSurfaceMaterial('/assets/environment/rusty-metal-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Rust'), {
+      repeat: [1.8, 1.8],
+      apply: { metalnessMap: false },
+      tint: 0x8a6a52,
+      metalness: 0.35,
+      aoIntensity: 0.6,
       fallback: { color: 0x4c3a2c, roughness: 0.7, metalness: 0.34 },
     });
     this.propMetal = propMetalLoader.material;
-    this.propIron = propIronLoader.material;
+    this.propRust = propRustLoader.material;
+    this.chapelWood = pewWood.material;
     this.chapelStoneDark = chapelFloor.material;
     this.chapelStone = chapelBrick.material;
-    this.scannedSurfaces = [this.scannedGround, scannedRoad, scannedFacade, chapelFloor, chapelBrick, propMetalLoader, propIronLoader];
-    this.scannedSurfaces.forEach((surface) => surface.setQuality(this.settings.quality));
+    this.scannedSurfaces = [
+      this.scannedGround, scannedRoad, scannedFacade, chippedFacade, plasterFacade, brickFacade,
+      chapelFloor, chapelBrick, pewWood, plazaConcrete, chapelCobble, propMetalLoader, propRustLoader,
+    ];
+    // Textures stream in after boot — the fetches stay off the hero's
+    // critical path, and the painted fallbacks carry the first seconds.
+    void this.whenReady().then(() => {
+      if (!this.disposed) this.scannedSurfaces.forEach((surface) => surface.setQuality(this.settings.quality));
+    });
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE), this.scannedGround.material);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     ground.userData.blocksShot = true;
     this.scene.add(ground);
     this.rayTargets.push(ground);
+
+    // Paved plazas — real scanned floors in the two route clearings.
+    const plaza = new THREE.Mesh(new THREE.CircleGeometry(14, 48), plazaConcrete.material);
+    plaza.rotation.x = -Math.PI / 2;
+    plaza.position.set(0, 0.02, -54);
+    plaza.receiveShadow = true;
+    plaza.userData.blocksShot = true;
+    this.scene.add(plaza);
+    this.rayTargets.push(plaza);
+    const chapelCourt = new THREE.Mesh(new THREE.CircleGeometry(12, 48), chapelCobble.material);
+    chapelCourt.rotation.x = -Math.PI / 2;
+    chapelCourt.position.set(-72, 0.02, 48);
+    chapelCourt.receiveShadow = true;
+    chapelCourt.userData.blocksShot = true;
+    this.scene.add(chapelCourt);
+    this.rayTargets.push(chapelCourt);
 
     // Perpetual-storm noir: roads read as wet asphalt — low roughness and a
     // raised env response so neon and headlights smear across the surface.
@@ -986,36 +1177,38 @@ export class HeavensGateEngine {
       }
     }
 
-    const buildingMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      map: this.createFacadeTexture(false),
-      roughnessMap: this.createFacadeTexture(true),
-      roughness: 0.47,
-      metalness: 0.42,
-      emissive: 0x0d1111,
-      emissiveIntensity: 0.28,
-    });
-    this.phaseMaterials.push(buildingMaterial);
-    const buildings = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), buildingMaterial, buildingData.length);
-    buildings.castShadow = this.settings.quality === 'high';
-    buildings.receiveShadow = true;
-    buildings.userData.blocksShot = true;
-    const matrix = new THREE.Matrix4();
+    // Partition first so each bucket keeps its own contiguous subarray — the
+    // split is seeded, not positional, so districts still interleave.
+    const buildingBuckets: typeof buildingData[] = [[], [], []];
     buildingData.forEach((building, buildingIndex) => {
-      matrix.compose(building.position, new THREE.Quaternion(), building.scale);
-      buildings.setMatrixAt(buildingIndex, matrix);
-      buildings.setColorAt(buildingIndex, building.color);
+      const pick = seeded(buildingIndex, 77);
+      buildingBuckets[pick < 0.5 ? 0 : pick < 0.82 ? 1 : 2].push(building);
     });
-    buildings.instanceMatrix.needsUpdate = true;
-    if (buildings.instanceColor) buildings.instanceColor.needsUpdate = true;
-    this.scene.add(buildings);
-    this.rayTargets.push(buildings);
+    const facadeGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const matrix = new THREE.Matrix4();
+    [buildingMaterial, buildingMaterialWarm, buildingMaterialCool].forEach((material, bucketIndex) => {
+      const group = buildingBuckets[bucketIndex];
+      if (!group.length) return;
+      const buildings = new THREE.InstancedMesh(facadeGeometry, material, group.length);
+      buildings.castShadow = this.highTier();
+      buildings.receiveShadow = true;
+      buildings.userData.blocksShot = true;
+      group.forEach((building, buildingIndex) => {
+        matrix.compose(building.position, new THREE.Quaternion(), building.scale);
+        buildings.setMatrixAt(buildingIndex, matrix);
+        buildings.setColorAt(buildingIndex, building.color);
+      });
+      buildings.instanceMatrix.needsUpdate = true;
+      if (buildings.instanceColor) buildings.instanceColor.needsUpdate = true;
+      this.scene.add(buildings);
+      this.rayTargets.push(buildings);
+    });
     this.createBuildingDetails(buildingData);
     this.createStreetMarkings();
 
     const windowMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const windowGeometry = new THREE.BoxGeometry(0.66, 0.34, 0.1);
-    const windowCount = this.settings.quality === 'low' ? 240 : this.settings.quality === 'medium' ? 620 : 1080;
+    const windowCount = this.settings.quality === 'low' ? 240 : this.settings.quality === 'medium' ? 620 : this.settings.quality === 'ultra' ? 1400 : 1080;
     const windows = new THREE.InstancedMesh(windowGeometry, windowMaterial, windowCount);
     const windowColor = new THREE.Color();
     const faceQuaternion = new THREE.Quaternion();
@@ -1052,6 +1245,8 @@ export class HeavensGateEngine {
     this.createRooftopProps(buildingData);
     this.createSearchlight(buildingData);
     this.createStreetProps();
+    this.createRouteProps(buildingData);
+    this.createArtDecals(buildingData);
     this.createLitter();
 
     this.createLandmark(new THREE.Vector3(0, 0, -54), 0xd1ad61, 'Crown Basilica');
@@ -1135,7 +1330,7 @@ export class HeavensGateEngine {
     [crownMesh, parapetMesh].forEach((mesh) => {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.castShadow = this.settings.quality === 'high';
+      mesh.castShadow = this.highTier();
       mesh.receiveShadow = true;
       mesh.userData.blocksShot = true;
       this.scene.add(mesh);
@@ -1252,11 +1447,11 @@ export class HeavensGateEngine {
   }
 
   private districtColor(x: number, z: number) {
-    if (x < -42 && z > 12) return new THREE.Color(0x252423);
-    if (x > 48 && z > 12) return new THREE.Color(0x1c292d);
-    if (x < -28 && z < -42) return new THREE.Color(0x222a23);
-    if (x > 32 && z < -24) return new THREE.Color(0x28231d);
-    return new THREE.Color(0x232a2c);
+    if (x < -42 && z > 12) return new THREE.Color(0x625e5a);
+    if (x > 48 && z > 12) return new THREE.Color(0x4c6a74);
+    if (x < -28 && z < -42) return new THREE.Color(0x586c5a);
+    if (x > 32 && z < -24) return new THREE.Color(0x6a5e50);
+    return new THREE.Color(0x5a6a70);
   }
 
   private districtNeonColor(x: number, z: number) {
@@ -1324,7 +1519,7 @@ export class HeavensGateEngine {
       }
     }
     const lamps = positions.filter((lamp) => !this.collides(lamp.x, lamp.z, 0.5));
-    const dark = new THREE.MeshStandardMaterial({ color: 0x14181a, roughness: 0.5, metalness: 0.6 });
+    this.streetLamps = lamps;
     const headMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const coneMaterial = new THREE.MeshBasicMaterial({
       color: new THREE.Color(1.35, 1.06, 0.52),
@@ -1334,28 +1529,41 @@ export class HeavensGateEngine {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.11, 5.0, 6), dark, lamps.length);
-    const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.62, 0.12, 0.26), headMaterial, lamps.length);
+    // Poles come from the GLB in createRouteProps — these are just the glow:
+    // a small emissive lantern head + the additive light cone under it.
+    const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.34, 0.3, 0.34), headMaterial, lamps.length);
     const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(1.5, 4.7, 10, 1, true), coneMaterial, lamps.length);
     const matrix = new THREE.Matrix4();
     const headColor = new THREE.Color();
     lamps.forEach((lamp, index) => {
-      matrix.makeTranslation(lamp.x, 2.5, lamp.z);
-      poles.setMatrixAt(index, matrix);
-      matrix.makeTranslation(lamp.x + lamp.armX, 4.96, lamp.z + lamp.armZ);
+      matrix.makeTranslation(lamp.x, 4.7, lamp.z);
       heads.setMatrixAt(index, matrix);
       headColor.setRGB(1.9, 1.5, 0.72).multiplyScalar(0.85 + seeded(index, 52) * 0.3);
       heads.setColorAt(index, headColor);
-      matrix.makeTranslation(lamp.x + lamp.armX, 2.62, lamp.z + lamp.armZ);
+      matrix.makeTranslation(lamp.x, 2.6, lamp.z);
       cones.setMatrixAt(index, matrix);
     });
-    [poles, heads, cones].forEach((mesh) => {
+    [heads, cones].forEach((mesh) => {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       mesh.castShadow = false;
       this.scene.add(mesh);
     });
     cones.renderOrder = 5;
+  }
+
+  // Poles the photogrammetry lamp replaces — only built if the GLB can't load.
+  private buildFallbackLampPoles() {
+    if (!this.streetLamps.length) return;
+    const dark = new THREE.MeshStandardMaterial({ color: 0x14181a, roughness: 0.5, metalness: 0.6 });
+    const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.11, 5.0, 6), dark, this.streetLamps.length);
+    const matrix = new THREE.Matrix4();
+    this.streetLamps.forEach((lamp, index) => {
+      matrix.makeTranslation(lamp.x, 2.5, lamp.z);
+      poles.setMatrixAt(index, matrix);
+    });
+    poles.instanceMatrix.needsUpdate = true;
+    this.scene.add(poles);
   }
 
   private billboardTexture(title: string, subtitle: string, accent: string, background: string) {
@@ -1632,7 +1840,7 @@ export class HeavensGateEngine {
     });
     const dark = new THREE.MeshStandardMaterial({ color: 0x1a1e20, roughness: 0.52, metalness: 0.62 });
     const metal = this.propMetal ?? new THREE.MeshStandardMaterial({ color: 0x39424a, roughness: 0.46, metalness: 0.5 });
-    const rust = this.propIron ?? new THREE.MeshStandardMaterial({ color: 0x4c3a2c, roughness: 0.7, metalness: 0.34 });
+    const rust = this.propRust ?? new THREE.MeshStandardMaterial({ color: 0x4c3a2c, roughness: 0.7, metalness: 0.34 });
     const beaconMaterial = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 0.4, 0.3) });
     const matrix = new THREE.Matrix4();
     const quaternion = new THREE.Quaternion();
@@ -1677,7 +1885,14 @@ export class HeavensGateEngine {
           const side = seeded(index, 91) > 0.5 ? 5.4 : -5.4;
           const x = line + side;
           const z = t;
-          if (!this.collides(x, z, 0.4)) bollards.push(new THREE.Vector3(x, 0.32, z));
+          // Every fourth curb spot grows a real hydrant instead of a bollard.
+          if (!this.collides(x, z, 0.4)) {
+            if (seeded(index, 97) > 0.62) {
+              (this.hydrantSpots ??= []).push({ x, y: 0, z, yaw: seeded(index, 98) * Math.PI * 2 });
+            } else {
+              bollards.push(new THREE.Vector3(x, 0.32, z));
+            }
+          }
         }
         if (seeded(index, 92) > 0.78) {
           const side = seeded(index, 93) > 0.5 ? 6.4 : -6.4;
@@ -1693,7 +1908,7 @@ export class HeavensGateEngine {
         }
       }
     }
-    const bollardMaterial = this.propMetal ?? new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.42, metalness: 0.68 });
+    const bollardMaterial = this.propRust ?? new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.42, metalness: 0.68 });
     const planterMaterial = new THREE.MeshStandardMaterial({ color: 0x22312a, roughness: 0.8, metalness: 0.08 });
     const kioskBody = this.propMetal ?? new THREE.MeshStandardMaterial({ color: 0x1d2326, roughness: 0.44, metalness: 0.55 });
     const kioskScreen = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.6, 1.7, 2.1) });
@@ -1759,6 +1974,402 @@ export class HeavensGateEngine {
     mesh.instanceMatrix.needsUpdate = true;
     this.scene.add(mesh);
     this.litter = { mesh, items };
+  }
+
+  // One verified GLB scattered as instanced draws — a single InstancedMesh
+  // per source primitive, one matrix per placement. Fire-and-forget: a
+  // failed verify or load just isn't there. Resolves true when it landed.
+  private async instancedProp(
+    id: string,
+    placements: Array<{ x: number; y: number; z: number; yaw: number; scale?: number }>,
+    options: {
+      targetHeight?: number;
+      mount?: 'ground' | 'pivot';
+      surface?: 'metal' | 'generic';
+      nodeFilter?: (name: string) => boolean;
+      collider?: { w: number; d: number; h: number } | 'none';
+      emissiveGlass?: number;
+    } = {},
+  ): Promise<boolean> {
+    if (!placements.length) return false;
+    try {
+      await this.whenReady();
+      if (this.disposed) return false;
+      const prop = await loadVerifiedProp(id);
+      if (this.disposed) {
+        prop.traverse((node) => { if (node instanceof THREE.Mesh) node.geometry.dispose(); });
+        return false;
+      }
+      prop.updateMatrixWorld(true);
+      const sources: Array<{ geometry: THREE.BufferGeometry; material: THREE.Material | THREE.Material[]; local: THREE.Matrix4; glass: boolean }> = [];
+      prop.traverse((node) => {
+        if (node instanceof THREE.Mesh && (!options.nodeFilter || options.nodeFilter(node.name))) {
+          const material = node.material as THREE.Material | THREE.Material[];
+          const names = (Array.isArray(material) ? material : [material]).map((entry) => entry?.name ?? '').join(' ');
+          sources.push({ geometry: node.geometry, material, local: node.matrixWorld.clone(), glass: /glass/i.test(names) });
+        }
+      });
+      if (!sources.length) return false;
+      // Prop-space bounds → uniform scale so heightMeters lands on
+      // targetHeight, then ground-mount: footprint centre + base on the spot.
+      const bounds = new THREE.Box3();
+      const piece = new THREE.Box3();
+      sources.forEach(({ geometry, local }) => {
+        geometry.computeBoundingBox();
+        if (geometry.boundingBox) {
+          piece.copy(geometry.boundingBox).applyMatrix4(local);
+          bounds.union(piece);
+        }
+      });
+      const heightMeters = Math.max(bounds.max.y - bounds.min.y, 0.001);
+      const desiredHeight = options.targetHeight ?? (prop.userData.heightMeters as number | undefined) ?? heightMeters;
+      const baseScale = desiredHeight / heightMeters;
+      const center = bounds.getCenter(new THREE.Vector3());
+      const align = options.mount === 'pivot'
+        ? new THREE.Matrix4()
+        : new THREE.Matrix4().makeTranslation(-center.x, -bounds.min.y, -center.z);
+      const matrix = new THREE.Matrix4();
+      const quaternion = new THREE.Quaternion();
+      const upAxis = new THREE.Vector3(0, 1, 0);
+      const scaleVector = new THREE.Vector3();
+      const position = new THREE.Vector3();
+      const castShadow = this.highTier();
+      sources.forEach(({ geometry, material, local, glass }) => {
+        const mesh = new THREE.InstancedMesh(geometry, material, placements.length);
+        placements.forEach((spot, index) => {
+          quaternion.setFromAxisAngle(upAxis, spot.yaw);
+          scaleVector.setScalar(baseScale * (spot.scale ?? 1));
+          position.set(spot.x, spot.y, spot.z);
+          matrix.compose(position, quaternion, scaleVector);
+          matrix.multiply(align);
+          matrix.multiply(local);
+          mesh.setMatrixAt(index, matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.castShadow = castShadow;
+        mesh.receiveShadow = true;
+        mesh.userData.blocksShot = true;
+        mesh.userData.surfaceKind = glass ? 'glass' : options.surface ?? 'generic';
+        if (glass && options.emissiveGlass && !Array.isArray(material)) {
+          // The GLB glass IS the lantern — light it, not just the cone.
+          const lit = (material as THREE.MeshStandardMaterial).clone();
+          lit.emissive = new THREE.Color(options.emissiveGlass);
+          lit.emissiveIntensity = 1.6;
+          mesh.material = lit;
+        }
+        this.scene.add(mesh);
+        this.rayTargets.push(mesh);
+      });
+      if (options.collider && options.collider !== 'none') {
+        const { w, d, h } = options.collider;
+        placements.forEach((spot) => {
+          // Yaw-rotated footprint → conservative axis-aligned box.
+          const c = Math.abs(Math.cos(spot.yaw));
+          const s = Math.abs(Math.sin(spot.yaw));
+          const hx = (w / 2) * c + (d / 2) * s;
+          const hz = (w / 2) * s + (d / 2) * c;
+          this.collisionBoxes.push(new THREE.Box3(
+            new THREE.Vector3(spot.x - hx, spot.y, spot.z - hz),
+            new THREE.Vector3(spot.x + hx, spot.y + h, spot.z + hz),
+          ));
+        });
+      }
+      return true;
+    } catch {
+      // The street is complete without the prop — verification keeps it honest.
+      return false;
+    }
+  }
+
+  // Derived-asset street dressing along the main route: verified GLB props
+  // layered over the procedural furniture. Placements are seeded and the
+  // `spots` registry keeps props off each other; `reserved` covers the
+  // landmark/sigil/door spaces that have no collision box to collide with.
+  private createRouteProps(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
+    type Spot = { x: number; y: number; z: number; yaw: number };
+    const spots: Array<{ x: number; z: number; r: number }> = [];
+    const reserved: Array<[number, number, number]> = [
+      [-69, 55.5, 2.8],   // memorial obelisk
+      [-69, 52.5, 2.2],   // chapel sigil
+      [-65.5, 48, 3.2],   // chapel door approach
+      [0, 34, 2.4],       // spire sigil
+      [0, -54, 2.6],      // gate sigil
+    ];
+    const blocked = (x: number, z: number, r: number) =>
+      this.collides(x, z, r)
+      || (x > -79.5 && x < -64.5 && z > 41.5 && z < 54.5) // chapel walls land later — keep its footprint clear
+      || spots.some((spot) => Math.hypot(spot.x - x, spot.z - z) < spot.r + r)
+      || reserved.some(([rx, rz, rr]) => Math.hypot(rx - x, rz - z) < rr + r);
+    const take = (x: number, z: number, r: number) => { spots.push({ x, z, r }); };
+    // Face-mounted props are supposed to touch a wall — skip the collider
+    // check (the building box would always win) but still respect props/spots.
+    const blockedWall = (x: number, z: number, r: number) =>
+      spots.some((spot) => Math.hypot(spot.x - x, spot.z - z) < spot.r + r)
+      || reserved.some(([rx, rz, rr]) => Math.hypot(rx - x, rz - z) < rr + r);
+    // A wall-face spot: position proud of the building, yaw facing the road.
+    const faceSpot = (building: (typeof buildingData)[number], outset: number, y: number): Spot => {
+      const roadX = Math.round(building.position.x / 30) * 30;
+      const roadZ = Math.round(building.position.z / 30) * 30;
+      const faceX = Math.abs(roadX - building.position.x) < Math.abs(roadZ - building.position.z);
+      if (faceX) {
+        const side = roadX < building.position.x ? -1 : 1;
+        return { x: building.position.x + side * (building.scale.x * 0.5 + outset), y, z: building.position.z, yaw: side > 0 ? Math.PI / 2 : -Math.PI / 2 };
+      }
+      const side = roadZ < building.position.z ? -1 : 1;
+      return { x: building.position.x, y, z: building.position.z + side * (building.scale.z * 0.5 + outset), yaw: side > 0 ? 0 : Math.PI };
+    };
+
+    // Street lamps — the GLB lantern replaces every procedural pole site.
+    void this.instancedProp('street_lamp_01',
+      (this.streetLamps ?? []).map((lamp, index) => ({ x: lamp.x, y: 0, z: lamp.z, yaw: seeded(index, 210) * Math.PI * 2 })),
+      { targetHeight: 5.2, surface: 'metal', emissiveGlass: 0xffc87a, collider: { w: 0.34, d: 0.34, h: 5.2 } },
+    ).then((placed) => { if (!placed && !this.disposed) this.buildFallbackLampPoles(); });
+
+    // Painted benches on sidewalks + a pair inside Bell Below.
+    const benches: Spot[] = [];
+    for (let i = 0; i < 60 && benches.length < 8; i += 1) {
+      const line = (Math.floor(seeded(i, 211) * 11) - 5) * 30;
+      const side = seeded(i, 212) > 0.5 ? 6.3 : -6.3;
+      const along = (seeded(i, 213) - 0.5) * 260;
+      if (seeded(i, 214) > 0.5) {
+        const x = line + side;
+        if (!blocked(x, along, 1.0)) { benches.push({ x, y: 0, z: along, yaw: side > 0 ? -Math.PI / 2 : Math.PI / 2 }); take(x, along, 1.0); }
+      } else {
+        const z = line + side;
+        if (!blocked(along, z, 1.0)) { benches.push({ x: along, y: 0, z, yaw: side > 0 ? Math.PI : 0 }); take(along, z, 1.0); }
+      }
+    }
+    // The fixed pair sits in the memorial garden, turned toward the obelisk.
+    [{ x: -72.6, z: 60.6, yaw: 2.3 }, { x: -63.8, z: 55.2, yaw: 2.4 }].forEach((bench) => {
+      if (!blocked(bench.x, bench.z, 1.0)) { benches.push({ ...bench, y: 0 }); take(bench.x, bench.z, 1.0); }
+    });
+    void this.instancedProp('painted_wooden_bench', benches, { targetHeight: 0.95, collider: { w: 1.9, d: 0.7, h: 0.95 } });
+
+    // Manhole covers flush with the asphalt — visible, never blocking.
+    const manholes: Spot[] = [];
+    for (let i = 0; i < 40 && manholes.length < 14; i += 1) {
+      const line = (Math.floor(seeded(i, 221) * 11) - 5) * 30;
+      const t = (seeded(i, 222) - 0.5) * 280;
+      const horizontal = seeded(i, 223) > 0.5;
+      const x = horizontal ? line : t;
+      const z = horizontal ? t : line;
+      if (!blocked(x, z, 0.5)) { manholes.push({ x, y: 0.035, z, yaw: seeded(i, 224) * Math.PI * 2 }); take(x, z, 0.5); }
+    }
+    void this.instancedProp('water_manhole_cover', manholes, { targetHeight: 0.05, surface: 'metal', collider: 'none' });
+
+    // Hydrants — the curb spots createStreetProps split off from bollards.
+    void this.instancedProp('fire_hydrant', this.hydrantSpots ?? [], {
+      targetHeight: 0.8,
+      surface: 'metal',
+      nodeFilter: (name) => name.includes('_aged'),
+      collider: { w: 0.34, d: 0.34, h: 0.8 },
+    });
+
+    // Concrete barriers — a staggered cordon on the Bell Below approach
+    // plus a loose ring inside the clearing itself.
+    const barriers: Spot[] = [];
+    [
+      { x: -9, z: -37, yaw: 0.06 }, { x: -4.4, z: -40, yaw: -0.05 }, { x: 4.4, z: -39, yaw: 0.08 },
+      { x: 9, z: -37.5, yaw: -0.04 }, { x: -6.6, z: -45, yaw: 0.1 }, { x: 6.6, z: -44, yaw: -0.08 },
+    ].forEach((spot) => {
+      if (!blocked(spot.x, spot.z, 1.0)) { barriers.push({ ...spot, y: 0 }); take(spot.x, spot.z, 1.0); }
+    });
+    for (let i = 0; i < 16 && barriers.length < 10; i += 1) {
+      const angle = seeded(i, 232) * Math.PI * 2;
+      const x = Math.cos(angle) * 13;
+      const z = -54 + Math.sin(angle) * 13;
+      if (!blocked(x, z, 1.0)) { barriers.push({ x, y: 0, z, yaw: -angle + Math.PI / 2 }); take(x, z, 1.0); }
+    }
+    void this.instancedProp('concrete_road_barrier', barriers, { targetHeight: 1.1, collider: { w: 2.4, d: 0.6, h: 1.1 } });
+
+    // A second barrier style on the dockside / industrial streets.
+    const dockBarriers: Spot[] = [];
+    for (let i = 0; i < 30 && dockBarriers.length < 6; i += 1) {
+      const line = [60, 90, 120][Math.floor(seeded(i, 233) * 3)];
+      const along = 40 + seeded(i, 234) * 60;
+      const horizontal = seeded(i, 235) > 0.5;
+      const x = horizontal ? along : line + (seeded(i, 236) > 0.5 ? 3.4 : -3.4);
+      const z = horizontal ? line + (seeded(i, 236) > 0.5 ? 3.4 : -3.4) : along;
+      if (!blocked(x, z, 1.0)) {
+        dockBarriers.push({ x, y: 0, z, yaw: (horizontal ? 0 : Math.PI / 2) + (seeded(i, 237) - 0.5) * 0.3 });
+        take(x, z, 1.0);
+      }
+    }
+    void this.instancedProp('concrete_road_barrier_02', dockBarriers, { targetHeight: 1.0, collider: { w: 2.0, d: 0.6, h: 1.0 } });
+
+    // Memorial statue + mossy stones around the garden clearing.
+    void this.instancedProp('gothic_statue', [
+      { x: -70.9, y: 0, z: 58.9, yaw: Math.PI * 0.9 },
+    ], { targetHeight: 1.9, collider: { w: 1.0, d: 1.0, h: 1.9 } });
+    const rocks: Spot[] = [];
+    [{ x: -66.3, z: 59.0, yaw: 1.1 }, { x: -74.9, z: 58.2, yaw: 2.4 }, { x: -80.4, z: 55.8, yaw: 0.4 }].forEach((spot) => {
+      if (!blocked(spot.x, spot.z, 1.6)) { rocks.push({ ...spot, y: 0 }); take(spot.x, spot.z, 1.6); }
+    });
+    void this.instancedProp('rock_moss_set_01', rocks, { targetHeight: 0.9, collider: { w: 1.9, d: 1.4, h: 0.9 } });
+    const boulders: Spot[] = [];
+    [{ x: -64.9, z: 57.9, yaw: 0.2 }, { x: -76.8, z: 61.3, yaw: 1.8 }, { x: -80.6, z: 47.6, yaw: 2.9 }].forEach((spot) => {
+      if (!blocked(spot.x, spot.z, 1.0)) { boulders.push({ ...spot, y: 0 }); take(spot.x, spot.z, 1.0); }
+    });
+    void this.instancedProp('boulder_01', boulders, { targetHeight: 0.85, collider: { w: 0.9, d: 0.9, h: 0.85 } });
+
+    // Roller shutters on street-facing walls — service entrances, mostly shut.
+    const shutters: Spot[] = [];
+    for (let i = 0; i < 30 && shutters.length < 8; i += 1) {
+      const building = buildingData[Math.floor(seeded(i, 241) * buildingData.length)];
+      const spot = faceSpot(building, 0.08, 0);
+      if (!blockedWall(spot.x, spot.z, 1.6)) { shutters.push(spot); take(spot.x, spot.z, 1.6); }
+    }
+    void this.instancedProp('rollershutter_door', shutters, { targetHeight: 2.4, surface: 'metal', collider: { w: 3.0, d: 0.34, h: 2.4 } });
+
+    // Industrial wall lamps along the route corridor — sconce-height, a few
+    // carrying real point lights inside the scene's light budget.
+    const routeLength = Math.hypot(-72, 102);
+    const routeDistance = (x: number, z: number) => {
+      const t = clamp(((x - 0) * -72 + (z + 54) * 102) / (routeLength * routeLength), 0, 1);
+      return Math.hypot(x - t * -72, z - (-54 + t * 102));
+    };
+    const corridor = buildingData.filter((building) => routeDistance(building.position.x, building.position.z) < 34);
+    const wallLamps: Spot[] = [];
+    for (let i = 0; i < 40 && wallLamps.length < 12 && corridor.length; i += 1) {
+      const building = corridor[Math.floor(seeded(i, 251) * corridor.length)];
+      const spot = faceSpot(building, 0.12, 3.0 + seeded(i, 252) * 1.4);
+      if (!blockedWall(spot.x, spot.z, 0.6)) { wallLamps.push(spot); take(spot.x, spot.z, 0.6); }
+    }
+    let lampBudget = 13;
+    this.scene.traverse((node) => { if (node instanceof THREE.PointLight) lampBudget -= 1; });
+    lampBudget = Math.max(0, lampBudget - 1); // one stays reserved for the stove
+    wallLamps.forEach((spot, index) => {
+      if (index >= lampBudget) return;
+      const light = new THREE.PointLight(0xffb464, 2.4, 10, 1.8);
+      light.position.set(spot.x + Math.sin(spot.yaw) * 0.42, spot.y + 0.05, spot.z + Math.cos(spot.yaw) * 0.42);
+      this.scene.add(light);
+    });
+    void this.instancedProp('industrial_wall_lamp', wallLamps, {
+      targetHeight: 0.55, mount: 'pivot', surface: 'metal', emissiveGlass: 0xffb464, collider: 'none',
+    });
+
+    // Utility pipe runs against industrial facades at street level.
+    const pipeWall = buildingData.filter((building) => building.position.x > 32 && building.position.z < -24 && building.scale.y > 18);
+    const pipes: Spot[] = [];
+    for (let i = 0; i < 24 && pipes.length < 6 && pipeWall.length; i += 1) {
+      const building = pipeWall[Math.floor(seeded(i, 261) * pipeWall.length)];
+      const spot = faceSpot(building, 0.55, 0);
+      if (!blockedWall(spot.x, spot.z, 1.1)) { pipes.push(spot); take(spot.x, spot.z, 1.1); }
+    }
+    void this.instancedProp('modular_industrial_pipes_01', pipes, { targetHeight: 2.8, surface: 'metal', collider: { w: 0.8, d: 0.8, h: 2.4 } });
+
+    // Barrel + stove clusters in the outer clearings, one route stove lit.
+    const clusterCenters: Array<[number, number, number]> = [
+      [90, 76, 18], [-112, 72, 10], [-82, 104, 10], [0, 34, 10], [-69, 63, 0],
+    ];
+    const barrels: Spot[] = [];
+    const stoves: Spot[] = [];
+    clusterCenters.forEach(([cx, cz, cr], clusterIndex) => {
+      const angle = seeded(clusterIndex, 270) * Math.PI * 2;
+      const bx = cx + Math.cos(angle) * cr * 0.6;
+      const bz = cz + Math.sin(angle) * cr * 0.6;
+      const count = 2 + (seeded(clusterIndex, 271) > 0.5 ? 1 : 0);
+      for (let j = 0; j < count; j += 1) {
+        const x = bx + (seeded(clusterIndex * 7 + j, 272) - 0.5) * 1.9;
+        const z = bz + (seeded(clusterIndex * 7 + j, 273) - 0.5) * 1.9;
+        if (blocked(x, z, 0.6)) continue;
+        (j === 0 ? stoves : barrels).push({ x, y: 0, z, yaw: seeded(clusterIndex * 7 + j, 274) * Math.PI * 2 });
+        take(x, z, 0.6);
+      }
+    });
+    stoves.push({ x: -64.4, y: 0, z: 43.6, yaw: 0.7 });
+    take(-64.4, 43.6, 0.6);
+    void this.instancedProp('Barrel_01', barrels, { targetHeight: 0.9, surface: 'metal', collider: { w: 0.62, d: 0.62, h: 0.9 } });
+    void this.instancedProp('barrel_stove', stoves, { targetHeight: 0.95, surface: 'metal', collider: { w: 0.58, d: 0.58, h: 0.95 } });
+    const stove = new THREE.PointLight(0xff7a30, 2.4, 8, 1.8);
+    stove.position.set(-64.4, 0.9, 43.6);
+    this.scene.add(stove);
+    this.stoveLight = stove;
+
+    // Chain-link panels edging the clearings — thin colliders, angled inward.
+    const fences: Spot[] = [];
+    const fenceRims: Array<[number, number, number]> = [[90, 76, 18], [-112, 72, 10], [-82, 104, 10], [0, -54, 24], [0, 34, 10]];
+    for (let i = 0; i < 26 && fences.length < 8; i += 1) {
+      const [fx, fz, fr] = fenceRims[Math.floor(seeded(i, 280) * fenceRims.length)];
+      const angle = seeded(i, 281) * Math.PI * 2;
+      const x = fx + Math.cos(angle) * (fr - 1.4);
+      const z = fz + Math.sin(angle) * (fr - 1.4);
+      if (blocked(x, z, 3.2)) continue;
+      fences.push({ x, y: 0, z, yaw: Math.atan2(fx - x, fz - z) });
+      take(x, z, 3.2);
+    }
+    void this.instancedProp('modular_chainlink_fence', fences, { targetHeight: 2.1, surface: 'metal', collider: { w: 6.2, d: 1.6, h: 2.1 } });
+  }
+
+  // Generated art: the chapel's memory window + memory-office posters on
+  // facades. Both verify against the art manifest — a bad hash skips silently.
+  private createArtDecals(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
+    const loadArt = (name: string) =>
+      this.whenReady()
+        .then(() => fetchVerifiedAsset('/assets/art/manifest.json', 'art', name, '/assets/art/'))
+        .then(({ bytes }) => {
+          if (this.disposed) return null;
+          const url = URL.createObjectURL(new Blob([bytes], { type: 'image/webp' }));
+          return new THREE.TextureLoader().loadAsync(url).finally(() => URL.revokeObjectURL(url));
+        });
+    void loadArt('chapel-memory-window')
+      .then((texture) => { if (texture && !this.disposed) this.applyChapelWindow(texture); })
+      .catch(() => { /* the warm glass panel stays the window */ });
+    void loadArt('memory-office-poster')
+      .then((texture) => {
+        if (!texture || this.disposed) return;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = 4;
+        const material = new THREE.MeshBasicMaterial({ map: texture, polygonOffset: true, polygonOffsetFactor: -2 });
+        const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), material, 10);
+        mesh.renderOrder = 1;
+        const dummy = new THREE.Object3D();
+        // Same wall placement math as the procedural posters (variant 0).
+        for (let i = 0; i < 10; i += 1) {
+          const salt = 171;
+          const building = buildingData[Math.floor(seeded(i, salt) * buildingData.length)];
+          const roadX = Math.round(building.position.x / 30) * 30;
+          const roadZ = Math.round(building.position.z / 30) * 30;
+          const faceX = Math.abs(roadX - building.position.x) < Math.abs(roadZ - building.position.z);
+          const y = 1.6 + seeded(i, salt + 1) * 1.1;
+          const lateral = (seeded(i, salt + 2) - 0.5) * Math.max(0, (faceX ? building.scale.z : building.scale.x) - 2.4);
+          if (faceX) {
+            const side = roadX < building.position.x ? -1 : 1;
+            dummy.position.set(building.position.x + side * (building.scale.x * 0.5 + 0.052), y, building.position.z + lateral);
+            dummy.rotation.set(0, side > 0 ? Math.PI / 2 : -Math.PI / 2, 0);
+          } else {
+            const side = roadZ < building.position.z ? -1 : 1;
+            dummy.position.set(building.position.x + lateral, y, building.position.z + side * (building.scale.z * 0.5 + 0.052));
+            dummy.rotation.set(0, side > 0 ? 0 : Math.PI, 0);
+          }
+          const scale = 0.75 + seeded(i, salt + 3) * 0.6;
+          dummy.scale.set(1.05 * scale, 1.5 * scale, 1);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(i, dummy.matrix);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        this.scene.add(mesh);
+      })
+      .catch(() => { /* procedural posters already cover the walls */ });
+  }
+
+  // The verified chapel window art lands over the warm center panel — a hair
+  // proud of the wall face so the original glass reads as its backglow.
+  private applyChapelWindow(texture: THREE.Texture) {
+    if (!this.chapelWindowAnchor) return;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    const material = new THREE.MeshStandardMaterial({
+      map: texture,
+      emissiveMap: texture,
+      emissive: 0xffffff,
+      emissiveIntensity: 1.15,
+      roughness: 0.25,
+    });
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2.4), material);
+    panel.position.copy(this.chapelWindowAnchor);
+    panel.rotation.y = Math.PI / 2;
+    this.scene.add(panel);
   }
 
   private updateLitter(delta: number, time: number) {
@@ -2529,7 +3140,7 @@ export class HeavensGateEngine {
   }
 
   private createRain() {
-    const count = 850;
+    const count = this.settings.quality === 'ultra' ? 1500 : 850;
     const geometry = new THREE.BoxGeometry(0.018, 0.62, 0.018);
     const material = new THREE.MeshBasicMaterial({
       color: 0xa8c2d4,
@@ -2557,12 +3168,12 @@ export class HeavensGateEngine {
   /** Ground-level rain: expanding rings where drops strike the street. */
   private createRainSplashes() {
     const count = 44;
-    const geometry = new THREE.RingGeometry(0.34, 0.5, 12);
+    const geometry = new THREE.RingGeometry(0.11, 0.16, 10);
     geometry.rotateX(-Math.PI / 2);
     const material = new THREE.MeshBasicMaterial({
       color: 0x9ec2de,
       transparent: true,
-      opacity: 0.34,
+      opacity: 0.22,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
@@ -2573,7 +3184,7 @@ export class HeavensGateEngine {
     const spots = new Float32Array(count * 2);
     const color = new THREE.Color();
     for (let i = 0; i < count; i += 1) {
-      ages[i] = seeded(i, 210) * 0.55;
+      ages[i] = seeded(i, 210) * 0.42;
       this.rainMatrix.makeTranslation(0, -10, 0);
       mesh.setMatrixAt(i, this.rainMatrix);
       mesh.setColorAt(i, color.setScalar(0));
@@ -3259,7 +3870,7 @@ export class HeavensGateEngine {
 
     const stone = this.chapelStone ?? new THREE.MeshStandardMaterial({ color: 0x2e2c2a, roughness: 0.9, metalness: 0.05 });
     const stoneDark = this.chapelStoneDark ?? new THREE.MeshStandardMaterial({ color: 0x232120, roughness: 0.94 });
-    const wood = new THREE.MeshStandardMaterial({ color: 0x3d2f22, roughness: 0.82 });
+    const wood = this.chapelWood ?? new THREE.MeshStandardMaterial({ color: 0x3d2f22, roughness: 0.82 });
     const glass = new THREE.MeshStandardMaterial({ color: 0x2a3550, emissive: 0x5a78c8, emissiveIntensity: 1.5, roughness: 0.2 });
     const glassWarm = new THREE.MeshStandardMaterial({ color: 0x503528, emissive: 0xc8864a, emissiveIntensity: 1.4, roughness: 0.2 });
     const candleMat = new THREE.MeshStandardMaterial({ color: 0xe8d8b0, emissive: 0xffb84a, emissiveIntensity: 2.4 });
@@ -3267,7 +3878,7 @@ export class HeavensGateEngine {
     const box = (w: number, h: number, d: number, x: number, y: number, z: number, material: THREE.Material) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
       mesh.position.set(x, y, z);
-      mesh.castShadow = this.settings.quality === 'high';
+      mesh.castShadow = this.highTier();
       mesh.receiveShadow = true;
       chapel.add(mesh);
       return mesh;
@@ -3303,9 +3914,11 @@ export class HeavensGateEngine {
     [-3.2, 0, 3.2].forEach((bx) => box(0.34, 0.5, 11.0, bx, 5.85, 0, wood));
 
     // Stained glass panels along the side walls — the chapel's only exterior read.
+    // The center one carries the generated memory-window art once it verifies.
     [-2.8, 0, 2.8].forEach((gz, index) => {
       box(0.12, 3.4, 1.1, -6.1, 3.2, gz, index === 1 ? glassWarm : glass);
     });
+    this.chapelWindowAnchor = new THREE.Vector3(cx - 6.02, 3.2, cz);
     [-3.4, 3.4].forEach((gz) => {
       box(1.1, 3.0, 0.12, -3.5, 3.1, gz * 1.5, glass);
     });
@@ -3352,6 +3965,15 @@ export class HeavensGateEngine {
       new THREE.Vector3(cx - 6.2, -1, cz - 5.2),
       new THREE.Vector3(cx + 6.2, 6, cz + 5.2),
     );
+
+    // Photogrammetry guardians flanking the door + a crypt door on the south wall.
+    void this.instancedProp('gothic_statue', [
+      { x: cx + 7.6, y: 0, z: cz - 2.2, yaw: Math.PI / 2 },
+      { x: cx + 7.6, y: 0, z: cz + 2.2, yaw: Math.PI / 2 },
+    ], { targetHeight: 1.9, collider: { w: 1.0, d: 1.0, h: 1.9 } });
+    void this.instancedProp('large_castle_door', [
+      { x: cx + 3.4, y: 0, z: cz - 5.38, yaw: 0 },
+    ], { targetHeight: 2.9, surface: 'generic', collider: 'none' });
   }
 
   // The Memorial Obelisk — a genuine photogrammetry reconstruction standing
@@ -3374,7 +3996,7 @@ export class HeavensGateEngine {
       prop.position.set(mx - (bounds.min.x + bounds.max.x) / 2, -bounds.min.y, mz - (bounds.min.z + bounds.max.z) / 2);
       prop.traverse((node) => {
         if (node instanceof THREE.Mesh) {
-          node.castShadow = this.settings.quality === 'high';
+          node.castShadow = this.highTier();
           node.receiveShadow = true;
           node.userData.blocksShot = true;
           this.rayTargets.push(node);
@@ -3402,6 +4024,11 @@ export class HeavensGateEngine {
     if (inside !== this.chapelInterior) {
       this.chapelInterior = inside;
       this.audio.setInterior?.(inside ? 1 : 0);
+      // Interior IBL: the abandoned-church HDRI reads as candlelit stone.
+      if (this.streetEnvTexture && this.chapelEnvTexture) {
+        this.scene.environment = inside ? this.chapelEnvTexture : this.streetEnvTexture;
+        this.scene.environmentIntensity = inside ? 0.85 : 0.6;
+      }
     }
     if (!inside || this.chapelVisited) return;
     this.chapelVisited = true;
@@ -3481,17 +4108,42 @@ export class HeavensGateEngine {
     this.audio.ui(true);
   }
 
+  private highTier() {
+    return this.settings.quality === 'high' || this.settings.quality === 'ultra';
+  }
+
+  private targetPixelRatio() {
+    const dpr = window.devicePixelRatio;
+    if (this.settings.quality === 'ultra') return Math.min(2, dpr * 1.5);
+    if (this.settings.quality === 'medium') return Math.min(dpr, 1.3);
+    if (this.settings.quality === 'low') return Math.min(dpr, 1);
+    return Math.min(dpr, 1.6);
+  }
+
   private applyQuality() {
-    const baseRatio = this.settings.quality === 'high' ? 1.6 : this.settings.quality === 'medium' ? 1.3 : 1;
-    this.dynamicPixelRatio = Math.min(window.devicePixelRatio, baseRatio);
+    this.dynamicPixelRatio = this.targetPixelRatio();
     this.renderer.setPixelRatio(this.dynamicPixelRatio);
     this.renderer.shadowMap.enabled = this.settings.quality !== 'low';
-    const gtao = this.settings.quality === 'high' && Boolean(this.gtaoPass);
-    if (this.gtaoPass) this.gtaoPass.enabled = gtao;
-    if (this.renderPass) this.renderPass.enabled = !gtao;
+    if (this.sun) {
+      const shadowSize = this.settings.quality === 'ultra' ? 4096 : 2048;
+      if (this.sun.shadow.mapSize.x !== shadowSize) {
+        this.sun.shadow.mapSize.set(shadowSize, shadowSize);
+        // Drop the render target so the shadow map rebuilds at the new size.
+        this.sun.shadow.map?.dispose();
+        this.sun.shadow.map = null;
+      }
+    }
+    const gtao = this.highTier() && Boolean(this.gtaoPass);
+    if (this.gtaoPass) {
+      this.gtaoPass.enabled = gtao;
+      this.gtaoPass.updateGtaoMaterial({ samples: this.settings.quality === 'ultra' ? 24 : 16 });
+    }
+    // GTAO only renders normals/depth and multiplies AO over the beauty the
+    // RenderPass already produced — the RenderPass must stay on beneath it.
+    if (this.renderPass) this.renderPass.enabled = true;
     this.renderer.toneMappingExposure = this.settings.highContrast ? 1.28 : 1.16;
     if (this.bloomPass) {
-      this.bloomPass.strength = this.settings.quality === 'high' ? 0.62 : 0.45;
+      this.bloomPass.strength = this.highTier() ? 0.62 : 0.45;
       this.bloomPass.radius = 0.55;
       this.bloomPass.threshold = 0.82;
     }
@@ -4093,9 +4745,9 @@ export class HeavensGateEngine {
     const aiming = this.isAiming();
     const sprintIntent = this.isActionHeld('sprint');
 
-    const forward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
-    const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
-    const desiredDirection = new THREE.Vector3();
+    const forward = (this.moveForward ??= new THREE.Vector3()).set(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
+    const right = (this.moveRight ??= new THREE.Vector3()).set(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
+    const desiredDirection = (this.moveDesired ??= new THREE.Vector3()).set(0, 0, 0);
     if (inputLength > 0.05) {
       desiredDirection.addScaledVector(forward, forwardInput / Math.max(1, inputLength));
       desiredDirection.addScaledVector(right, sideInput / Math.max(1, inputLength));
@@ -4173,71 +4825,95 @@ export class HeavensGateEngine {
     this.playerVelocity.z = damp(this.playerVelocity.z, desired.z, this.grounded ? groundResponse : 2.2, delta);
 
     const jumpPressed = this.wasActionPressed('jump');
-    if (jumpPressed && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0) {
-      this.crouching = false;
-      this.playerVelocity.y = 8.4;
-      this.grounded = false;
-      this.heroCharacter?.playOnce('jump');
-      this.audio.ui(true);
-    }
-    this.playerVelocity.y -= 21 * delta;
+    if ((this.vaultTimer ?? 0) > 0) {
+      // Animated vault: arc over the obstacle, no gravity/snap/collision.
+      this.vaultTimer = Math.max(0, this.vaultTimer - delta);
+      const t = 1 - this.vaultTimer / 0.38;
+      this.player.position.lerpVectors(this.vaultFrom, this.vaultTo, t);
+      const interpolatedY = this.player.position.y;
+      this.player.position.y = interpolatedY + Math.sin(t * Math.PI) * (this.vaultPeak - interpolatedY);
+      this.clampWorld(this.player.position);
+      if (this.vaultTimer <= 0) {
+        this.grounded = this.vaultTo.y > 0.2;
+        this.playerVelocity.y = this.grounded ? 0 : -1.5;
+        this.hurtKick = (this.hurtKick ?? 0) + 0.06;
+        this.audio.footstep(true, this.chapelInterior ? 'stone' : 'street');
+      }
+    } else {
+      if (jumpPressed && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0) {
+        this.crouching = false;
+        this.playerVelocity.y = 8.4;
+        this.grounded = false;
+        this.heroCharacter?.playOnce('jump');
+        this.audio.ui(true);
+      }
+      this.playerVelocity.y -= 21 * delta;
 
-    const previous = this.player.position.clone();
-    this.player.position.addScaledVector(this.playerVelocity, delta);
-    const groundHeight = this.groundHeightAt(this.player.position.x, this.player.position.z, this.player.position.y);
-    if (this.player.position.y <= groundHeight) {
-      this.player.position.y = groundHeight;
-      if (!this.grounded) {
-        const impact = clamp(-this.playerVelocity.y, 0, 24);
-        this.landDip = Math.max(this.landDip, impact * 0.011);
-        if (impact > 7) {
-          this.audio.footstep(true, this.chapelInterior ? 'stone' : 'street');
-          this.pulseGamepad(50, clamp(impact * 0.02, 0.1, 0.4), clamp(impact * 0.014, 0.08, 0.3));
+      const previous = this.player.position.clone();
+      this.player.position.addScaledVector(this.playerVelocity, delta);
+      const groundHeight = this.groundHeightAt(this.player.position.x, this.player.position.z, this.player.position.y);
+      if (this.player.position.y <= groundHeight) {
+        this.player.position.y = groundHeight;
+        if (!this.grounded) {
+          const impact = clamp(-this.playerVelocity.y, 0, 24);
+          this.landDip = Math.max(this.landDip, impact * 0.011);
+          if (impact > 7) {
+            this.audio.footstep(true, this.chapelInterior ? 'stone' : 'street');
+            this.pulseGamepad(50, clamp(impact * 0.02, 0.1, 0.4), clamp(impact * 0.014, 0.08, 0.3));
+          }
+          // Hard drops tuck into a recovery roll instead of a flat stomp.
+          if (impact > 13 && !this.settings?.reducedMotion) {
+            this.heroCharacter?.playOnce('slide', 0.05);
+            this.hurtKick = Math.min(0.4, this.hurtKick + impact * 0.012);
+          }
         }
-        // Hard drops tuck into a recovery roll instead of a flat stomp.
-        if (impact > 13 && !this.settings?.reducedMotion) {
-          this.heroCharacter?.playOnce('slide', 0.05);
-          this.hurtKick = Math.min(0.4, this.hurtKick + impact * 0.012);
-        }
+        this.playerVelocity.y = 0;
+        this.grounded = true;
       }
-      this.playerVelocity.y = 0;
-      this.grounded = true;
-    }
-    this.clampWorld(this.player.position);
-    const floorY = this.player.position.y;
-    const sweptPosition = sweepPlanarCollision(previous, this.player.position,
-      (x, z) => this.collides(x, z, PLAYER_RADIUS, floorY));
-    if (sweptPosition.swept) {
-      this.player.position.x = sweptPosition.x;
-      this.player.position.z = sweptPosition.z;
-    }
-    if (sweptPosition.swept || this.collides(this.player.position.x, this.player.position.z, PLAYER_RADIUS, floorY)) {
-      const vaultDirection = desired.clone().setY(0);
-      const vaultTarget = previous.clone();
-      let vaulted = false;
-      if (jumpPressed && vaultDirection.lengthSq() > 0.1 && this.stamina >= 8) {
-        vaultDirection.normalize();
-        vaultTarget.addScaledVector(vaultDirection, 2.35);
-        // Landing can be the top of low cover — probe the target ground so
-        // a vault onto a pew or crate sticks instead of bouncing off.
-        const landingGround = this.groundHeightAt(vaultTarget.x, vaultTarget.z, this.player.position.y + 1.5);
-        if (!this.collides(vaultTarget.x, vaultTarget.z, PLAYER_RADIUS * 0.78, landingGround)) {
-          this.player.position.x = vaultTarget.x;
-          this.player.position.z = vaultTarget.z;
-          this.player.position.y = Math.max(this.player.position.y, landingGround + 0.08, 0.52);
-          this.playerVelocity.y = Math.max(this.playerVelocity.y, landingGround > 0.2 ? 2.6 : 4.2);
-          this.stamina = Math.max(0, this.stamina - 8);
-          this.grounded = false;
-          vaulted = true;
-        }
+      this.clampWorld(this.player.position);
+      const floorY = this.player.position.y;
+      const sweptPosition = sweepPlanarCollision(previous, this.player.position,
+        (x, z) => this.collides(x, z, PLAYER_RADIUS, floorY));
+      if (sweptPosition.swept) {
+        this.player.position.x = sweptPosition.x;
+        this.player.position.z = sweptPosition.z;
       }
-      if (!vaulted) {
-        const resolved = sweptPosition.swept ? sweptPosition : resolvePlanarCollision(previous, this.player.position,
-          (x, z) => this.collides(x, z, PLAYER_RADIUS, floorY));
-        this.player.position.x = resolved.x;
-        this.player.position.z = resolved.z;
-        if (resolved.blockedX) this.playerVelocity.x = 0;
-        if (resolved.blockedZ) this.playerVelocity.z = 0;
+      if (sweptPosition.swept || this.collides(this.player.position.x, this.player.position.z, PLAYER_RADIUS, floorY)) {
+        const vaultDirection = desired.clone().setY(0);
+        const vaultTarget = previous.clone();
+        let vaulted = false;
+        if (jumpPressed && vaultDirection.lengthSq() > 0.1 && this.stamina >= 8) {
+          vaultDirection.normalize();
+          vaultTarget.addScaledVector(vaultDirection, 2.35);
+          // Landing can be the top of low cover — probe the target ground so
+          // a vault onto a pew or crate sticks instead of bouncing off.
+          const landingGround = this.groundHeightAt(vaultTarget.x, vaultTarget.z, this.player.position.y + 1.5);
+          if (!this.collides(vaultTarget.x, vaultTarget.z, PLAYER_RADIUS * 0.78, landingGround)) {
+            this.stamina = Math.max(0, this.stamina - 8);
+            this.grounded = false;
+            vaulted = true;
+            if (this.settings?.reducedMotion) {
+              this.player.position.x = vaultTarget.x;
+              this.player.position.z = vaultTarget.z;
+              this.player.position.y = Math.max(this.player.position.y, landingGround + 0.08, 0.52);
+              this.playerVelocity.y = Math.max(this.playerVelocity.y, landingGround > 0.2 ? 2.6 : 4.2);
+            } else {
+              this.vaultTimer = 0.38;
+              (this.vaultFrom ??= new THREE.Vector3()).copy(this.player.position);
+              (this.vaultTo ??= new THREE.Vector3()).copy(vaultTarget).setY(landingGround);
+              this.vaultPeak = Math.max(this.vaultFrom.y, this.vaultTo.y) + 0.45;
+              this.heroCharacter?.playOnce('jump');
+            }
+          }
+        }
+        if (!vaulted) {
+          const resolved = sweptPosition.swept ? sweptPosition : resolvePlanarCollision(previous, this.player.position,
+            (x, z) => this.collides(x, z, PLAYER_RADIUS, floorY));
+          this.player.position.x = resolved.x;
+          this.player.position.z = resolved.z;
+          if (resolved.blockedX) this.playerVelocity.x = 0;
+          if (resolved.blockedZ) this.playerVelocity.z = 0;
+        }
       }
     }
 
@@ -4318,7 +4994,7 @@ export class HeavensGateEngine {
     const steerAuthority = handbrake ? 1.75 : 1;
     const steerStrength = clamp(Math.abs(vehicle.speed) / 9, 0.15, 1) * steerAuthority;
     vehicle.heading += steering * steerStrength * delta * spec.steer * Math.sign(vehicle.speed || 1);
-    const previous = vehicle.group.position.clone();
+    const previous = (this.vehiclePrev ??= new THREE.Vector3()).copy(vehicle.group.position);
     vehicle.group.position.x += -Math.sin(vehicle.heading) * vehicle.speed * delta;
     vehicle.group.position.z += -Math.cos(vehicle.heading) * vehicle.speed * delta;
     vehicle.group.rotation.y = vehicle.heading;
@@ -4478,14 +5154,16 @@ export class HeavensGateEngine {
   }
 
   private firstWorldObstruction(from: THREE.Vector3, to: THREE.Vector3, padding = 0) {
-    const delta = to.clone().sub(from);
+    const delta = (this.losDelta ??= new THREE.Vector3()).copy(to).sub(from);
     const distance = delta.length();
     if (distance < 0.000001) return null;
-    const ray = new THREE.Ray(from, delta.divideScalar(distance));
-    const hit = new THREE.Vector3();
+    const ray = this.losRay ??= new THREE.Ray();
+    ray.origin.copy(from);
+    ray.direction.copy(delta).divideScalar(distance);
+    const hit = this.losHit ??= new THREE.Vector3();
     let nearest: THREE.Vector3 | null = null;
     let nearestDistanceSq = distance * distance;
-    const expanded = new THREE.Box3();
+    const expanded = this.losBox ??= new THREE.Box3();
     for (const collider of this.collisionBoxes) {
       const box = padding > 0 ? expanded.copy(collider).expandByScalar(padding) : collider;
       if (box.containsPoint(from)) return from.clone();
@@ -4632,14 +5310,14 @@ export class HeavensGateEngine {
     const yaw = lookBack ? this.cameraYaw + Math.PI : this.cameraYaw;
     const distance = this.currentVehicle ? 10.5 + speed * 0.065 : aiming ? 3.15 : 4.55;
     const height = this.currentVehicle ? 4.4 : aiming ? 1.9 : 2.65;
-    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    const forward = (this.camForward ??= new THREE.Vector3()).set(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = (this.camRight ??= new THREE.Vector3()).set(Math.cos(yaw), 0, -Math.sin(yaw));
     if (this.currentVehicle && Math.abs(this.gamepadAxes.lookX) < 0.1 && !this.pointerLocked) {
       this.cameraYaw = damp(this.cameraYaw, this.currentVehicle.heading, 1.8, delta);
       forward.set(-Math.sin(yaw), 0, -Math.cos(yaw));
       right.set(Math.cos(yaw), 0, -Math.sin(yaw));
     }
-    const desiredCamera = targetPosition.clone().addScaledVector(forward, -distance);
+    const desiredCamera = (this.camDesired ??= new THREE.Vector3()).copy(targetPosition).addScaledVector(forward, -distance);
     this.shoulderOffset = damp(this.shoulderOffset ?? 0.78, 0.78 * (this.shoulderSide ?? 1), 10, delta);
     if (aiming) desiredCamera.addScaledVector(right, this.shoulderOffset);
     // Cover peek: while aiming from cover the camera slides along the wall
@@ -4657,8 +5335,8 @@ export class HeavensGateEngine {
       : 0;
     desiredCamera.y += height + stanceOffset * 0.55 + this.cameraPitch * 5.5 + bob - this.landDip;
     this.camera.position.lerp(desiredCamera, 1 - Math.exp(-9 * delta));
-    this.constrainCamera(targetPosition.clone().add(new THREE.Vector3(0, 1.6 + stanceOffset, 0)));
-    const lookTarget = targetPosition.clone().add(new THREE.Vector3(0, this.currentVehicle ? 1.1 : (aiming ? 1.52 : 1.6) + stanceOffset, 0));
+    this.constrainCamera((this.camConstrain ??= new THREE.Vector3()).copy(targetPosition).setY(targetPosition.y + 1.6 + stanceOffset));
+    const lookTarget = (this.camLook ??= new THREE.Vector3()).copy(targetPosition).setY(targetPosition.y + (this.currentVehicle ? 1.1 : (aiming ? 1.52 : 1.6) + stanceOffset));
     if (this.peekLean > 0.01 && this.coverFace) {
       const tangent = this.tmpMove.set(-this.coverFace.z, 0, this.coverFace.x);
       if (tangent.dot(right) * (this.shoulderSide ?? 1) < 0) tangent.negate();
@@ -4677,7 +5355,8 @@ export class HeavensGateEngine {
     this.camera.fov = damp(this.camera.fov, targetFov, 4.5, delta);
     this.camera.updateProjectionMatrix();
     if (this.inspectionKey && !this.currentVehicle) {
-      const desiredLight = this.camera.position.clone().lerp(targetPosition, 0.12).add(new THREE.Vector3(0, 0.72, 0));
+      const desiredLight = (this.camLight ??= new THREE.Vector3()).copy(this.camera.position).lerp(targetPosition, 0.12);
+      desiredLight.y += 0.72;
       this.inspectionKey.position.lerp(desiredLight, 1 - Math.exp(-8 * delta));
       this.inspectionKey.intensity = damp(this.inspectionKey.intensity, aiming ? 20 : 12, 5, delta);
     } else if (this.inspectionKey) {
@@ -5145,6 +5824,16 @@ export class HeavensGateEngine {
       if (hit && !hit.object.userData.actorId && hit.face) {
         const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
         this.placeDecal(hit.point, worldNormal);
+      }
+      if (hit && !hit.object.userData.actorId) {
+        // Foley surface crack — material read off the prop tag, then the PBR
+        // metalness, so lamps ring, glass tinks, everything else thuds. The
+        // impact sits on the visible shot line, so it is never occluded.
+        const hitMaterial = (hit.object as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+        const surfaceKind = (hit.object.userData.surfaceKind as 'glass' | 'metal' | 'generic' | undefined)
+          ?? (/glass/i.test(hitMaterial?.name ?? '') ? 'glass'
+            : (hit.object.userData.trafficId !== undefined || (hitMaterial?.metalness ?? 0) > 0.6 ? 'metal' : 'generic'));
+        this.audio.surfaceImpact?.(obstruction ?? hit.point, this.camera.position, this.cameraYaw, false, surfaceKind);
       }
       const trafficId = hit?.object.userData.trafficId as number | undefined;
       if (trafficId !== undefined && !obstruction) {
@@ -5675,9 +6364,9 @@ export class HeavensGateEngine {
     }
     // The chapel altar is a resonance shrine — a quiet moment that refills
     // the meter and flares the candles.
-    if (this.chapelZone?.containsPoint(this.player.position) && this.elapsed - this.lastAltarAt > 12) {
-      const altar = this.chapelZone.getCenter(this.tmpMove).add(new THREE.Vector3(-4.4, 0, 0));
-      if (Math.hypot(this.player.position.x - altar.x, this.player.position.z - altar.z) < 2.8) {
+    if (this.elapsed - this.lastAltarAt > 12) {
+      const altarDistance = this.altarDistance();
+      if (altarDistance !== null && altarDistance < 2.8) {
         this.lastAltarAt = this.elapsed;
         this.resonance = Math.min(100, this.resonance + 45);
         this.chapelCandles.forEach((flame) => { flame.intensity = 14; });
@@ -5850,6 +6539,13 @@ export class HeavensGateEngine {
     return null;
   }
 
+  private altarDistance(): number | null {
+    if (!this.chapelZone?.containsPoint(this.player.position)) return null;
+    const center = this.chapelZone.getCenter(this.tmpMove);
+    center.x -= 4.4;
+    return Math.hypot(this.player.position.x - center.x, this.player.position.z - center.z);
+  }
+
   private updateInteractionPrompt() {
     let prompt: InteractionPrompt | null = null;
     const interact = `${this.bindingLabel('interact')} / Y`;
@@ -5857,9 +6553,9 @@ export class HeavensGateEngine {
     else {
       const vehicle = this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
       if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.spec.name}` };
-      if (!prompt && this.chapelZone?.containsPoint(this.player.position) && this.elapsed - this.lastAltarAt > 12) {
-        const altar = this.chapelZone.getCenter(this.tmpMove).add(new THREE.Vector3(-4.4, 0, 0));
-        if (Math.hypot(this.player.position.x - altar.x, this.player.position.z - altar.z) < 2.8) {
+      if (!prompt && this.elapsed - this.lastAltarAt > 12) {
+        const altarDistance = this.altarDistance();
+        if (altarDistance !== null && altarDistance < 2.8) {
           prompt = { action: interact, label: 'Kneel at the Altar' };
         }
       }
@@ -6004,6 +6700,10 @@ export class HeavensGateEngine {
 
   private updateAmbientAnimation(delta: number, time: number) {
     this.heroCharacter?.update(delta, time, clamp(this.heat / 75 + (this.mouseShootHeld ? 0.2 : 0), 0, 1), this.cameraPitch);
+    // The one lit barrel stove — a low, uneven flicker on the chapel route.
+    if (this.stoveLight) {
+      this.stoveLight.intensity = 2.4 * (0.72 + Math.sin(time * 13.1) * 0.14 + Math.sin(time * 5.7 + 1.3) * 0.14);
+    }
     this.gates.forEach((gate, index) => {
       gate.ring.rotation.z += delta * (0.07 + index * 0.015);
       gate.veil.scale.setScalar(0.98 + Math.sin(time * 1.4 + index) * 0.018);
@@ -6038,16 +6738,17 @@ export class HeavensGateEngine {
       const color = this.tmpColor;
       for (let i = 0; i < splashCount; i += 1) {
         ages[i] += delta;
-        if (ages[i] > 0.55) {
+        if (ages[i] > 0.42) {
           ages[i] = 0;
-          spots[i * 2] = center.x + (seeded(i, Math.floor(time * 7) + 11) - 0.5) * 34;
-          spots[i * 2 + 1] = center.z + (seeded(i, Math.floor(time * 7) + 23) - 0.5) * 34;
+          spots[i * 2] = center.x + (seeded(i, Math.floor(time * 7) + 11) - 0.5) * 22;
+          spots[i * 2 + 1] = center.z + (seeded(i, Math.floor(time * 7) + 23) - 0.5) * 22;
         }
-        const spread = 0.3 + ages[i] * 3.4;
+        const spread = 0.5 + ages[i] * 2.2;
         this.rainMatrix.makeScale(spread, 1, spread);
         this.rainMatrix.setPosition(spots[i * 2], 0.03, spots[i * 2 + 1]);
         splashMesh.setMatrixAt(i, this.rainMatrix);
-        splashMesh.setColorAt(i, color.setScalar(Math.max(0, 1 - ages[i] / 0.55) * 0.4));
+        const fade = Math.max(0, 1 - ages[i] / 0.42);
+        splashMesh.setColorAt(i, color.setScalar(fade * Math.sqrt(fade) * 0.35));
       }
       splashMesh.instanceMatrix.needsUpdate = true;
       if (splashMesh.instanceColor) splashMesh.instanceColor.needsUpdate = true;
@@ -6346,8 +7047,7 @@ export class HeavensGateEngine {
       this.fps = Math.round(this.fpsFrames / this.fpsTimer);
       this.fpsTimer = 0;
       this.fpsFrames = 0;
-      const baseRatio = this.settings.quality === 'high' ? 1.6 : this.settings.quality === 'medium' ? 1.3 : 1;
-      const target = Math.min(window.devicePixelRatio, baseRatio);
+      const target = this.targetPixelRatio();
       if (this.fps < 42 && this.dynamicPixelRatio > 0.6) {
         this.dynamicPixelRatio = Math.max(0.6, this.dynamicPixelRatio - 0.12);
         this.renderer.setPixelRatio(this.dynamicPixelRatio);
@@ -6498,6 +7198,12 @@ export class HeavensGateEngine {
     this.bloomPass = null;
     this.envMapTexture?.dispose();
     this.envMapTexture = null;
+    this.streetEnvTexture?.dispose();
+    this.chapelEnvTexture?.dispose();
+    this.streetEnvTexture = null;
+    this.chapelEnvTexture = null;
+    this.stoveLight = null;
+    this.chapelWindowAnchor = null;
     this.scene.environment = null;
     this.billboardTextures.forEach((texture) => texture.dispose());
     this.disposeObject(this.scene);
