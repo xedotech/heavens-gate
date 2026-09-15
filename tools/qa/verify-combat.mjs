@@ -51,6 +51,12 @@ try {
     [...document.querySelectorAll('.title-menu button')].find((b) => /campaign/i.test(b.textContent || '')).click();
   });
   await page.waitForSelector('.reticle', { timeout: 90_000 });
+  // The mission opens with a letterboxed flyover — any movement key skips it,
+  // but wait until the chase camera is actually back before teleporting.
+  await page.keyboard.down('w');
+  await new Promise((r) => setTimeout(r, 900));
+  await page.keyboard.up('w');
+  await page.waitForFunction(() => !window.__hg?.cinematic, { timeout: 60_000 });
   const hud = await page.evaluate(() => ({
     stats: window.__hg?.stats, heat: window.__hg?.heat,
     missionIndex: window.__hg?.missionIndex,
@@ -59,7 +65,10 @@ try {
   console.log('hud-state:', JSON.stringify(hud));
   await new Promise((r) => setTimeout(r, 6000));
 
-  // Teleport the nearest hostile 7m ahead of the player and face it.
+  // A mild downward pitch first — the reticle ray needs to reach torso height.
+  await page.evaluate(() => { window.__hg.cameraPitch = 0.38; });
+  await new Promise((r) => setTimeout(r, 900));
+  // Teleport the nearest hostile onto the reticle ray and face it.
   const setup = await page.evaluate(() => {
     const e = window.__hg;
     const p = e.player.position;
@@ -67,8 +76,17 @@ try {
     if (!hostiles.length) return { ok: false, reason: 'no hostiles spawned' };
     const yaw = e.cameraYaw ?? 0;
     const target = hostiles[0];
-    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
-    target.group.position.set(p.x + fx * 7, 0, p.z + fz * 7);
+    // Place the target where the reticle ray meets torso height — guaranteed
+    // on the crosshair no matter where the chase cam is.
+    const cam = e.camera.position;
+    const dir = e.camera.getWorldDirection(new e.camera.position.constructor());
+    const t = dir.y < -0.05 ? (cam.y - 1.25) / -dir.y : 9;
+    const spot = { x: cam.x + dir.x * t, z: cam.z + dir.z * t };
+    target.group.position.set(spot.x, 0, spot.z);
+    // Idle/posted actors re-derive position from `spawn` each frame — move
+    // the spawn too or the engine snaps the target back to its patrol post.
+    target.spawn?.copy?.(target.group.position);
+    target.targetPosition?.copy?.(target.group.position);
     target.posted = true; // hold it still for the check
     return { ok: true, at: [target.group.position.x.toFixed(1), target.group.position.z.toFixed(1)], kind: target.kind, hp: target.hp };
   });
@@ -89,14 +107,19 @@ try {
     };
   });
   console.log('pointer probe:', JSON.stringify(probe));
+  const cdp = await page.createCDPSession();
+  await page.evaluate(() => {
+    window.__pd = [];
+    window.addEventListener('pointerdown', (e) => window.__pd.push(`${e.button}:${e.target === window.__hg.canvas}`));
+  });
   await page.mouse.down({ button: 'right' });
   await new Promise((r) => setTimeout(r, 600));
   await shot(page, 'combat-2-aim.png');
   let dead = false;
   for (let i = 0; i < 14 && !dead; i++) {
-    await page.mouse.down({ button: 'left' });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 640, y: 360, button: 'left', buttons: 1, clickCount: 1 });
     await new Promise((r) => setTimeout(r, 420));
-    await page.mouse.up({ button: 'left' });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 640, y: 360, button: 'left', buttons: 0, clickCount: 1 });
     const s = await page.evaluate(() => {
       const e = window.__hg;
       const h = (e.actors ?? []).find((a) => a.posted);
@@ -106,6 +129,8 @@ try {
     if (i === 2) await shot(page, 'combat-3-hit.png');
     dead = s.alive === false;
   }
+  const pd = await page.evaluate(() => window.__pd);
+  console.log('pointerdown events:', JSON.stringify(pd));
   await page.mouse.up({ button: 'right' });
   await new Promise((r) => setTimeout(r, 1200));
   await shot(page, 'combat-4-fallen.png');
