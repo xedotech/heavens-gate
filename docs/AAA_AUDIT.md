@@ -124,10 +124,10 @@ mode (current mode orbits the character), and the [C] honesty items.
 
 ## 1. Third-person combat (vs. Gears / Division / Uncharted)
 
-- [S] **No player cover system.** Enemies use cover; the player cannot snap,
+- ~~[S] No player cover system~~ **Partially shipped:** crouch-attach to collision faces + wall-slide shipped; lean/blind-fire still open. (was: Enemies use cover; the player cannot snap,
   lean, or blind-fire. Every genre reference makes this the mechanical heart
   of TPS. Add contextual cover attach + peek + cover-exit variants.
-- [S] **No upper-body aim layer on the character.** Weapon pitches, but the
+- ~~[S] No upper-body aim layer~~ **Shipped:** `aimPitch` distributes across weighted spine bones per frame. (was: Weapon pitches, but the
   torso doesn't twist toward aim — reads wrong at camera distance. Add
   spine-bone aim offset driven by camera pitch/yaw.
 - [S] **No locational enemy hit reactions.** Headshots kill, but limb hits
@@ -234,7 +234,7 @@ matter more than deep AI.
 
 ## 6. Audio (vs. genre standard — all references use recorded source)
 
-- [S] **Everything is synthesized.** Layered voices now, but no recorded
+- ~~[S] Everything is synthesized~~ **Shipped:** 43 recorded CC0 clips (footsteps, impacts, rain, cloth, crashes) behind the verified audio manifest, with synth fallback. (was: Layered voices now, but no recorded
   foley ceiling — footsteps on one surface, one material. Biggest perceived
   "cheapness" lever remaining. If any budget exists: a CC0/recorded SFX pack
   for gunshots, footsteps, impacts, UI.
@@ -243,18 +243,18 @@ matter more than deep AI.
 - [A] No ambient city bed (see world section).
 - [A] No voiced dialogue — subtitle text only. Even whispered Veil-voice
   noise loops would sell the fiction.
-- [B] No adaptive combat music stems — intensity scalar exists, but no
+- ~~[B] No adaptive combat music stems~~ **Shipped:** combat kick + calm shimmer layers in scorePulse. (was: intensity scalar exists, but no
   layered stems that enter/exit.
-- [B] No audio occlusion behind buildings beyond enemy-shot lowpass.
+- ~~[B] No audio occlusion~~ **Partially shipped:** occlusion lowpass now applies to honks + chatter via `firstWorldObstruction`, beyond enemy shots.
 - [B] No gamepad-speaker/PS5-style tricks — n/a for web; ignore.
 - [C] Dolby Atmos, licensed soundtrack.
 
 ## 7. Rendering & presentation (vs. Cyberpunk / Spider-Man city read)
 
-- [S] **No SSAO / contact shadows.** Objects float visually — feet, props,
+- ~~[S] No SSAO~~ **Shipped:** GTAO pass (16/24 samples by tier). (was: Objects float visually — feet, props,
   vehicle undersides. SSAO (or cheap blob shadows under actors/props) is the
   single biggest "doesn't look flat" fix left.
-- [S] **Buildings are untextured flat-color boxes** with emissive windows.
+- ~~[S] Buildings are untextured flat-color boxes~~ **Shipped:** scanned concrete/plaster/brick facades, three buckets + concrete normal on shared material, emissive windows kept.
   Facade detail is silhouette-only (crowns/parapets/strips). Options: a
   subtle procedural facade texture, or wire the built-but-unused scanned
   pavement pipeline + a matching wall material.
@@ -295,19 +295,19 @@ matter more than deep AI.
   ability capacity, suit tiers) or cosmetics.
 - [A] **8 missions is a demo arc.** No side quests, contracts, or repeatable
   activities; free roam post-ending has nothing to do.
-- [A] **No collectibles system** — echoes are mission-scoped; no open-world
+- ~~[A] No collectibles system~~ **Shipped:** 8 persistent sigils feeding marks, save-persisted, on pause map. (was: echoes are mission-scoped; no open-world
   collectible layer (hidden sigils, lore pickups feeding the codex).
-- [B] No choices outside the finale — one branch at the end only.
-- [B] No NG+ / difficulty-scaled replay.
+- [B] Choices outside the finale — **in progress** (Sena delivery branch landing in narrative pass).
+- ~~[B] No NG+~~ **Shipped:** replay tier persisted, enemy cadence -8%/replay (floor 0.72x), mission replay picker on ending screen.
 - [B] No character progression (HP/weapon damage is static across campaign).
-- [B] Minimap doesn't rotate with camera (verify) — genre default is
+- ~~[B] Minimap doesn't rotate~~ **Shipped:** rotate-with-camera settings toggle. (was: genre default is
   rotating with a north toggle.
 - [C] Life-sim depth (relationships, needs, jobs) — genuinely out of scope;
   acknowledge as such.
 
 ## 10. Engineering & performance
 
-- [B] **>650 kB client chunk** — code-split the engine from shell.
+- ~~[B] >650 kB client chunk~~ **Shipped:** engine loads via dynamic import behind the boot progress screen.
 - [B] Per-actor-loop Vector3 allocations (~15/frame/actor) — scratch-vector
   pass in updateActors.
 - [B] No occlusion culling — whole city renders every frame.
