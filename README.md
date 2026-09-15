@@ -45,7 +45,7 @@ On touch devices (phones, tablets), a touch layer appears automatically during p
 
 ## Campaign
 
-1. **The Bell Below** — cross Crown District and reach the First Gate.
+1. **The Bell Below** — cross Crown District and reach the First Gate. (Includes the Sena delivery scene — a dialogue choice and the cordon beat — skippable, save-versioned.)
 2. **No Saints in Crown** — break the Warden cordon.
 3. **Borrowed Wings** — steal a Seraph interceptor.
 4. **The Long Ascension** — breach Meridian Gate by vehicle.
@@ -58,17 +58,17 @@ Checkpoints save locally after every operation and restored echo. Settings also 
 
 ## Systems
 
-- **Procedural world:** deterministic city blocks, five districts, three landmarks, roads, gates, emissive windows, neon signage, streetlamps, billboards, ambient traffic with panic reactions, civilians, patrols, and airborne drones. High quality adds an instanced rain layer with its own ambience bed.
-- **Rendering:** HDR post-processing (bloom, output tone-mapped pass) on medium/high, PMREM image-based lighting from an authored night-city environment, ACES tone mapping, day/night sun, and volumetric-style gate shafts.
+- **Procedural world:** deterministic city blocks, five districts, three landmarks, roads, gates, emissive windows, neon signage, ambient traffic with panic reactions and collision honks, civilians, patrols, and airborne drones — dressed with **16 verified photo-scanned GLB props** (street lamps, benches, hydrants, barriers, a gothic statue, memorial objects) and **authored art** (stained glass, civic posters). High quality adds instanced rain plus ground-splash rings and a scrolling cloud layer.
+- **Rendering:** HDR post-processing (bloom, GTAO ground-truth ambient occlusion on high/ultra, SMAA), PMREM lighting from **verified HDRI environments** (street night + abandoned church, swapped on chapel entry), ACES tone mapping, player-following sun shadows, four quality tiers (low/medium/high/ultra) with dynamic resolution scaling, and volumetric-style gate shafts.
 - **Combat:** three weapons (Morrow sidearm, Psalm repeater, Vesper scattergun) with per-weapon ammo pools, critical hits, armor, reloading, enemy accuracy curves, close-range pulse, kill drops, hit-stop, directional damage indicators, civilian consequences, and a multi-phase boss encounter.
 - **Vehicles:** enter/exit interaction, acceleration, reverse, steering, overdrive, handbrake, collision damage, chase camera, spinning/steering wheels, body lean, brake and head lights, ambient traffic that brakes, panics, and can be wrecked, and synthesized engine sound.
 - **Presentation:** letterboxed mission flyovers and boss intro, camera bob and landing dips, corpse tip-over and dissolve, muzzle light on both sides of a firefight, tracer and spark impacts, floating damage readouts, storm lightning with delayed thunder, rain on medium/high, and a touch-ready HUD.
 - **Veil:** timed alternate-state rendering that reveals memory echoes and boosts situational awareness at a resonance cost.
 - **Living response:** five Choir heat tiers, fleeing civilians, activated drone response, and heat decay after breaking contact.
 - **Human rendering:** varied skin tones, facial proportions, eyes, hair silhouettes, layered clothing, equipment, body variation, critical-hit geometry, facial morph/viseme channels, weapon grip correction, gait/combat animation, and six live-switchable physically shaded Aurel outfits. The hero asset contract is 53 bones, 67 facial/body shapes, 9 meshes, and 11 authored actions per skin.
-- **Audio:** procedural ambience, adaptive score pulses, weapon, movement, vehicle, gate, impact, UI, and damage sounds generated at runtime. There are no sampled songs or sound files.
+- **Audio:** 43 verified CC0 recorded clips (footsteps, impacts, rain bed, cloth, crashes) layered over a synthesized fallback bus — adaptive score pulses, weapon/vehicle/gate/UI voices, spatialized occlusion (lowpass behind buildings), squad radio barks, traffic honks, and the below-platform bell.
 - **Accessibility:** subtitles, reduced-motion menu/title behavior, high-contrast HUD, adjustable HUD scale (80–130%), sensitivity and volume, conflict-safe keyboard remapping, story difficulty, keyboard focus, and semantic controls.
-- **Performance:** low/medium/high presets, capped device pixel ratio, shadow scaling, reduced particle counts, and automatic resolution reduction when frame rate drops.
+- **Performance:** four quality presets, capped pixel ratio with dynamic scaling, distance-throttled actor/traffic animation, bounded asset streaming (4 concurrent verified fetches), staggered material application + `compileAsync` prewarm, and no per-frame allocations in the LOS/camera/player/vehicle hot paths.
 
 ## Verification
 
@@ -80,6 +80,10 @@ npm run validate:characters
 npm run validate:environment
 npm run validate:release
 npm run build
+npm run qa:smoke            # headless Chrome drives spawn/walk/look/fire/pause/quality-switch
+node tools/qa/frame-capture.mjs --quality=high   # rAF frame-time trace (p50/p95/p99, jank counts)
+node tools/qa/verify-sena.mjs --url=http://localhost:3000    # Sena -> choice -> bell -> cordon, screenshotted
+node tools/qa/verify-combat.mjs --url=http://localhost:3000  # aim -> fire -> kill on a live engine
 ```
 
 The test suite covers deterministic mechanics, navigation math, wanted tiers, difficulty scaling, objective progress, HUD formatting, keyboard-binding invariants, and campaign-data invariants.
@@ -105,12 +109,16 @@ docs/                       Design and technical reference
 
 ## Originality
 
-### Photo-based ground material
+### Photo-scanned materials and props
 
-The city ground uses **Concrete Pavement 03**, a CC0 photo-based PBR material by
-Charlotte Baglioni / Poly Haven. All maps are self-hosted and hash-verified.
-Low uses 1K; medium/high use 2K. This is a tiled surface material, not scanned
-world geometry or photogrammetric characters. See `THIRD_PARTY_NOTICES.md`.
+Nine CC0 photo-scanned PBR surfaces ship self-hosted and hash-verified
+(concrete pavement, asphalt, concrete/brick/plaster facades, church brick,
+stone tiles, wood, corrugated + rusted metal), plus 16 prepared prop GLBs and
+two HDRI environments. Low uses 1K maps; medium+ use 2K, applied progressively
+so the world resolves fast and sharpens. A COLMAP + OpenMVS + Blender
+reconstruction pipeline (`tools/photogrammetry/reconstruct.mjs`) is proven
+end-to-end on a synthetic photo set — real captures drop in via the same path.
+See `docs/PHOTOGRAMMETRY.md` and `THIRD_PARTY_NOTICES.md`.
 
 Reimport with `npm run import:environment`; this downloads six pinned source
 images and uses the locked Sharp encoder. WebP reduces transfer/storage, not
