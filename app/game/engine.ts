@@ -8702,15 +8702,20 @@ export class HeavensGateEngine {
       gate.veil.material.opacity = (this.veilActive ? 0.17 : 0.055) + Math.sin(time * 1.2 + index) * 0.018;
       if (gate.shaft) gate.shaft.material.opacity = 0.04 + Math.sin(time * 0.9 + index * 2.1) * 0.014 + (this.veilActive ? 0.03 : 0);
     });
+    // The storm listens — Choir heat and the living Archon both thicken the
+    // rain and shorten the gap between strikes.
+    const storm = clamp(this.heat / 100 + (this.boss?.alive ? 0.3 : 0), 0, 1);
     if (this.rain && this.rain.mesh.visible) {
+      (this.rain.mesh.material as THREE.MeshBasicMaterial).opacity = 0.3 + storm * 0.22;
       const center = this.currentVehicle?.group.position ?? this.player.position;
       const { drops, count, mesh } = this.rain;
       const wrap = Math.floor(time * 9);
+      const fallSpeed = 36 + storm * 16;
       for (let i = 0; i < count; i += 1) {
         let x = drops[i * 3];
         let y = drops[i * 3 + 1];
         let z = drops[i * 3 + 2];
-        y -= delta * 36;
+        y -= delta * fallSpeed;
         if (y < -1.5 || Math.abs(x - center.x) > 70 || Math.abs(z - center.z) > 70) {
           y = 24 + seeded(i, wrap + i * 3) * 16;
           x = center.x + (seeded(i, wrap + i * 7 + 31) - 0.5) * 120;
@@ -8729,7 +8734,7 @@ export class HeavensGateEngine {
       const { ages, spots, count: splashCount, mesh: splashMesh } = this.rainSplash;
       const color = this.tmpColor;
       for (let i = 0; i < splashCount; i += 1) {
-        ages[i] += delta;
+        ages[i] += delta * (1 + storm * 0.7);
         if (ages[i] > 0.42) {
           ages[i] = 0;
           spots[i * 2] = center.x + (seeded(i, Math.floor(time * 7) + 11) - 0.5) * 22;
@@ -8789,7 +8794,7 @@ export class HeavensGateEngine {
     }
     this.lightningTimer = (this.lightningTimer ?? 9) - delta;
     if (this.lightningTimer <= 0) {
-      this.lightningTimer = 10 + seeded(Math.floor(time), 360) * 26;
+      this.lightningTimer = (10 + seeded(Math.floor(time), 360) * 26) * (1 - storm * 0.55);
       this.lightningFlash = 1;
       const loud = 0.45 + seeded(Math.floor(time), 361) * 0.55;
       const timeout = setTimeout(() => {
