@@ -482,6 +482,7 @@ export class HeavensGateEngine {
   private lightningFlash = 0;
   private reinforcementTimer = 0;
   private reinforcementSeq = 0;
+  private arrivalFlashes?: Array<{ group: THREE.Group; beamMat: THREE.MeshBasicMaterial; ringMat: THREE.MeshBasicMaterial; life: number }>;
   private playerSprinting = false;
   private pointerFallback = false;
   private weaponSway = { yaw: 0, pitch: 0 };
@@ -3612,6 +3613,9 @@ export class HeavensGateEngine {
       return;
     }
     this.reinforcementSeq += 1;
+    // Choir units transmit in — a column of light and a ground ring mark the
+    // arrival so the dispatch reads at range instead of popping into frame.
+    this.spawnArrival(x, z);
     // At sustained heat the Choir stops sending hunters and sends a wall:
     // every fourth dispatch at tier 4+ is a Bulwark, not a hunter.
     const bulwark = this.heatTierValue() >= 4 && this.reinforcementSeq % 4 === 0;
@@ -3624,6 +3628,45 @@ export class HeavensGateEngine {
       this.emitToast('Choir reinforcement', 'A hunter was dispatched to your position', 'danger');
     }
     this.reinforcementTimer = 14;
+  }
+
+  private spawnArrival(x: number, z: number) {
+    if (!this.scene) return;
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0x9fd8ff, transparent: true, opacity: 0.42,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.85, 9, 12, 1, true), beamMat);
+    beam.position.y = 4.5;
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0x9fd8ff, transparent: true, opacity: 0.7,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.4, 1.05, 24), ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.06;
+    const group = new THREE.Group();
+    group.add(beam, ring);
+    group.position.set(x, 0, z);
+    this.scene.add(group);
+    (this.arrivalFlashes ??= []).push({ group, beamMat, ringMat, life: 1.15 });
+    this.audio.pulse?.();
+  }
+
+  private updateArrivals(delta: number) {
+    if (!this.arrivalFlashes?.length) return;
+    this.arrivalFlashes = this.arrivalFlashes.filter((flash) => {
+      flash.life -= delta;
+      const t = clamp(flash.life / 1.15, 0, 1);
+      flash.beamMat.opacity = 0.42 * t;
+      flash.ringMat.opacity = 0.7 * t;
+      const ring = flash.group.children[1];
+      ring.scale.setScalar(1 + (1 - t) * 3.2);
+      if (flash.life > 0) return true;
+      this.scene?.remove(flash.group);
+      this.disposeObject(flash.group);
+      return false;
+    });
   }
 
   private wreckTrafficCar(car: TrafficCar) {
@@ -5077,6 +5120,11 @@ export class HeavensGateEngine {
       this.disposeObject(drop.group);
     });
     this.drops = [];
+    this.arrivalFlashes?.forEach((flash) => {
+      this.scene.remove(flash.group);
+      this.disposeObject(flash.group);
+    });
+    this.arrivalFlashes = [];
     this.trafficCars?.forEach((car) => {
       car.progress = car.spawnProgress;
       car.speed = 0;
@@ -5475,6 +5523,7 @@ export class HeavensGateEngine {
     this.updateTraffic(delta);
     this.updateCorpses(delta);
     this.updateDrops(delta, time);
+    this.updateArrivals(delta);
     this.updateCharges(delta);
     this.updateCasings(delta);
     this.updateChapel();
