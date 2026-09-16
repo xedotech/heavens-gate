@@ -638,7 +638,7 @@ export class HeavensGateEngine {
   private chapelInterior = false;
   private stationZone: THREE.Box3 | null = null;
   private stationInterior = false;
-  private interiorActive = false;
+  private interiorActive = 0;
   private readonly groundHoles: THREE.Box3[] = [];
   private undergateLight: THREE.PointLight | null = null;
   private undergateVeil: THREE.Mesh | null = null;
@@ -4947,9 +4947,11 @@ export class HeavensGateEngine {
     this.stationInterior = inStation;
     const insideAny = inside || inStation;
     if (inside !== this.chapelInterior) this.chapelInterior = inside;
-    if (insideAny !== this.interiorActive) {
-      this.interiorActive = insideAny;
-      this.audio.setInterior?.(insideAny ? 1 : 0);
+    // A car roof is a partial interior — the storm ducks, the engine hums.
+    const interiorLevel = insideAny ? 1 : this.currentVehicle ? 0.35 : 0;
+    if (interiorLevel !== this.interiorActive) {
+      this.interiorActive = interiorLevel;
+      this.audio.setInterior?.(interiorLevel);
       // Interior IBL: the abandoned-church HDRI reads as candlelit stone.
       if (this.streetEnvTexture && this.chapelEnvTexture) {
         this.scene.environment = insideAny ? this.chapelEnvTexture : this.streetEnvTexture;
