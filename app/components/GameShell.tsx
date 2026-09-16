@@ -54,6 +54,20 @@ import {
 } from '../game/types';
 
 const browserStorage = () => window.localStorage;
+
+// First-boot quality guess from hardware signals — the player can always
+// override in Settings; this just stops weak machines from opening on a
+// preset they can't carry.
+function autoQualitySettings(): GameSettings {
+  const base = normalizeSettings(null);
+  const cores = navigator.hardwareConcurrency ?? 4;
+  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4;
+  const mobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+  if (mobile || cores <= 4 || memory <= 4) base.quality = 'medium';
+  else if (cores <= 6 || memory <= 8) base.quality = 'high';
+  else base.quality = 'ultra';
+  return base;
+}
 const CHARACTER_SKINS: Array<{ id: CharacterSkin; name: string; detail: string }> = [
   { id: 'seraph', name: 'Seraph', detail: 'Gilded canon' },
   { id: 'relic', name: 'Relic', detail: 'Sun-worn bronze' },
@@ -282,7 +296,10 @@ export default function GameShell() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const storedSettings = readSettings(browserStorage);
-    const mergedSettings = storedSettings.value ?? normalizeSettings(null);
+    // First boot with no saved settings: pick a quality tier from the
+    // hardware instead of assuming 'high' — weak machines were opening
+    // on a preset that stuttered before the player ever saw a menu.
+    const mergedSettings = storedSettings.value ?? autoQualitySettings();
     const storedSave = readSave(browserStorage);
     settingsRef.current = mergedSettings;
     unsavedSettingsRef.current = false;
