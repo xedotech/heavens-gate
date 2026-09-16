@@ -4355,6 +4355,25 @@ export class HeavensGateEngine {
     // The center one carries the generated memory-window art once it verifies.
     [-2.8, 0, 2.8].forEach((gz, index) => {
       box(0.12, 3.4, 1.1, -6.1, 3.2, gz, index === 1 ? glassWarm : glass);
+      // The glass bleeds: a slanted shaft falling from each pane to the
+      // aisle floor — narrow at the window, spread where it lands. Blue
+      // off the side panes, ember through the center.
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.5, 1.45, 5.0, 12, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: index === 1 ? 0xe0a05c : 0x6a86d8,
+          transparent: true,
+          opacity: 0.05,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      // +Y tips toward the west wall (~52°) so the narrow end meets the pane
+      // and the wide end pools on the flagstones around x≈-2.3.
+      shaft.position.set(-4.2, 1.62, gz);
+      shaft.rotation.z = 0.91;
+      chapel.add(shaft);
     });
     this.chapelWindowAnchor = new THREE.Vector3(cx - 6.02, 3.2, cz);
     [-3.4, 3.4].forEach((gz) => {
