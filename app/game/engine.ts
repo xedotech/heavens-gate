@@ -457,6 +457,16 @@ export class HeavensGateEngine {
   private propMetal: THREE.MeshStandardMaterial | null = null;
   private propRust: THREE.MeshStandardMaterial | null = null;
   private streetLamps: Array<{ x: number; z: number; armX: number; armZ: number }> = [];
+  private lampParts = new Map<number, {
+    head?: { mesh: THREE.InstancedMesh; local: number; color: THREE.Color };
+    cone?: { mesh: THREE.InstancedMesh; local: number; matrix: THREE.Matrix4 };
+    poles: Array<{ mesh: THREE.InstancedMesh; local: number }>;
+  }>();
+  private deadLamps = new Set<number>();
+  private readonly lampDeadColor = new THREE.Color(0x0a0c0e);
+  private readonly lampLiveColor = new THREE.Color(1, 1, 1);
+  private readonly lampOffScale = new THREE.Matrix4().makeScale(0.001, 0.001, 0.001);
+  private readonly tmpMatrix = new THREE.Matrix4();
   private hydrantSpots: Array<{ x: number; y: number; z: number; yaw: number }> = [];
   private stoveLight: THREE.PointLight | null = null;
   private chapelWindowAnchor: THREE.Vector3 | null = null;
@@ -1850,9 +1860,78 @@ export class HeavensGateEngine {
       matrix.makeTranslation(lamp.x, 2.6, lamp.z);
       return { matrix: matrix.clone() };
     });
-    this.addInstancedChunks(new THREE.BoxGeometry(0.34, 0.3, 0.34), headMaterial, headPlacements);
+    const headMeshes = this.addInstancedChunks(new THREE.BoxGeometry(0.34, 0.3, 0.34), headMaterial, headPlacements);
     const coneMeshes = this.addInstancedChunks(new THREE.ConeGeometry(1.5, 4.7, 10, 1, true), coneMaterial, conePlacements);
     coneMeshes.forEach((mesh) => { mesh.renderOrder = 5; });
+    // Shootable lamps: index each head/cone instance back to its streetLamps
+    // entry so a bullet (or a blast) can kill the light. Heads are ray targets;
+    // cones are not — a transparent glow shouldn't eat bullets mid-street.
+    headMeshes.forEach((mesh) => {
+      mesh.userData.lampGlow = true;
+      mesh.userData.surfaceKind = 'glass';
+      this.rayTargets.push(mesh);
+      (mesh.userData.instanceIds as number[]).forEach((id, local) => {
+        const part = this.lampParts.get(id) ?? { poles: [] };
+        const color = new THREE.Color();
+        mesh.getColorAt(local, color);
+        part.head = { mesh, local, color };
+        this.lampParts.set(id, part);
+      });
+    });
+    const coneMatrix = new THREE.Matrix4();
+    coneMeshes.forEach((mesh) => {
+      (mesh.userData.instanceIds as number[]).forEach((id, local) => {
+        const part = this.lampParts.get(id) ?? { poles: [] };
+        mesh.getMatrixAt(local, coneMatrix);
+        part.cone = { mesh, local, matrix: coneMatrix.clone() };
+        this.lampParts.set(id, part);
+      });
+    });
+  }
+
+  // A shot lantern: head goes dark, light cone collapses, sparks + glass.
+  private killLamp(index: number, point: THREE.Vector3) {
+    const dead = (this.deadLamps ??= new Set());
+    if (dead.has(index)) return;
+    const part = this.lampParts?.get(index);
+    if (!part) return;
+    dead.add(index);
+    if (part.head) {
+      part.head.mesh.setColorAt(part.head.local, this.lampDeadColor);
+      if (part.head.mesh.instanceColor) part.head.mesh.instanceColor.needsUpdate = true;
+    }
+    if (part.cone) {
+      this.tmpMatrix.copy(part.cone.matrix).multiply(this.lampOffScale);
+      part.cone.mesh.setMatrixAt(part.cone.local, this.tmpMatrix);
+      part.cone.mesh.instanceMatrix.needsUpdate = true;
+    }
+    part.poles.forEach(({ mesh, local }) => {
+      mesh.setColorAt(local, this.lampDeadColor);
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    });
+    this.createImpact(point, false);
+    this.audio.surfaceImpact?.(point, this.camera.position, this.cameraYaw, false, 'glass');
+  }
+
+  private relightLamps() {
+    if (!this.deadLamps?.size) return;
+    this.deadLamps.forEach((index) => {
+      const part = this.lampParts?.get(index);
+      if (!part) return;
+      if (part.head) {
+        part.head.mesh.setColorAt(part.head.local, part.head.color);
+        if (part.head.mesh.instanceColor) part.head.mesh.instanceColor.needsUpdate = true;
+      }
+      if (part.cone) {
+        part.cone.mesh.setMatrixAt(part.cone.local, part.cone.matrix);
+        part.cone.mesh.instanceMatrix.needsUpdate = true;
+      }
+      part.poles.forEach(({ mesh, local }) => {
+        mesh.setColorAt(local, this.lampLiveColor);
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      });
+    });
+    this.deadLamps.clear();
   }
 
   // Poles the photogrammetry lamp replaces — only built if the GLB can't load.
@@ -1864,7 +1943,16 @@ export class HeavensGateEngine {
       matrix.makeTranslation(lamp.x, 2.5, lamp.z);
       return { matrix: matrix.clone() };
     });
-    this.addInstancedChunks(new THREE.CylinderGeometry(0.07, 0.11, 5.0, 6), dark, polePlacements);
+    const poleMeshes = this.addInstancedChunks(new THREE.CylinderGeometry(0.07, 0.11, 5.0, 6), dark, polePlacements);
+    poleMeshes.forEach((mesh) => {
+      mesh.userData.lampPole = true;
+      this.rayTargets.push(mesh);
+      (mesh.userData.instanceIds as number[]).forEach((id, local) => {
+        const part = this.lampParts.get(id) ?? { poles: [] };
+        part.poles.push({ mesh, local });
+        this.lampParts.set(id, part);
+      });
+    });
   }
 
   private billboardTexture(title: string, subtitle: string, accent: string, background: string) {
@@ -2283,13 +2371,14 @@ export class HeavensGateEngine {
     cellSize = 85,
   ): THREE.InstancedMesh[] {
     if (!this.scene) return [];
-    const cells = new Map<string, Array<{ matrix: THREE.Matrix4; color?: THREE.Color }>>();
-    placements.forEach((placement) => {
+    const cells = new Map<string, Array<{ matrix: THREE.Matrix4; color?: THREE.Color; id: number }>>();
+    placements.forEach((placement, id) => {
       const e = placement.matrix.elements;
       const key = `${Math.floor(e[12] / cellSize)}:${Math.floor(e[14] / cellSize)}`;
+      const entry = { matrix: placement.matrix, color: placement.color, id };
       const list = cells.get(key);
-      if (list) list.push(placement);
-      else cells.set(key, [placement]);
+      if (list) list.push(entry);
+      else cells.set(key, [entry]);
     });
     const meshes: THREE.InstancedMesh[] = [];
     cells.forEach((list) => {
@@ -2298,6 +2387,9 @@ export class HeavensGateEngine {
         mesh.setMatrixAt(index, placement.matrix);
         if (placement.color) mesh.setColorAt(index, placement.color);
       });
+      // Global placement index per local instance — lets raycast hits map an
+      // instanceId back to the source spot (shootable lamps, tracked props).
+      mesh.userData.instanceIds = list.map((entry) => entry.id);
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       mesh.computeBoundingSphere();
@@ -2454,10 +2546,24 @@ export class HeavensGateEngine {
     };
 
     // Street lamps — the GLB lantern replaces every procedural pole site.
+    const lampPoleMeshes: THREE.Object3D[] = [];
     void this.instancedProp('street_lamp_01',
       (this.streetLamps ?? []).map((lamp, index) => ({ x: lamp.x, y: 0, z: lamp.z, yaw: seeded(index, 210) * Math.PI * 2 })),
-      { targetHeight: 5.2, surface: 'metal', emissiveGlass: 0xffc87a, collider: { w: 0.34, d: 0.34, h: 5.2 } },
-    ).then((placed) => { if (!placed && !this.disposed) this.buildFallbackLampPoles(); });
+      { targetHeight: 5.2, surface: 'metal', emissiveGlass: 0xffc87a, collider: { w: 0.34, d: 0.34, h: 5.2 }, track: { meshes: lampPoleMeshes, boxes: [] } },
+    ).then((placed) => {
+      if (this.disposed) return;
+      if (!placed) { this.buildFallbackLampPoles(); return; }
+      // Register each pole chunk under the shootable-lamp lookup — a round to
+      // the lantern kills its glow, and the pole itself darkens with it.
+      lampPoleMeshes.forEach((mesh) => {
+        mesh.userData.lampPole = true;
+        ((mesh.userData.instanceIds as number[] | undefined) ?? []).forEach((id, local) => {
+          const part = this.lampParts.get(id) ?? { poles: [] };
+          part.poles.push({ mesh: mesh as THREE.InstancedMesh, local });
+          this.lampParts.set(id, part);
+        });
+      });
+    });
 
     // Painted benches on sidewalks + a pair inside Bell Below.
     const benches: Spot[] = [];
@@ -5099,6 +5205,8 @@ export class HeavensGateEngine {
     // A street event mid-scene is session dressing — strike it on reset.
     this.despawnStreetEvent();
     this.nextStreetEventAt = this.elapsed + 18;
+    // Shot-out lanterns come back on with the checkpoint.
+    this.relightLamps();
     this.echoes.forEach((echo) => {
       echo.activated = this.echoesActivated.has(echo.id);
       echo.group.visible = !echo.activated;
@@ -6790,6 +6898,10 @@ export class HeavensGateEngine {
             : (hit.object.userData.trafficId !== undefined || (hitMaterial?.metalness ?? 0) > 0.6 ? 'metal' : 'generic'));
         this.audio.surfaceImpact?.(obstruction ?? hit.point, this.camera.position, this.cameraYaw, false, surfaceKind);
       }
+      const lampIndex = hit && (hit.object.userData.lampGlow || hit.object.userData.lampPole) && hit.instanceId !== undefined
+        ? (hit.object.userData.instanceIds as number[] | undefined)?.[hit.instanceId]
+        : undefined;
+      if (lampIndex !== undefined && !obstruction) this.killLamp(lampIndex, hit!.point);
       const trafficId = hit?.object.userData.trafficId as number | undefined;
       if (trafficId !== undefined && !obstruction) {
         const car = this.trafficCars[trafficId];
@@ -7383,6 +7495,13 @@ export class HeavensGateEngine {
       car.damage += (1 - distance / 6.5) * 90;
       if (car.damage > 95) this.wreckTrafficCar(car);
       else car.panic = Math.max(car.panic, 6);
+    });
+    // The blast shatters every lantern it reaches — the street goes dark in a
+    // ring around the crater.
+    this.streetLamps?.forEach((lamp, index) => {
+      if (this.deadLamps?.has(index)) return;
+      const distance = Math.hypot(lamp.x - position.x, lamp.z - position.z);
+      if (distance < 7) this.killLamp(index, new THREE.Vector3(lamp.x, 4.7, lamp.z));
     });
     const playerDistance = this.player.position.distanceTo(position);
     if (playerDistance < 4 && !this.currentVehicle) this.takePlayerDamage(12 * (1 - playerDistance / 4));
