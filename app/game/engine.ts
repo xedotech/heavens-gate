@@ -5921,21 +5921,7 @@ export class HeavensGateEngine {
       });
     }
     // Total loss: the engine dies, the bay catches, the driver is thrown out.
-    if (vehicle.damage >= 110 && !vehicle.wrecked) {
-      vehicle.wrecked = true;
-      vehicle.speed = 0;
-      vehicle.bodyMaterial.emissive.setHex(0x30140c);
-      vehicle.bodyMaterial.emissiveIntensity = 0.9;
-      vehicle.group.rotation.z = 0.05;
-      vehicle.group.position.y -= 0.05;
-      this.placeDecal(vehicle.group.position, this.tmpMove.set(0, 1, 0), 15);
-      this.createShockwave(vehicle.group.position);
-      this.audio.explosion();
-      this.heat = clamp(this.heat + 10, 0, 100);
-      this.emitToast('Seraph destroyed', 'The engine bay gave out — get clear', 'danger');
-      this.takePlayerDamage(24, vehicle.group.position);
-      if (vehicle.occupied) this.exitVehicle();
-    }
+    if (vehicle.damage >= 110 && !vehicle.wrecked) this.wreckVehicle(vehicle);
     this.player.position.copy(vehicle.group.position);
     this.audio.setEngine(vehicle.wrecked ? 0 : vehicle.speed, true);
   }
@@ -7324,6 +7310,21 @@ export class HeavensGateEngine {
       const knock = actor.group.position.clone().sub(position).setY(0).normalize();
       actor.group.position.addScaledVector(knock, falloff * 2.4);
     });
+    // Vehicles feel the blast too — damage enough and the engine bay goes,
+    // and the concussion shoves the chassis along its heading.
+    this.vehicles.forEach((vehicle) => {
+      const distance = vehicle.group.position.distanceTo(position);
+      if (distance > 7) return;
+      const falloff = 1 - distance / 7;
+      vehicle.damage += falloff * 46;
+      if (vehicle.damage >= 110 && !vehicle.wrecked) {
+        this.wreckVehicle(vehicle);
+        return;
+      }
+      const forward = this.tmpMove.set(Math.sin(vehicle.heading), 0, Math.cos(vehicle.heading));
+      const shove = vehicle.group.position.clone().sub(position).setY(0).normalize().dot(forward);
+      vehicle.speed = clamp(vehicle.speed + shove * falloff * 7, -vehicle.spec.top * 0.47, vehicle.spec.top);
+    });
     const playerDistance = this.player.position.distanceTo(position);
     if (playerDistance < 4 && !this.currentVehicle) this.takePlayerDamage(12 * (1 - playerDistance / 4));
   }
@@ -7464,6 +7465,25 @@ export class HeavensGateEngine {
     vehicle.speed *= 0.4;
     this.audio.setEngine(0, false);
     this.audio.ui();
+  }
+
+  // Total loss: the engine dies, the bay catches, the driver is thrown out.
+  // Shared by collision accumulation and explosion damage — parked cars
+  // wreck from a charge the same as a crashed one.
+  private wreckVehicle(vehicle: Vehicle) {
+    vehicle.wrecked = true;
+    vehicle.speed = 0;
+    vehicle.bodyMaterial.emissive.setHex(0x30140c);
+    vehicle.bodyMaterial.emissiveIntensity = 0.9;
+    vehicle.group.rotation.z = 0.05;
+    vehicle.group.position.y -= 0.05;
+    this.placeDecal(vehicle.group.position, this.tmpMove.set(0, 1, 0), 15);
+    this.createShockwave(vehicle.group.position);
+    this.audio.explosion();
+    this.heat = clamp(this.heat + 10, 0, 100);
+    this.emitToast(`${vehicle.spec.name} destroyed`, 'The engine bay gave out — get clear', 'danger');
+    this.takePlayerDamage(24, vehicle.group.position);
+    if (vehicle.occupied) this.exitVehicle();
   }
 
   private updateMission() {
