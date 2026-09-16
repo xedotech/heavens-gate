@@ -8914,6 +8914,7 @@ export class HeavensGateEngine {
       heat: this.heat,
       heatTier: this.heatTierValue(),
       vehicleSpeed: this.currentVehicle ? Math.abs(this.currentVehicle.speed) * 3.6 : 0,
+      vehicleIntegrity: this.currentVehicle ? Math.max(0, Math.round(100 - (this.currentVehicle.damage / 110) * 100)) : 100,
       inVehicle: Boolean(this.currentVehicle),
       veilActive: this.veilActive,
       veilCooldown: this.veilCooldown,

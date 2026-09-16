@@ -126,6 +126,7 @@ export interface HUDState {
   heat: number;
   heatTier: number;
   vehicleSpeed: number;
+  vehicleIntegrity: number;
   inVehicle: boolean;
   veilActive: boolean;
   veilCooldown: number;
@@ -299,6 +300,7 @@ export const INITIAL_HUD: HUDState = {
   heat: 0,
   heatTier: 0,
   vehicleSpeed: 0,
+  vehicleIntegrity: 100,
   inVehicle: false,
   veilActive: false,
   veilCooldown: 0,

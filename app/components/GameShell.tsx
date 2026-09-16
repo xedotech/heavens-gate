@@ -658,7 +658,7 @@ export default function GameShell() {
 
           <div className="combat-panel">
             {hud.inVehicle ? (
-              <div className="speed-block"><span><Gauge aria-hidden="true" /> Seraph velocity</span><strong>{Math.round(hud.vehicleSpeed)}</strong><small>km/h</small></div>
+              <div className="speed-block"><span><Gauge aria-hidden="true" /> Seraph velocity</span><strong>{Math.round(hud.vehicleSpeed)}</strong><small>km/h</small><i className="integrity-track"><b style={{ width: `${hud.vehicleIntegrity}%` }} />{hud.vehicleIntegrity}% hull</i></div>
             ) : (
               <div className="ammo-block"><span>{hud.reloading ? `${hud.weapon.split(' / ')[0]} / reloading` : hud.weapon}</span><strong>{hud.ammo.toString().padStart(2, '0')}</strong><small>/ {hud.reserveAmmo}</small></div>
             )}
