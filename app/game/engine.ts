@@ -358,6 +358,29 @@ const WITNESS_LINES: Array<[string, string]> = [
   ['The Witness', 'The bell did. It always does.'],
 ];
 
+// The job board inside Saint Orison Station — repeatable contracts so free
+// roam pays. Sweep jobs spawn a Warden patrol at a district point; cache
+// jobs are timed runs. Rotation is session-scoped; marks persist.
+const CONTRACT_BOARD = { x: 23.6, z: -52.5, range: 3.0 };
+interface ContractDef {
+  id: string;
+  kind: 'sweep' | 'cache';
+  title: string;
+  brief: string;
+  x: number;
+  z: number;
+  count?: number;
+  seconds?: number;
+  payout: number;
+}
+const CONTRACTS: ContractDef[] = [
+  { id: 'sweep-docks', kind: 'sweep', title: 'Still the dock toll', brief: 'A Warden tithe-crew is taxing the Meridian piers. End it.', x: 90, z: 76, count: 3, payout: 30 },
+  { id: 'cache-verge', kind: 'cache', title: 'The verge run', brief: 'A cache of pre-burn records sits at the east verge. Ninety seconds before the Choir scans it.', x: 140, z: -140, seconds: 90, payout: 35 },
+  { id: 'sweep-hollow', kind: 'sweep', title: 'Hollow tithe', brief: 'Four Wardens collect in the West Hollow. The Hollow pays for their absence.', x: -140, z: -60, count: 4, payout: 40 },
+  { id: 'cache-ridge', kind: 'cache', title: 'Ridge runner’s errand', brief: 'A runner’s package waits on the north ridge. Eighty seconds.', x: -82, z: 104, seconds: 80, payout: 30 },
+  { id: 'sweep-gardens', kind: 'sweep', title: 'What the gardens grew', brief: 'Wardens are burning the Ash Gardens seed-vault. Stop them.', x: -112, z: 72, count: 3, payout: 30 },
+];
+
 export class HeavensGateEngine {
   readonly audio = new AudioEngine();
 
@@ -578,6 +601,15 @@ export class HeavensGateEngine {
   private undergateVeil: THREE.Mesh | null = null;
   private undergatePos: THREE.Vector3 | null = null;
   private lastUndergateAt = -99;
+  private jobBoardGlow: THREE.Mesh | null = null;
+  private contractIndex = 0;
+  private contractCooldownUntil = 0;
+  private activeContract: {
+    def: ContractDef;
+    spawned: Actor[];
+    deadline: number;
+    acceptedAt: number;
+  } | null = null;
   private lastAltarAt = -99;
   private replays = 0;
   private chapelCandles: THREE.PointLight[] = [];
@@ -4391,6 +4423,15 @@ export class HeavensGateEngine {
     }));
     boardFace.rotation.y = -Math.PI / 2;
 
+    // The job board — a lit civic panel that never stopped posting work for
+    // anyone the Choir hasn't named yet.
+    box(0.08, 1.3, 1.7, 7.14, 1.7, 1.5, iron);
+    const jobFace = box(0.04, 1.1, 1.5, 7.09, 1.7, 1.5, new THREE.MeshStandardMaterial({
+      color: 0x14202c, emissive: 0x3f9ac8, emissiveIntensity: 1.5, roughness: 0.35,
+    }));
+    jobFace.rotation.y = -Math.PI / 2;
+    this.jobBoardGlow = jobFace;
+
     // Hanging lamps — emissive heads + two real lights so the hall reads at night.
     [[-4.5, 0], [2.5, 0]].forEach(([px, pz]) => {
       box(0.1, 0.9, 0.1, px, 4.4, pz, iron);
@@ -4826,6 +4867,15 @@ export class HeavensGateEngine {
     // If a save landed after the cordon resolved but before the talk, he's
     // still waiting — the cordon re-resolving also respawns him in-session.
     if (this.missionIndex === 0 && this.narrative?.aftermathHeard === true) this.spawnQuietSeraph();
+    // Contract-spawned patrols are session work — strike them on reset.
+    const contractSpawned = this.activeContract?.spawned ?? [];
+    contractSpawned.forEach((actor) => {
+      this.rayTargets = withoutSubtree(this.rayTargets ?? [], actor.group);
+      this.scene?.remove(actor.group);
+      this.disposeObject(actor.group);
+    });
+    if (contractSpawned.length) this.actors = (this.actors ?? []).filter((actor) => !contractSpawned.includes(actor));
+    this.activeContract = null;
     this.echoes.forEach((echo) => {
       echo.activated = this.echoesActivated.has(echo.id);
       echo.group.visible = !echo.activated;
@@ -5080,6 +5130,7 @@ export class HeavensGateEngine {
     this.updateSena();
     this.updateCordon(delta);
     this.updateWitness();
+    this.updateContract();
     this.updateCamera(delta);
     this.updateHeat(delta);
     this.updateHUD(delta);
@@ -6975,6 +7026,10 @@ export class HeavensGateEngine {
       this.startQuietSeraph();
       return;
     }
+    if (this.contractBoardInRange()) {
+      this.readJobBoard();
+      return;
+    }
     const nearbyVehicle = this.vehicles
       .filter((vehicle) => !vehicle.occupied && !vehicle.wrecked)
       .sort((a, b) => a.group.position.distanceTo(this.player.position) - b.group.position.distanceTo(this.player.position))[0];
@@ -7205,8 +7260,10 @@ export class HeavensGateEngine {
   private updateObjectiveMarker() {
     if (!this.objectiveMarker) return;
     const mission = MISSIONS[this.missionIndex];
-    const target = this.missionTarget();
-    this.objectiveMarker.visible = Boolean(target && mission.kind !== 'complete');
+    // An accepted contract takes the marker — the mission resumes it after.
+    const contract = this.activeContract;
+    const target = contract ? new THREE.Vector3(contract.def.x, 0, contract.def.z) : this.missionTarget();
+    this.objectiveMarker.visible = Boolean(target && (contract || mission.kind !== 'complete'));
     if (target) this.objectiveMarker.position.set(target.x, 4.2, target.z);
   }
 
@@ -7242,6 +7299,9 @@ export class HeavensGateEngine {
       // honestly while Sena's choice isn't borrowing the interact key.
       if (!prompt && this.exitReleaseInRange()) prompt = { action: interact, label: 'Pull the exit release' };
       if (!prompt && this.quietSeraphInRange()) prompt = { action: interact, label: 'Approach the Seraph' };
+      if (!prompt && this.contractBoardInRange()) {
+        prompt = { action: interact, label: this.activeContract ? 'Check the job board' : 'Read the job board' };
+      }
       const vehicle = prompt ? undefined : this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
       if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.spec.name}` };
       if (!prompt && this.undergatePos && this.elapsed - this.lastUndergateAt > 12
@@ -7571,6 +7631,91 @@ export class HeavensGateEngine {
       civilian.flee = 16;
       civilian.fleeHeading = 0; // north — out of the cordon, up the approach.
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Station job board — repeatable contracts for free roam.
+  private contractBoardInRange() {
+    const p = this.player?.position;
+    if (!p) return false;
+    return distance2D(p.x, p.z, CONTRACT_BOARD.x, CONTRACT_BOARD.z) < CONTRACT_BOARD.range;
+  }
+
+  private readJobBoard() {
+    if (this.activeContract) {
+      const c = this.activeContract.def;
+      const left = c.kind === 'cache'
+        ? ` ${Math.max(0, Math.ceil(this.activeContract.deadline - this.elapsed))}s left`
+        : ` ${this.activeContract.spawned.filter((a) => a.alive).length} left`;
+      this.emitSubtitle('Job Board', `${c.title} —${left}.`);
+      return;
+    }
+    if (this.elapsed < this.contractCooldownUntil) {
+      this.emitSubtitle('Job Board', 'Nothing new posted. The ink is still drying on the last one.');
+      return;
+    }
+    const def = CONTRACTS[this.contractIndex % CONTRACTS.length];
+    this.contractIndex += 1;
+    const spawned: Actor[] = [];
+    if (def.kind === 'sweep') {
+      for (let i = 0; i < (def.count ?? 3); i += 1) {
+        const a = this.addActor(
+          `contract-${def.id}-${i}`,
+          'enemy',
+          def.x + (seeded(i, 601) - 0.5) * 8,
+          def.z + (seeded(i, 602) - 0.5) * 8,
+          0x3a322c,
+          0xe8a34c,
+          70,
+        );
+        a.vignette = 'wander';
+        spawned.push(a);
+      }
+    }
+    this.activeContract = {
+      def,
+      spawned,
+      deadline: this.elapsed + (def.seconds ?? 0),
+      acceptedAt: this.elapsed,
+    };
+    this.audio.ui(true);
+    this.emitSubtitle('Job Board', `${def.title}. ${def.brief}`);
+    this.emitToast('Contract accepted', `${def.payout} marks on completion`, 'success');
+  }
+
+  private updateContract() {
+    const contract = this.activeContract;
+    if (!contract || !this.player) return;
+    const { def } = contract;
+    if (def.kind === 'sweep') {
+      if (contract.spawned.every((a) => !a.alive)) {
+        this.completeContract();
+      }
+      return;
+    }
+    // cache — timed reach
+    if (this.elapsed > contract.deadline) {
+      this.emitSubtitle('Job Board', `${def.title} — too slow. The Choir scanned it first.`);
+      this.emitToast('Contract failed', 'The board will repost it', 'danger');
+      this.activeContract = null;
+      this.contractCooldownUntil = this.elapsed + 15;
+      return;
+    }
+    if (distance2D(this.player.position.x, this.player.position.z, def.x, def.z) < 3.4) {
+      this.completeContract();
+    }
+  }
+
+  private completeContract() {
+    const contract = this.activeContract;
+    if (!contract) return;
+    this.shards += contract.def.payout;
+    this.audio.gate();
+    this.emitSubtitle('Job Board', `${contract.def.title} — done. The board credits your name.`);
+    this.emitToast('Contract complete', `+${contract.def.payout} marks`, 'success');
+    this.activeContract = null;
+    this.contractCooldownUntil = this.elapsed + 20;
+    this.saveCheckpoint();
   }
 
   // The speaker exchange fires the first time the cordon commits — the cone
@@ -7918,6 +8063,15 @@ export class HeavensGateEngine {
       objectiveText,
       objectiveProgress: progress,
       objectiveDistance: targetDistance,
+      contract: this.activeContract ? {
+        title: this.activeContract.def.title,
+        text: this.activeContract.def.kind === 'cache'
+          ? `Reach the cache — ${Math.max(0, Math.ceil(this.activeContract.deadline - this.elapsed))}s`
+          : `Wardens remaining — ${this.activeContract.spawned.filter((a) => a.alive).length}`,
+        progress: this.activeContract.def.kind === 'cache'
+          ? clamp((this.activeContract.deadline - this.elapsed) / (this.activeContract.def.seconds ?? 60), 0, 1)
+          : 1 - this.activeContract.spawned.filter((a) => a.alive).length / Math.max(1, this.activeContract.spawned.length),
+      } : null,
       district: this.currentDistrict(position.x, position.z),
       timeLabel: formatTime(this.worldHours),
       fps: this.fps,

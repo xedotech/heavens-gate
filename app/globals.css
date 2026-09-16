@@ -697,6 +697,26 @@ button:disabled {
   background: var(--border);
 }
 
+.contract-panel {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.contract-panel p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.contract-panel .eyebrow {
+  color: var(--accent-cool, #3f9ac8);
+}
+
+.contract-track span {
+  background: var(--accent-cool, #3f9ac8);
+}
+
 .world-status {
   position: absolute;
   top: 86px;

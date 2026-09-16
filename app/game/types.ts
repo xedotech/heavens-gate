@@ -133,6 +133,7 @@ export interface HUDState {
   objectiveText: string;
   objectiveProgress: number;
   objectiveDistance: number | null;
+  contract: { title: string; text: string; progress: number } | null;
   district: string;
   timeLabel: string;
   fps: number;
@@ -303,6 +304,7 @@ export const INITIAL_HUD: HUDState = {
   objectiveText: 'Reach the First Gate',
   objectiveProgress: 0,
   objectiveDistance: null,
+  contract: null,
   district: 'Crown District',
   timeLabel: '03:17',
   fps: 60,

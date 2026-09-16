@@ -620,6 +620,13 @@ export default function GameShell() {
             <div className="mission-title-line"><h2>{hud.objectiveTitle}</h2>{hud.objectiveDistance !== null && <span>{formatDistance(hud.objectiveDistance)}</span>}</div>
             <p>{hud.objectiveText}</p>
             <div className="objective-track" aria-label={`${Math.round(hud.objectiveProgress * 100)} percent complete`}><span style={{ width: `${hud.objectiveProgress * 100}%` }} /></div>
+            {hud.contract && (
+              <div className="contract-panel">
+                <p className="eyebrow">Contract · {hud.contract.title}</p>
+                <p>{hud.contract.text}</p>
+                <div className="objective-track contract-track"><span style={{ width: `${hud.contract.progress * 100}%` }} /></div>
+              </div>
+            )}
           </div>
 
           <div className="world-status">
