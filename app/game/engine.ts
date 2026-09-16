@@ -6871,7 +6871,10 @@ export class HeavensGateEngine {
     this.createMuzzleFlash(muzzle);
     const tracerColor = actor.kind === 'boss' ? 0xff7a3c : actor.kind === 'drone' ? 0x9fd0ff : 0xd65a45;
     this.createTracer(origin, obstruction ?? end, tracerColor);
-    if (hits && !obstruction) this.takePlayerDamage(damage * difficultyDamage(this.settings.difficulty), origin);
+    // Wanted pressure: each heat tier sharpens the Choir's fire — tier 5
+    // hits ~45% harder than a first-star patrol.
+    const heatScale = 1 + this.heatTierValue() * 0.09;
+    if (hits && !obstruction) this.takePlayerDamage(damage * heatScale * difficultyDamage(this.settings.difficulty), origin);
     // Near-miss snap: if the round's closest approach to the player's head is
     // within ~2.2m, crack a whiz from that direction — sells suppression even
     // when the shot never lands.
