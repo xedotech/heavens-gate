@@ -611,6 +611,15 @@ export class HeavensGateEngine {
     acceptedAt: number;
   } | null = null;
   private lastAltarAt = -99;
+  private streetEvent: {
+    kind: 'argument' | 'breakdown' | 'preacher' | 'snatch';
+    props: THREE.Object3D[];
+    actorIds: string[];
+    expiresAt: number;
+    tailMaterial?: THREE.MeshStandardMaterial;
+    chase?: { runner: string; chaser: string };
+  } | null = null;
+  private nextStreetEventAt = 24;
   private replays = 0;
   private chapelCandles: THREE.PointLight[] = [];
   private memorialZone: THREE.Box3 | null = null;
@@ -4876,6 +4885,9 @@ export class HeavensGateEngine {
     });
     if (contractSpawned.length) this.actors = (this.actors ?? []).filter((actor) => !contractSpawned.includes(actor));
     this.activeContract = null;
+    // A street event mid-scene is session dressing — strike it on reset.
+    this.despawnStreetEvent();
+    this.nextStreetEventAt = this.elapsed + 18;
     this.echoes.forEach((echo) => {
       echo.activated = this.echoesActivated.has(echo.id);
       echo.group.visible = !echo.activated;
@@ -5131,6 +5143,7 @@ export class HeavensGateEngine {
     this.updateCordon(delta);
     this.updateWitness();
     this.updateContract();
+    this.updateStreetEvents();
     this.updateCamera(delta);
     this.updateHeat(delta);
     this.updateHUD(delta);
@@ -7716,6 +7729,145 @@ export class HeavensGateEngine {
     this.activeContract = null;
     this.contractCooldownUntil = this.elapsed + 20;
     this.saveCheckpoint();
+  }
+
+  // Ambient set-pieces — small composed scenes that materialize ahead of the
+  // courier in free roam: an argument, a stalled van, a crate preacher, a
+  // snatch chase. One at a time, always ahead of the player, and every piece
+  // of it despawns cleanly behind them — the city plays scenes, not scatter.
+  private spawnStreetEvent() {
+    if (!this.scene || !this.player || this.streetEvent) return;
+    const yaw = this.cameraYaw ?? 0;
+    const seed = Math.floor(this.elapsed * 7.3);
+    let x = 0;
+    let z = 0;
+    let found = false;
+    for (let i = 0; i < 8 && !found; i++) {
+      const dist = 26 + seeded(seed, 210 + i) * 18;
+      const side = (seeded(seed, 230 + i) - 0.5) * 30;
+      // cameraYaw forward is (-sin, -cos); right is (cos, -sin).
+      const cx = this.player.position.x - Math.sin(yaw) * dist + Math.cos(yaw) * side;
+      const cz = this.player.position.z - Math.cos(yaw) * dist - Math.sin(yaw) * side;
+      // Needs a clear 3.5 m stage — probe the center plus four edge points.
+      const clear = !this.collides(cx, cz, 1.4)
+        && !this.collides(cx + 3, cz, 0.8) && !this.collides(cx - 3, cz, 0.8)
+        && !this.collides(cx, cz + 3, 0.8) && !this.collides(cx, cz - 3, 0.8);
+      if (clear && Math.abs(cx) < WORLD_SIZE / 2 - 8 && Math.abs(cz) < WORLD_SIZE / 2 - 8) {
+        x = cx; z = cz; found = true;
+      }
+    }
+    if (!found) {
+      this.nextStreetEventAt = this.elapsed + 10;
+      return;
+    }
+    const kind = (['argument', 'breakdown', 'preacher', 'snatch'] as const)[seed % 4];
+    const props: THREE.Object3D[] = [];
+    const actorIds: string[] = [];
+    let tailMaterial: THREE.MeshStandardMaterial | undefined;
+    let chase: { runner: string; chaser: string } | undefined;
+    const npc = (id: string, dx: number, dz: number, vignette: Actor['vignette'], faceYaw = 0) => {
+      const actor = this.addActor(`event-${id}`, 'civilian', x + dx, z + dz,
+        [0x4a5560, 0x5d5348, 0x3d4a55, 0x554b5a][seed % 4], 0xb8c4d0, 42);
+      actor.vignette = vignette;
+      actor.spawnYaw = faceYaw;
+      actor.group.rotation.y = faceYaw;
+      actorIds.push(actor.id);
+      return actor;
+    };
+    if (kind === 'argument') {
+      npc('argue-a', -0.55, 0, 'talk', Math.PI / 2);
+      npc('argue-b', 0.55, 0, 'talk', -Math.PI / 2);
+      npc('watcher', 0, 2.4, 'idle', Math.PI);
+    } else if (kind === 'breakdown') {
+      const { group, tailMaterial: tail } = this.buildCarBody(0x4c4438, 'morrow');
+      group.position.set(x, 0, z);
+      group.rotation.y = yaw + 0.35;
+      this.scene.add(group);
+      props.push(group);
+      tailMaterial = tail;
+      npc('driver', -2.6, -1.1, 'lean', 1.2);
+      npc('helper', 2.3, 2.0, 'idle', -2.2);
+    } else if (kind === 'preacher') {
+      const crate = new THREE.Mesh(
+        new THREE.BoxGeometry(1.05, 0.62, 1.05),
+        new THREE.MeshStandardMaterial({ color: 0x3a3f45, roughness: 0.85, metalness: 0.1 }),
+      );
+      crate.position.set(x, 0.31, z);
+      crate.castShadow = true;
+      this.scene.add(crate);
+      props.push(crate);
+      const preacher = npc('preacher', 0, 0, 'talk', Math.PI);
+      preacher.group.position.y = 0.62;
+      npc('crowd-a', -1.7, -2.1, 'idle', -0.7);
+      npc('crowd-b', 0.2, -2.5, 'idle', 0);
+      npc('crowd-c', 1.9, -1.8, 'idle', 0.75);
+    } else {
+      const runner = npc('runner', 0, -1.5, 'run', Math.PI);
+      const chaser = npc('chaser', 0, 1.8, 'run', Math.PI);
+      runner.speed *= 1.35;
+      chaser.speed *= 1.5;
+      chase = { runner: runner.id, chaser: chaser.id };
+    }
+    this.streetEvent = { kind, props, actorIds, expiresAt: this.elapsed + 55, tailMaterial, chase };
+    this.nextStreetEventAt = this.elapsed + 55 + seeded(seed, 250) * 30;
+  }
+
+  private updateStreetEvents() {
+    const event = this.streetEvent;
+    if (!event) {
+      // Only in free roam, never during the cordon beat or a boss stage.
+      if (this.mode === 'playing' && this.missionIndex === 0 && !this.boss
+        && !this.cinematic && this.elapsed >= this.nextStreetEventAt) {
+        this.spawnStreetEvent();
+      }
+      return;
+    }
+    const player = this.player?.position;
+    const eventActors = (this.actors ?? []).filter((a) => event.actorIds.includes(a.id));
+    const anchor = eventActors[0]?.group.position ?? event.props[0]?.position;
+    const gone = this.elapsed > event.expiresAt
+      || !anchor
+      || (player && anchor && Math.hypot(anchor.x - player.x, anchor.z - player.z) > 95);
+    // A scene that loses its people dissolves early.
+    if (!gone && eventActors.every((a) => !a.alive || !a.group.visible)) return this.despawnStreetEvent();
+    if (gone) {
+      this.despawnStreetEvent();
+      return;
+    }
+    if (event.kind === 'breakdown' && event.tailMaterial) {
+      // Hazard blink on the stalled van.
+      event.tailMaterial.emissiveIntensity = Math.sin(this.elapsed * 6.4) > 0 ? 3.4 : 0.35;
+    } else if (event.kind === 'snatch' && event.chase) {
+      const runner = eventActors.find((a) => a.id === event.chase!.runner);
+      const chaser = eventActors.find((a) => a.id === event.chase!.chaser);
+      if (runner?.alive && chaser?.alive) {
+        const dx = runner.group.position.x - chaser.group.position.x;
+        const dz = runner.group.position.z - chaser.group.position.z;
+        chaser.wanderAngle = Math.atan2(dx, dz);
+        // The victim shouts for help as they run.
+        if (Math.sin(this.elapsed * 2.1) > 0.985) {
+          this.audio.pedestrianBlip(runner.group.position, player ?? runner.group.position, this.cameraYaw, false);
+        }
+      }
+    }
+  }
+
+  private despawnStreetEvent() {
+    const event = this.streetEvent;
+    if (!event) return;
+    const ids = new Set(event.actorIds);
+    const leaving = (this.actors ?? []).filter((actor) => ids.has(actor.id));
+    leaving.forEach((actor) => {
+      this.rayTargets = withoutSubtree(this.rayTargets ?? [], actor.group);
+      this.scene?.remove(actor.group);
+      this.disposeObject(actor.group);
+    });
+    if (leaving.length) this.actors = this.actors.filter((actor) => !ids.has(actor.id));
+    event.props.forEach((prop) => {
+      this.scene?.remove(prop);
+      this.disposeObject(prop);
+    });
+    this.streetEvent = null;
   }
 
   // The speaker exchange fires the first time the cordon commits — the cone
