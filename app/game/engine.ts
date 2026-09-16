@@ -347,7 +347,7 @@ const QUIET_SERAPH_LINES_FREED: Array<[string, string]> = [
 ];
 // The chapel witness — what the candles kept. Stands at the altar of Saint
 // Orison (-72, 48), translucent, only after the Seraph points the way.
-const WITNESS_POS = { x: -75.4, z: 48 };
+const WITNESS_POS = { x: -75.0, z: 50.6 };
 const WITNESS_SPAWN_RANGE = 22;
 const WITNESS_TRIGGER_RANGE = 2.6;
 const WITNESS_LINES: Array<[string, string]> = [
@@ -4211,6 +4211,28 @@ export class HeavensGateEngine {
     const altarLight = new THREE.PointLight(0x8ab0ff, 9, 12, 1.6);
     altarLight.position.set(-3.6, 4.4, 0);
     chapel.add(altarLight);
+
+    // The Arius relic — a weathered stone head reconstructed from a real
+    // laser-scan cloud (James-2012 reference dataset, 8.7M points). It sits
+    // on the altar facing the pews; the candles were lit for it.
+    void loadVerifiedProp('arius-relic-head').then((prop) => {
+      if (this.disposed) return;
+      const bounds = new THREE.Box3().setFromObject(prop);
+      const size = new THREE.Vector3();
+      bounds.getSize(size);
+      prop.scale.setScalar(0.58 / Math.max(size.y, 0.01));
+      bounds.setFromObject(prop);
+      prop.position.set(-4.4 - (bounds.min.x + bounds.max.x) / 2, 1.275 - bounds.min.y, -(bounds.min.z + bounds.max.z) / 2);
+      prop.rotation.y = Math.PI / 2; // face the aisle
+      prop.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.material = new THREE.MeshStandardMaterial({ color: 0x9a917e, roughness: 0.94, metalness: 0.02 });
+          node.castShadow = this.highTier();
+          node.receiveShadow = true;
+        }
+      });
+      chapel.add(prop);
+    }).catch(() => {});
 
     this.scene.add(chapel);
     this.chapelZone = new THREE.Box3(
