@@ -7338,10 +7338,24 @@ export class HeavensGateEngine {
       const dot = (dx * this.cameraForward.x + dz * this.cameraForward.z) / distance;
       if (dot < 0.35) return;
       landed = true;
+      // Silent takedown: an unaware hostile, veiled or struck from behind,
+      // drops outright — the Choir never hears a shot because there isn't one.
+      const unaware = actor.aiState === undefined || actor.aiState.phase !== 'combat';
+      let rel = Math.atan2(dx, dz) - actor.group.rotation.y;
+      while (rel > Math.PI) rel -= Math.PI * 2;
+      while (rel < -Math.PI) rel += Math.PI * 2;
+      const fromBehind = Math.abs(rel) < 1.1;
+      const takedown = unaware && (this.veilActive || fromBehind)
+        && actor.kind !== 'civilian' && actor.kind !== 'boss';
       actor.group.position.x += (dx / distance) * 0.6;
       actor.group.position.z += (dz / distance) * 0.6;
       actor.hitReact = Math.max(actor.hitReact ?? 0, 0.65);
-      this.damageActor(actor, actor.kind === 'civilian' ? 24 : 42);
+      if (takedown) {
+        this.damageActor(actor, actor.health + 50);
+        this.emitToast('Silent takedown', 'No shot fired — the Choir never heard it', 'info');
+      } else {
+        this.damageActor(actor, actor.kind === 'civilian' ? 24 : 42);
+      }
     });
     if (landed) {
       this.audio.meleeHit();
