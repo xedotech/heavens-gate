@@ -11,6 +11,7 @@ export const UPGRADES: UpgradeDefinition[] = [
   { id: 'coil', name: 'Coil tensioning', detail: 'All weapon damage increased by 20%.', cost: 45 },
   { id: 'flow', name: 'Flow channel', detail: 'Resonance regenerates 50% faster.', cost: 35 },
   { id: 'plating', name: 'Seraph plating', detail: 'Incoming damage reduced by 22%.', cost: 40 },
+  { id: 'shroud', name: 'Shroud baffles', detail: 'Muffled report — shots draw half the attention, startle nobody, raise less heat.', cost: 30 },
 ];
 
 export const UPGRADE_IDS = new Set(UPGRADES.map((upgrade) => upgrade.id));

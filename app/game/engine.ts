@@ -6682,7 +6682,8 @@ export class HeavensGateEngine {
         const sound = hostile && this.elapsed - this.lastCombat < 1.35 ? {
           position: { x: playerPosition.x, y: playerPosition.y, z: playerPosition.z },
           distanceMeters: distance,
-          loudness: 0.9,
+          // Baffled fire carries half as far through the net.
+          loudness: this.ownedUpgrades?.has('shroud') ? 0.45 : 0.9,
         } : undefined;
         // A body in the patrol's view reads as a stimulus — investigate the
         // corpse, climb suspicion, first spotter radios the squad.
@@ -6965,7 +6966,7 @@ export class HeavensGateEngine {
     this.weaponRecoil = addShotRecoil(this.weaponRecoil, spec);
     this.weaponKick = Math.min(1, this.weaponKick + (spec.pellets > 1 ? 0.85 : 0.55));
     this.cameraPitch = clamp(this.cameraPitch + (this.isAiming() ? spec.aimCameraKick : spec.hipCameraKick), -0.24, 0.74);
-    this.audio.shoot(spec.id);
+    this.audio.shoot(spec.id, this.ownedUpgrades?.has('shroud') === true);
     this.pulseGamepad(42, spec.pellets > 1 ? 0.8 : 0.46, spec.pellets > 1 ? 0.95 : 0.78);
     this.lastCombat = this.elapsed;
 
@@ -7073,21 +7074,24 @@ export class HeavensGateEngine {
     }
     if (landedHit) this.reticleHit = 1;
     // A gunshot empties the sidewalk: civilians within earshot scatter away
-    // from the muzzle, and traffic within a block stamps the gas.
-    this.actors?.forEach((actor) => {
-      if (!actor.alive || actor.kind !== 'civilian') return;
-      if (actor.posted === true && this.missionIndex === 0) return;
-      if (actor.group.position.distanceTo(this.player.position) > 26) return;
-      actor.flee = Math.max(actor.flee ?? 0, 6);
-      actor.fleeHeading = Math.atan2(
-        actor.group.position.x - this.player.position.x,
-        actor.group.position.z - this.player.position.z,
-      );
-    });
-    this.trafficCars?.forEach((car) => {
-      if (car.wrecked) return;
-      if (car.group.position.distanceTo(this.player.position) < 30) car.panic = Math.max(car.panic, 4);
-    });
+    // from the muzzle, and traffic within a block stamps the gas. Shroud
+    // baffles shrink the report to a cough — nobody flinches.
+    if (!this.ownedUpgrades?.has('shroud')) {
+      this.actors?.forEach((actor) => {
+        if (!actor.alive || actor.kind !== 'civilian') return;
+        if (actor.posted === true && this.missionIndex === 0) return;
+        if (actor.group.position.distanceTo(this.player.position) > 26) return;
+        actor.flee = Math.max(actor.flee ?? 0, 6);
+        actor.fleeHeading = Math.atan2(
+          actor.group.position.x - this.player.position.x,
+          actor.group.position.z - this.player.position.z,
+        );
+      });
+      this.trafficCars?.forEach((car) => {
+        if (car.wrecked) return;
+        if (car.group.position.distanceTo(this.player.position) < 30) car.panic = Math.max(car.panic, 4);
+      });
+    }
     if (this.ammo === 0 && this.reserveAmmo > 0) this.emitToast('Magazine empty', `Press ${this.bindingLabel('reload')} or X to reload`, 'info');
   }
 
@@ -7144,7 +7148,7 @@ export class HeavensGateEngine {
       actor.flee = 8;
       this.emitToast('Civilian harmed', 'Choir response escalating', 'danger');
     } else {
-      this.heat = clamp(this.heat + (actor.kind === 'boss' ? 2 : 6), 0, 100);
+      this.heat = clamp(this.heat + (actor.kind === 'boss' ? 2 : this.ownedUpgrades?.has('shroud') ? 3 : 6), 0, 100);
     }
     this.lastCombat = this.elapsed;
     if (actor.health <= 0) this.killActor(actor);

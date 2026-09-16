@@ -601,34 +601,37 @@ export class AudioEngine {
     this.tone(50, 0.13, 'sine', 0.06 + level * 0.09, 0.24, this.ambientBus, 36);
   }
 
-  shoot(voice: 'morrow' | 'psalm' | 'vesper' = 'morrow') {
+  shoot(voice: 'morrow' | 'psalm' | 'vesper' = 'morrow', muffled = false) {
     const jitter = 0.94 + Math.random() * 0.12;
+    // Shroud baffles: the crack and the street-carry tail collapse into a
+    // cough — the mechanical action stays because metal still cycles.
+    const damp = muffled ? 0.42 : 1;
     if (voice === 'psalm') {
-      this.noise(0.05, 0.16, 3400 * jitter);
-      this.noise(0.14, 0.11, 950 * jitter);
-      this.tone(210 * jitter, 0.1, 'square', 0.05, 0, this.effectsBus, 72);
-      this.tone(64 * jitter, 0.17, 'sine', 0.09, 0, this.effectsBus, 30);
-      this.noise(0.34, 0.026, 420);
+      this.noise(0.05, 0.16 * damp, 3400 * jitter);
+      this.noise(0.14, 0.11 * damp, 950 * jitter);
+      this.tone(210 * jitter, 0.1, 'square', 0.05 * damp, 0, this.effectsBus, 72);
+      this.tone(64 * jitter, 0.17, 'sine', 0.09 * damp, 0, this.effectsBus, 30);
+      if (!muffled) this.noise(0.34, 0.026, 420);
       // Capacitor recharge — a falling whine as the coils drink again.
       this.tone(2600 * jitter, 0.1, 'sine', 0.018, 0.07, this.effectsBus, 820);
       return;
     }
     if (voice === 'vesper') {
-      this.noise(0.07, 0.3, 1500 * jitter);
-      this.noise(0.3, 0.22, 640 * jitter);
-      this.tone(52 * jitter, 0.34, 'sine', 0.16, 0, this.effectsBus, 24);
-      this.tone(96 * jitter, 0.12, 'sawtooth', 0.06, 0.01, this.effectsBus, 40);
-      this.noise(0.52, 0.034, 300);
+      this.noise(0.07, 0.3 * damp, 1500 * jitter);
+      this.noise(0.3, 0.22 * damp, 640 * jitter);
+      this.tone(52 * jitter, 0.34, 'sine', 0.16 * damp, 0, this.effectsBus, 24);
+      this.tone(96 * jitter, 0.12, 'sawtooth', 0.06 * damp, 0.01, this.effectsBus, 40);
+      if (!muffled) this.noise(0.52, 0.034, 300);
       // The pump — fore clack then the return, the slowest mechanical tell.
       this.noise(0.018, 0.045, 1900 * jitter, this.effectsBus, 0.27);
       this.noise(0.022, 0.04, 1300 * jitter, this.effectsBus, 0.37);
       return;
     }
-    this.noise(0.045, 0.2, 2600 * jitter);
-    this.noise(0.12, 0.13, 1300 * jitter);
-    this.tone(110 * jitter, 0.11, 'square', 0.06, 0, this.effectsBus, 48);
-    this.tone(58 * jitter, 0.18, 'sine', 0.1, 0, this.effectsBus, 28);
-    this.noise(0.3, 0.02, 480);
+    this.noise(0.045, 0.2 * damp, 2600 * jitter);
+    this.noise(0.12, 0.13 * damp, 1300 * jitter);
+    this.tone(110 * jitter, 0.11, 'square', 0.06 * damp, 0, this.effectsBus, 48);
+    this.tone(58 * jitter, 0.18, 'sine', 0.1 * damp, 0, this.effectsBus, 28);
+    if (!muffled) this.noise(0.3, 0.02, 480);
     // Slide racks back — the bright metal clack ~90ms after the report.
     this.noise(0.016, 0.04, 5200 * jitter, this.effectsBus, 0.09);
     this.tone(2350 * jitter, 0.02, 'square', 0.014, 0.09, this.effectsBus, 1600);
