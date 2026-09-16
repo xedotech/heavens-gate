@@ -4143,6 +4143,9 @@ export class HeavensGateEngine {
       group.add(armPivot);
       arms.push(armPivot);
     }
+    // Limb hit zones — a leg shot reads different from a shoulder graze.
+    legs.forEach((leg) => leg.traverse((child) => { if (child instanceof THREE.Mesh) child.name = 'limb'; }));
+    arms.forEach((arm) => arm.traverse((child) => { if (child instanceof THREE.Mesh) child.name = 'limb'; }));
 
     if (isCivilian && variant % 3 === 0) {
       const satchel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.43, 0.16), leatherMaterial);
@@ -7158,7 +7161,15 @@ export class HeavensGateEngine {
         const actor = this.actors.find((candidate) => candidate.id === actorId);
         if (actor?.alive) {
           const critical = hit.object.name === 'head';
-          this.damageActor(actor, weaponDamage(origin.distanceTo(hit.point), critical, actor.kind === 'boss', spec), critical);
+          // Limb zone: reduced damage but a real stagger — a leg shot drops
+          // their stride, an arm hit spikes their aim bloom.
+          const limb = hit.object.name === 'limb';
+          const amount = weaponDamage(origin.distanceTo(hit.point), critical, actor.kind === 'boss', spec) * (limb ? 0.68 : 1);
+          this.damageActor(actor, amount, critical);
+          if (limb && actor.kind !== 'boss') {
+            actor.hitReact = Math.min(1, (actor.hitReact ?? 0) + 0.55);
+            actor.damagePulse = Math.max(actor.damagePulse, 0.5);
+          }
           landedHit = true;
           this.statHits += 1;
           this.audio.hit(critical);
