@@ -7325,6 +7325,16 @@ export class HeavensGateEngine {
       const shove = vehicle.group.position.clone().sub(position).setY(0).normalize().dot(forward);
       vehicle.speed = clamp(vehicle.speed + shove * falloff * 7, -vehicle.spec.top * 0.47, vehicle.spec.top);
     });
+    // And the traffic lanes — a charge under a moving cab wrecks it like a
+    // magazine dumped through the door.
+    this.trafficCars?.forEach((car) => {
+      if (car.wrecked) return;
+      const distance = car.group.position.distanceTo(position);
+      if (distance > 6.5) return;
+      car.damage += (1 - distance / 6.5) * 90;
+      if (car.damage > 95) this.wreckTrafficCar(car);
+      else car.panic = Math.max(car.panic, 6);
+    });
     const playerDistance = this.player.position.distanceTo(position);
     if (playerDistance < 4 && !this.currentVehicle) this.takePlayerDamage(12 * (1 - playerDistance / 4));
   }
