@@ -1418,19 +1418,18 @@ export class HeavensGateEngine {
     [buildingMaterial, buildingMaterialWarm, buildingMaterialCool].forEach((material, bucketIndex) => {
       const group = buildingBuckets[bucketIndex];
       if (!group.length) return;
-      const buildings = new THREE.InstancedMesh(facadeGeometry, material, group.length);
-      buildings.castShadow = this.highTier();
-      buildings.receiveShadow = true;
-      buildings.userData.blocksShot = true;
-      group.forEach((building, buildingIndex) => {
+      const placements = group.map((building) => {
         matrix.compose(building.position, new THREE.Quaternion(), building.scale);
-        buildings.setMatrixAt(buildingIndex, matrix);
-        buildings.setColorAt(buildingIndex, building.color);
+        return { matrix: matrix.clone(), color: building.color };
       });
-      buildings.instanceMatrix.needsUpdate = true;
-      if (buildings.instanceColor) buildings.instanceColor.needsUpdate = true;
-      this.scene.add(buildings);
-      this.rayTargets.push(buildings);
+      // Chunked so whole blocks of towers frustum-cull instead of drawing
+      // the entire skyline every frame; each chunk is its own ray target.
+      this.addInstancedChunks(facadeGeometry, material, placements).forEach((mesh) => {
+        mesh.castShadow = this.highTier();
+        mesh.receiveShadow = true;
+        mesh.userData.blocksShot = true;
+        this.rayTargets.push(mesh);
+      });
     });
     this.createBuildingDetails(buildingData);
     this.createStreetMarkings();
@@ -1438,10 +1437,10 @@ export class HeavensGateEngine {
     const windowMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const windowGeometry = new THREE.BoxGeometry(0.66, 0.34, 0.1);
     const windowCount = this.settings.quality === 'low' ? 240 : this.settings.quality === 'medium' ? 620 : this.settings.quality === 'ultra' ? 1400 : 1080;
-    const windows = new THREE.InstancedMesh(windowGeometry, windowMaterial, windowCount);
     const windowColor = new THREE.Color();
     const faceQuaternion = new THREE.Quaternion();
     const upAxis = new THREE.Vector3(0, 1, 0);
+    const windowPlacements: Array<{ matrix: THREE.Matrix4; color: THREE.Color }> = [];
     for (let i = 0; i < windowCount; i += 1) {
       const building = buildingData[Math.floor(seeded(i, 31) * buildingData.length)];
       const face = Math.floor(seeded(i, 32) * 4);
@@ -1455,18 +1454,15 @@ export class HeavensGateEngine {
         : building.position.z + (face === 2 ? 1 : -1) * (building.scale.z * 0.5 + 0.06);
       faceQuaternion.setFromAxisAngle(upAxis, face === 0 ? Math.PI / 2 : face === 1 ? -Math.PI / 2 : face === 2 ? 0 : Math.PI);
       matrix.compose(new THREE.Vector3(x, y, z), faceQuaternion, new THREE.Vector3(1, 1, 1));
-      windows.setMatrixAt(i, matrix);
       const pick = seeded(i, 35);
       if (pick < 0.56) windowColor.setRGB(1.15, 0.82, 0.42).multiplyScalar(0.45 + seeded(i, 36) * 0.65);
       else if (pick < 0.78) windowColor.setRGB(0.48, 0.95, 1.18).multiplyScalar(0.5 + seeded(i, 36) * 0.6);
       else if (pick < 0.9) windowColor.setRGB(2.6, 1.9, 0.85);
       else windowColor.setRGB(2.1, 0.65, 1.5);
       if (seeded(i, 38) < 0.16) windowColor.multiplyScalar(0.1);
-      windows.setColorAt(i, windowColor);
+      windowPlacements.push({ matrix: matrix.clone(), color: windowColor.clone() });
     }
-    windows.instanceMatrix.needsUpdate = true;
-    if (windows.instanceColor) windows.instanceColor.needsUpdate = true;
-    this.scene.add(windows);
+    this.addInstancedChunks(windowGeometry, windowMaterial, windowPlacements);
     this.createNeonStrips(buildingData);
     this.createStreetlamps();
     this.createBillboards(buildingData);
@@ -1545,24 +1541,22 @@ export class HeavensGateEngine {
     this.phaseMaterials.push(crownMaterial);
     const parapetMaterial = new THREE.MeshStandardMaterial({ color: 0x14181b, roughness: 0.58, metalness: 0.4 });
     const matrix = new THREE.Matrix4();
-    const crownMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), crownMaterial, Math.max(1, crowns.length));
-    crowns.forEach((crown, index) => {
+    const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+    const crownPlacements = crowns.map((crown) => {
       matrix.compose(crown.position, new THREE.Quaternion(), crown.scale);
-      crownMesh.setMatrixAt(index, matrix);
-      crownMesh.setColorAt(index, crown.color);
+      return { matrix: matrix.clone(), color: crown.color };
     });
-    const parapetMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), parapetMaterial, Math.max(1, parapets.length));
-    parapets.forEach((parapet, index) => {
+    const parapetPlacements = parapets.map((parapet) => {
       matrix.compose(parapet.position, new THREE.Quaternion(), parapet.scale);
-      parapetMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    [crownMesh, parapetMesh].forEach((mesh) => {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    [
+      ...this.addInstancedChunks(boxGeo, crownMaterial, crownPlacements),
+      ...this.addInstancedChunks(boxGeo, parapetMaterial, parapetPlacements),
+    ].forEach((mesh) => {
       mesh.castShadow = this.highTier();
       mesh.receiveShadow = true;
       mesh.userData.blocksShot = true;
-      this.scene.add(mesh);
       this.rayTargets.push(mesh);
     });
 
@@ -1586,15 +1580,11 @@ export class HeavensGateEngine {
       });
     });
     const stripMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.82, blending: THREE.AdditiveBlending, depthWrite: false });
-    const stripMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), stripMaterial, Math.max(1, strips.length));
-    strips.forEach((strip, index) => {
+    const stripPlacements = strips.map((strip) => {
       matrix.compose(strip.position, new THREE.Quaternion(), strip.scale);
-      stripMesh.setMatrixAt(index, matrix);
-      stripMesh.setColorAt(index, strip.color);
+      return { matrix: matrix.clone(), color: strip.color };
     });
-    stripMesh.instanceMatrix.needsUpdate = true;
-    if (stripMesh.instanceColor) stripMesh.instanceColor.needsUpdate = true;
-    this.scene.add(stripMesh);
+    this.addInstancedChunks(new THREE.BoxGeometry(1, 1, 1), stripMaterial, stripPlacements);
 
     // Baked contact-AO skirts — soften every wall-to-ground seam so towers sit
     // in the world instead of floating on it.
@@ -1611,19 +1601,16 @@ export class HeavensGateEngine {
       aoCtx.fillRect(0, 0, 128, 128);
       const aoTexture = new THREE.CanvasTexture(aoCanvas);
       const aoMaterial = new THREE.MeshBasicMaterial({ map: aoTexture, transparent: true, depthWrite: false });
-      const aoMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), aoMaterial, buildingData.length);
       const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
-      buildingData.forEach((building, index) => {
+      const aoPlacements = buildingData.map((building) => {
         matrix.compose(
           new THREE.Vector3(building.position.x, 0.025, building.position.z),
           flat,
           new THREE.Vector3(building.scale.x * 1.35, building.scale.z * 1.35, 1),
         );
-        aoMesh.setMatrixAt(index, matrix);
+        return { matrix: matrix.clone() };
       });
-      aoMesh.instanceMatrix.needsUpdate = true;
-      aoMesh.renderOrder = 0;
-      this.scene.add(aoMesh);
+      this.addInstancedChunks(new THREE.PlaneGeometry(1, 1), aoMaterial, aoPlacements);
     }
   }
 
@@ -1642,11 +1629,10 @@ export class HeavensGateEngine {
       }
     }
     const curbMaterial = new THREE.MeshStandardMaterial({ color: 0x232b2e, roughness: 0.72, metalness: 0.18 });
-    const curbMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.14, 7.2), curbMaterial, Math.max(1, curbPieces.length));
     const matrix = new THREE.Matrix4();
     const quaternion = new THREE.Quaternion();
     const upAxis = new THREE.Vector3(0, 1, 0);
-    curbPieces.forEach((piece, index) => {
+    const curbPlacements = curbPieces.map((piece) => {
       // Curbs get real collider tops: at 0.14 they never block the capsule,
       // but grounding and foot IK both read them — stepping onto a curb is a
       // plant, not a clip.
@@ -1659,11 +1645,10 @@ export class HeavensGateEngine {
       ));
       quaternion.setFromAxisAngle(upAxis, piece.yaw);
       matrix.compose(piece.position, quaternion, new THREE.Vector3(1, 1, 1));
-      curbMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    curbMesh.instanceMatrix.needsUpdate = true;
-    curbMesh.receiveShadow = true;
-    this.scene.add(curbMesh);
+    const curbMeshes = this.addInstancedChunks(new THREE.BoxGeometry(1, 0.14, 7.2), curbMaterial, curbPlacements);
+    curbMeshes.forEach((mesh) => { mesh.receiveShadow = true; });
 
     const stripes: Array<{ x: number; z: number; yaw: number }> = [];
     for (let lx = -150; lx <= 150; lx += 30) {
@@ -1675,14 +1660,12 @@ export class HeavensGateEngine {
       }
     }
     const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0x9aa4a8, transparent: true, opacity: 0.34 });
-    const stripeMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.02, 7.4), stripeMaterial, stripes.length);
-    stripes.forEach((stripe, index) => {
+    const stripePlacements = stripes.map((stripe) => {
       quaternion.setFromAxisAngle(upAxis, stripe.yaw);
       matrix.compose(new THREE.Vector3(stripe.x, 0.042, stripe.z), quaternion, new THREE.Vector3(1, 1, 1));
-      stripeMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    stripeMesh.instanceMatrix.needsUpdate = true;
-    this.scene.add(stripeMesh);
+    this.addInstancedChunks(new THREE.BoxGeometry(0.5, 0.02, 7.4), stripeMaterial, stripePlacements);
   }
 
   private districtColor(x: number, z: number) {
@@ -1728,24 +1711,17 @@ export class HeavensGateEngine {
     const matrix = new THREE.Matrix4();
     const quaternion = new THREE.Quaternion();
     const upAxis = new THREE.Vector3(0, 1, 0);
-    const stripsH = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.12, 0.12), neonMaterial, Math.max(1, horizontal.length));
-    horizontal.forEach((strip, index) => {
+    const hPlacements = horizontal.map((strip) => {
       quaternion.setFromAxisAngle(upAxis, strip.yaw);
       matrix.compose(strip.position, quaternion, new THREE.Vector3(strip.length, 1, 1));
-      stripsH.setMatrixAt(index, matrix);
-      stripsH.setColorAt(index, strip.color);
+      return { matrix: matrix.clone(), color: strip.color };
     });
-    const stripsV = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 1, 0.12), neonMaterial, Math.max(1, vertical.length));
-    vertical.forEach((strip, index) => {
+    const vPlacements = vertical.map((strip) => {
       matrix.compose(strip.position, new THREE.Quaternion(), new THREE.Vector3(1, strip.height, 1));
-      stripsV.setMatrixAt(index, matrix);
-      stripsV.setColorAt(index, strip.color);
+      return { matrix: matrix.clone(), color: strip.color };
     });
-    [stripsH, stripsV].forEach((mesh) => {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      this.scene.add(mesh);
-    });
+    this.addInstancedChunks(new THREE.BoxGeometry(1, 0.12, 0.12), neonMaterial, hPlacements);
+    this.addInstancedChunks(new THREE.BoxGeometry(0.12, 1, 0.12), neonMaterial, vPlacements);
   }
 
   private createStreetlamps() {
@@ -1770,39 +1746,32 @@ export class HeavensGateEngine {
     });
     // Poles come from the GLB in createRouteProps — these are just the glow:
     // a small emissive lantern head + the additive light cone under it.
-    const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.34, 0.3, 0.34), headMaterial, lamps.length);
-    const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(1.5, 4.7, 10, 1, true), coneMaterial, lamps.length);
     const matrix = new THREE.Matrix4();
     const headColor = new THREE.Color();
-    lamps.forEach((lamp, index) => {
+    const headPlacements = lamps.map((lamp, index) => {
       matrix.makeTranslation(lamp.x, 4.7, lamp.z);
-      heads.setMatrixAt(index, matrix);
       headColor.setRGB(1.9, 1.5, 0.72).multiplyScalar(0.85 + seeded(index, 52) * 0.3);
-      heads.setColorAt(index, headColor);
+      return { matrix: matrix.clone(), color: headColor.clone() };
+    });
+    const conePlacements = lamps.map((lamp) => {
       matrix.makeTranslation(lamp.x, 2.6, lamp.z);
-      cones.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    [heads, cones].forEach((mesh) => {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.castShadow = false;
-      this.scene.add(mesh);
-    });
-    cones.renderOrder = 5;
+    this.addInstancedChunks(new THREE.BoxGeometry(0.34, 0.3, 0.34), headMaterial, headPlacements);
+    const coneMeshes = this.addInstancedChunks(new THREE.ConeGeometry(1.5, 4.7, 10, 1, true), coneMaterial, conePlacements);
+    coneMeshes.forEach((mesh) => { mesh.renderOrder = 5; });
   }
 
   // Poles the photogrammetry lamp replaces — only built if the GLB can't load.
   private buildFallbackLampPoles() {
     if (!this.streetLamps.length) return;
     const dark = new THREE.MeshStandardMaterial({ color: 0x14181a, roughness: 0.5, metalness: 0.6 });
-    const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.11, 5.0, 6), dark, this.streetLamps.length);
     const matrix = new THREE.Matrix4();
-    this.streetLamps.forEach((lamp, index) => {
+    const polePlacements = this.streetLamps.map((lamp) => {
       matrix.makeTranslation(lamp.x, 2.5, lamp.z);
-      poles.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    poles.instanceMatrix.needsUpdate = true;
-    this.scene.add(poles);
+    this.addInstancedChunks(new THREE.CylinderGeometry(0.07, 0.11, 5.0, 6), dark, polePlacements);
   }
 
   private billboardTexture(title: string, subtitle: string, accent: string, background: string) {
@@ -1891,8 +1860,7 @@ export class HeavensGateEngine {
         polygonOffset: true,
         polygonOffsetFactor: -2,
       });
-      const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), material, perVariant);
-      mesh.renderOrder = 1;
+      const placements: Array<{ matrix: THREE.Matrix4 }> = [];
       for (let i = 0; i < perVariant; i += 1) {
         const salt = 150 + variantIndex * 7;
         const building = buildingData[Math.floor(seeded(i, salt) * buildingData.length)];
@@ -1923,10 +1891,10 @@ export class HeavensGateEngine {
         const scale = 0.75 + seeded(i, salt + 3) * 0.6;
         dummy.scale.set(width * scale, height * scale, 1);
         dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
+        placements.push({ matrix: dummy.matrix.clone() });
       }
-      mesh.instanceMatrix.needsUpdate = true;
-      this.scene.add(mesh);
+      const decalMeshes = this.addInstancedChunks(new THREE.PlaneGeometry(1, 1), material, placements);
+      decalMeshes.forEach((mesh) => { mesh.renderOrder = 1; });
     });
   }
 
@@ -2085,32 +2053,27 @@ export class HeavensGateEngine {
     const quaternion = new THREE.Quaternion();
     const upAxis = new THREE.Vector3(0, 1, 0);
 
-    const antennaMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.03, 0.07, 1, 5), dark, Math.max(1, antennas.length));
-    antennas.forEach((antenna, index) => {
+    const antennaPlacements = antennas.map((antenna) => {
       matrix.compose(antenna.position, new THREE.Quaternion(), new THREE.Vector3(1, antenna.height, 1));
-      antennaMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    const beaconMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), beaconMaterial, Math.max(1, beacons.length));
-    beacons.forEach((position, index) => {
+    const beaconPlacements = beacons.map((position) => {
       matrix.makeTranslation(position.x, position.y, position.z);
-      beaconMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    const unitMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.5, 0.68, 1.05), metal, Math.max(1, units.length));
-    units.forEach((unit, index) => {
+    const unitPlacements = units.map((unit) => {
       quaternion.setFromAxisAngle(upAxis, unit.yaw);
       matrix.compose(unit.position, quaternion, new THREE.Vector3(unit.scale, 1, unit.scale));
-      unitMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    const tankMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 10), rust, Math.max(1, tanks.length));
-    tanks.forEach((tank, index) => {
+    const tankPlacements = tanks.map((tank) => {
       matrix.compose(tank.position, new THREE.Quaternion(), new THREE.Vector3(tank.radius, tank.height, tank.radius));
-      tankMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    [antennaMesh, beaconMesh, unitMesh, tankMesh].forEach((mesh) => {
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.castShadow = false;
-      this.scene.add(mesh);
-    });
+    this.addInstancedChunks(new THREE.CylinderGeometry(0.03, 0.07, 1, 5), dark, antennaPlacements);
+    this.addInstancedChunks(new THREE.SphereGeometry(0.09, 6, 5), beaconMaterial, beaconPlacements);
+    this.addInstancedChunks(new THREE.BoxGeometry(1.5, 0.68, 1.05), metal, unitPlacements);
+    this.addInstancedChunks(new THREE.CylinderGeometry(1, 1, 1, 10), rust, tankPlacements);
   }
 
   private createStreetProps() {
@@ -2155,35 +2118,33 @@ export class HeavensGateEngine {
     const quaternion = new THREE.Quaternion();
     const upAxis = new THREE.Vector3(0, 1, 0);
 
-    const bollardMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.09, 0.11, 0.64, 6), bollardMaterial, Math.max(1, bollards.length));
-    bollards.forEach((position, index) => {
+    const bollardPlacements = bollards.map((position) => {
       matrix.makeTranslation(position.x, position.y, position.z);
-      bollardMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    const planterMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.9, 0.52, 0.62), planterMaterial, Math.max(1, planters.length));
-    planters.forEach((planter, index) => {
+    const planterPlacements = planters.map((planter) => {
       quaternion.setFromAxisAngle(upAxis, planter.yaw);
       matrix.compose(planter.position, quaternion, new THREE.Vector3(1, 1, 1));
-      planterMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    const kioskMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.1, 2.2, 0.5), kioskBody, Math.max(1, kiosks.length));
-    const screenMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.86, 1.4), kioskScreen, Math.max(1, kiosks.length));
-    kiosks.forEach((kiosk, index) => {
+    const kioskPlacements = kiosks.map((kiosk) => {
       quaternion.setFromAxisAngle(upAxis, kiosk.yaw);
       matrix.compose(kiosk.position, quaternion, new THREE.Vector3(1, 1, 1));
-      kioskMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
+    });
+    const screenPlacements = kiosks.map((kiosk) => {
+      quaternion.setFromAxisAngle(upAxis, kiosk.yaw);
       const screenPos = kiosk.position.clone();
       screenPos.y += 0.1;
       screenPos.x += Math.sin(kiosk.yaw) * 0.27;
       screenPos.z += Math.cos(kiosk.yaw) * 0.27;
       matrix.compose(screenPos, quaternion, new THREE.Vector3(1, 1, 1));
-      screenMesh.setMatrixAt(index, matrix);
+      return { matrix: matrix.clone() };
     });
-    [bollardMesh, planterMesh, kioskMesh, screenMesh].forEach((mesh) => {
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.castShadow = false;
-      this.scene.add(mesh);
-    });
+    this.addInstancedChunks(new THREE.CylinderGeometry(0.09, 0.11, 0.64, 6), bollardMaterial, bollardPlacements);
+    this.addInstancedChunks(new THREE.BoxGeometry(1.9, 0.52, 0.62), planterMaterial, planterPlacements);
+    this.addInstancedChunks(new THREE.BoxGeometry(1.1, 2.2, 0.5), kioskBody, kioskPlacements);
+    this.addInstancedChunks(new THREE.PlaneGeometry(0.86, 1.4), kioskScreen, screenPlacements);
   }
 
   private createLitter() {
@@ -2218,6 +2179,41 @@ export class HeavensGateEngine {
   // One verified GLB scattered as instanced draws — a single InstancedMesh
   // per source primitive, one matrix per placement. Fire-and-forget: a
   // failed verify or load just isn't there. Resolves true when it landed.
+  // Map-wide instanced fields render every vertex every frame — a single
+  // InstancedMesh can never frustum-cull. Binning placements into ~85 m
+  // cells gives each chunk its own bounding sphere, so whole districts
+  // drop out of the draw the moment they leave the frustum.
+  private addInstancedChunks(
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material | THREE.Material[],
+    placements: Array<{ matrix: THREE.Matrix4; color?: THREE.Color }>,
+    cellSize = 85,
+  ): THREE.InstancedMesh[] {
+    if (!this.scene) return [];
+    const cells = new Map<string, Array<{ matrix: THREE.Matrix4; color?: THREE.Color }>>();
+    placements.forEach((placement) => {
+      const e = placement.matrix.elements;
+      const key = `${Math.floor(e[12] / cellSize)}:${Math.floor(e[14] / cellSize)}`;
+      const list = cells.get(key);
+      if (list) list.push(placement);
+      else cells.set(key, [placement]);
+    });
+    const meshes: THREE.InstancedMesh[] = [];
+    cells.forEach((list) => {
+      const mesh = new THREE.InstancedMesh(geometry, material, Math.max(1, list.length));
+      list.forEach((placement, index) => {
+        mesh.setMatrixAt(index, placement.matrix);
+        if (placement.color) mesh.setColorAt(index, placement.color);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      this.scene!.add(mesh);
+      meshes.push(mesh);
+    });
+    return meshes;
+  }
+
   private async instancedProp(
     id: string,
     placements: Array<{ x: number; y: number; z: number; yaw: number; scale?: number }>,
@@ -2276,31 +2272,32 @@ export class HeavensGateEngine {
       const position = new THREE.Vector3();
       const castShadow = this.highTier();
       sources.forEach(({ geometry, material, local, glass }) => {
-        const mesh = new THREE.InstancedMesh(geometry, material, placements.length);
-        placements.forEach((spot, index) => {
+        const chunkPlacements = placements.map((spot) => {
           quaternion.setFromAxisAngle(upAxis, spot.yaw);
           scaleVector.setScalar(baseScale * (spot.scale ?? 1));
           position.set(spot.x, spot.y, spot.z);
           matrix.compose(position, quaternion, scaleVector);
           matrix.multiply(align);
           matrix.multiply(local);
-          mesh.setMatrixAt(index, matrix);
+          return { matrix: matrix.clone() };
         });
-        mesh.instanceMatrix.needsUpdate = true;
-        mesh.castShadow = castShadow;
-        mesh.receiveShadow = true;
-        mesh.userData.blocksShot = true;
-        mesh.userData.surfaceKind = glass ? 'glass' : options.surface ?? 'generic';
+        let litMaterial: THREE.Material | THREE.Material[] = material;
         if (glass && options.emissiveGlass && !Array.isArray(material)) {
           // The GLB glass IS the lantern — light it, not just the cone.
           const lit = (material as THREE.MeshStandardMaterial).clone();
           lit.emissive = new THREE.Color(options.emissiveGlass);
           lit.emissiveIntensity = 1.6;
-          mesh.material = lit;
+          litMaterial = lit;
         }
-        this.scene.add(mesh);
-        this.rayTargets.push(mesh);
-        options.track?.meshes.push(mesh);
+        const chunks = this.addInstancedChunks(geometry, litMaterial, chunkPlacements);
+        chunks.forEach((mesh) => {
+          mesh.castShadow = castShadow;
+          mesh.receiveShadow = true;
+          mesh.userData.blocksShot = true;
+          mesh.userData.surfaceKind = glass ? 'glass' : options.surface ?? 'generic';
+          this.rayTargets.push(mesh);
+          options.track?.meshes.push(mesh);
+        });
       });
       if (options.collider && options.collider !== 'none') {
         const { w, d, h } = options.collider;
