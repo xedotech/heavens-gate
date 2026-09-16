@@ -781,6 +781,14 @@ export class AudioEngine {
     this.tone(88 * jitter, 0.045, 'sine', run ? 0.02 : 0.011, 0, this.effectsBus, 55);
   }
 
+  // The city drops out under the death cam — a low falling drone while
+  // the world goes quiet around it.
+  playerDeath() {
+    this.tone(160, 1.5, 'sawtooth', 0.05, 0, this.ambientBus, 44);
+    this.tone(51, 1.8, 'sine', 0.09, 0.12, this.ambientBus, 27);
+    this.noise(0.5, 0.05, 500, this.ambientBus, 0.05);
+  }
+
   playerDamage() {
     this.noise(0.16, 0.11, 320);
     this.tone(72, 0.24, 'sawtooth', 0.035, 0, this.effectsBus, 42);

@@ -7063,6 +7063,7 @@ export class HeavensGateEngine {
       this.mouseAimHeld = false;
       this.aimToggled = false;
       this.audio.setEngine(0, false);
+      this.audio.playerDeath?.();
       // Death cam: brief orbit before the game-over screen, with a recap line
       // naming whatever fired the killing shot.
       this.deathCamTimer = 2.4;
