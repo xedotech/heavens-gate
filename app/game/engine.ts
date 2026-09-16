@@ -233,6 +233,7 @@ interface TimedEffect {
 
 const WORLD_SIZE = 340;
 const PLAYER_RADIUS = 1.05;
+const veilTint = new THREE.Color(0x4a3f8a);
 const SAVE_VERSION = 1 as const;
 
 const PLAYER_SKINS: Record<CharacterSkin, { coat: number; armor: number; accent: number; skin: number; hair: number }> = {
@@ -595,6 +596,7 @@ export class HeavensGateEngine {
   private heat = 0;
   private lastCombat = 0;
   private veilActive = false;
+  private veilHeroStates = new Map<THREE.Material, { opacity: number; emissive: number; emissiveIntensity: number }>();
   private veilTimer = 0;
   private veilCooldown = 0;
   private veilWhisperTimer = 0;
@@ -3059,6 +3061,11 @@ export class HeavensGateEngine {
         delete weapon.userData.restPosition;
       }
       this.emitToast('Character streaming complete', `${character.boneCount} bones · ${character.morphCount} facial/body shapes`, 'success');
+      // A skin arriving mid-veil still gets the ghost-sheen.
+      if (this.veilActive) {
+        this.veilHeroStates.clear();
+        this.applyVeilToHero(true);
+      }
     } catch (error) {
       if (token !== this.heroLoadToken || this.disposed) return;
       this.player.children.forEach((child) => {
@@ -7095,7 +7102,47 @@ export class HeavensGateEngine {
         }
       });
     });
+    this.applyVeilToHero(active);
     if (!active && this.lastSave?.ending) this.applyEndingWorld(this.lastSave.ending);
+  }
+
+  // The veil reads on the body too — hero + fallback + the held weapon fade
+  // to a ghost-sheen so the state is legible in third person, not just on
+  // the minimap and the fog. Original opacities are restored on close.
+  private applyVeilToHero(active: boolean) {
+    const roots: THREE.Object3D[] = [this.player];
+    if (this.heroCharacter) roots.push(this.heroCharacter.object);
+    roots.forEach((root) => root.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((material) => {
+        if (active) {
+          if (!this.veilHeroStates.has(material)) {
+            this.veilHeroStates.set(material, {
+              opacity: material.opacity,
+              emissive: material instanceof THREE.MeshStandardMaterial ? material.emissive.getHex() : 0,
+              emissiveIntensity: material instanceof THREE.MeshStandardMaterial ? material.emissiveIntensity : 0,
+            });
+          }
+          material.transparent = true;
+          material.opacity = 0.42;
+          if (material instanceof THREE.MeshStandardMaterial) {
+            material.emissive.lerp(veilTint, 0.35);
+            material.emissiveIntensity = Math.max(material.emissiveIntensity, 0.3);
+          }
+        } else {
+          const original = this.veilHeroStates.get(material);
+          if (!original) return;
+          material.opacity = original.opacity;
+          material.transparent = original.opacity < 1;
+          if (material instanceof THREE.MeshStandardMaterial) {
+            material.emissive.setHex(original.emissive);
+            material.emissiveIntensity = original.emissiveIntensity;
+          }
+        }
+      });
+    }));
+    if (!active) this.veilHeroStates.clear();
   }
 
   private updateVeil(delta: number) {
