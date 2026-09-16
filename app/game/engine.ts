@@ -645,6 +645,7 @@ export class HeavensGateEngine {
   private shoulderSide = 1;
   private shoulderOffset = 0.78;
   private deathCamTimer = 0;
+  private lastKiller = 'the city';
   private whizCooldown = 0;
   private casings: Array<{ mesh: THREE.Mesh; velocity: THREE.Vector3; spin: number; timer: number; active: boolean }> = [];
   private pulseCooldown = 0;
@@ -5321,7 +5322,7 @@ export class HeavensGateEngine {
     this.whizCooldown = Math.max(0, (this.whizCooldown ?? 0) - delta);
     if (this.deathCamTimer > 0) {
       this.deathCamTimer -= delta;
-      if (this.deathCamTimer <= 0) this.callbacks.onGameOver();
+      if (this.deathCamTimer <= 0) this.callbacks.onGameOver(this.lastKiller);
     }
     this.veilCooldown = Math.max(0, this.veilCooldown - delta);
     this.pulseCooldown = Math.max(0, this.pulseCooldown - delta);
@@ -6712,6 +6713,7 @@ export class HeavensGateEngine {
         }
         killer = best ? (best.kind === 'boss' ? 'the False Archon' : best.kind === 'drone' ? 'a sentry drone' : 'a Warden') : 'the city';
       }
+      this.lastKiller = killer;
       this.emitToast('Aurel has fallen', `Slain by ${killer}`, 'danger');
     }
   }

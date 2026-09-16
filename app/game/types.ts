@@ -227,7 +227,7 @@ export interface EngineCallbacks {
   onToast: (toast: ToastMessage) => void;
   onInteraction: (prompt: InteractionPrompt | null) => void;
   onPauseRequested: () => void;
-  onGameOver: () => void;
+  onGameOver: (killer: string) => void;
   onChoiceRequested: () => void;
   /** Small in-HUD dialogue picker — null dismisses it. Optional so embedders can ignore it. */
   onDialogueChoice?: (choice: DialogueChoicePrompt | null) => void;

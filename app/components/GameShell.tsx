@@ -270,6 +270,7 @@ export default function GameShell() {
   const [muted, setMuted] = useState(false);
   const [tutorial, setTutorial] = useState(false);
   const [ending, setEnding] = useState<'open' | 'seal' | null>(null);
+  const [lastKiller, setLastKiller] = useState('the city');
   const [error, setError] = useState<string | null>(null);
   const [listeningAction, setListeningAction] = useState<KeybindAction | null>(null);
   const [listeningPadAction, setListeningPadAction] = useState<KeybindAction | null>(null);
@@ -343,7 +344,8 @@ export default function GameShell() {
           engineRef.current?.pause();
           setScreen('paused');
         },
-        onGameOver: () => {
+        onGameOver: (killer) => {
+          setLastKiller(killer);
           engineRef.current?.pause();
           setScreen('gameover');
         },
@@ -835,7 +837,7 @@ export default function GameShell() {
 
       {screen === 'gameover' && (
         <section className="modal-screen gameover-screen" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
-          <Skull aria-hidden="true" /><p className="eyebrow">Signal lost</p><h1 id="gameover-title">Aurel is remembered.</h1><p>The city keeps the last checkpoint. Death is only a route with worse lighting.</p>
+          <Skull aria-hidden="true" /><p className="eyebrow">Signal lost</p><h1 id="gameover-title">Aurel is remembered.</h1><p>Slain by {lastKiller}. The city keeps the last checkpoint. Death is only a route with worse lighting.</p>
           <div><button className="primary-action" type="button" onClick={() => { engineRef.current?.retryCheckpoint(); setScreen('playing'); void engineRef.current?.resume(); }}><RotateCcw aria-hidden="true" /> Retry checkpoint</button><button className="secondary-button" type="button" onClick={() => { engineRef.current?.returnToTitle(); setScreen('title'); }}>Return to title</button></div>
         </section>
       )}
