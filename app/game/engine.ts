@@ -599,6 +599,8 @@ export class HeavensGateEngine {
   private defeatedWardens = 0;
   private echoesActivated = new Set<string>();
   private boss: Actor | null = null;
+  private bossPhase = 0;
+  private bossHalo: THREE.MeshStandardMaterial | null = null;
   private choiceRequested = false;
   private gameOverSent = false;
   private elapsed = 0;
@@ -5910,8 +5912,10 @@ export class HeavensGateEngine {
           actor.group.rotation.y = Math.atan2(direction.x, direction.z);
           if (actor.cooldown <= 0 && aiStep.perception.targetSeen && distance < (actor.kind === 'boss' ? 42 : 31)) {
             this.enemyFire(actor, actor.kind === 'boss' ? 18 : 10);
-            actor.cooldown = (actor.kind === 'boss' ? 0.72 : 1.2 + seeded(actorIndex + Math.floor(time), 91) * 0.9) * this.ngFireScale();
-            if (actor.kind === 'boss' && Math.floor(time) % 4 === 0) this.createShockwave(actor.group.position);
+            const bossCadence = this.bossPhase >= 2 ? 0.48 : 0.72;
+            actor.cooldown = (actor.kind === 'boss' ? bossCadence : 1.2 + seeded(actorIndex + Math.floor(time), 91) * 0.9) * this.ngFireScale();
+            const shockEvery = this.bossPhase >= 2 ? 2 : this.bossPhase === 1 ? 3 : 4;
+            if (actor.kind === 'boss' && Math.floor(time) % shockEvery === 0) this.createShockwave(actor.group.position);
           }
         } else if (aiStep.decision.action === 'take-cover' && destination) {
           const direction = destination.sub(actorPosition).setY(0).normalize();
@@ -6818,6 +6822,7 @@ export class HeavensGateEngine {
       this.completeMission();
     } else if (mission.kind === 'boss') {
       if (!this.boss) this.spawnBoss();
+      this.updateBossPhase();
       if (this.boss && !this.boss.alive) this.completeMission();
     } else if (mission.kind === 'choice' && !this.choiceRequested) {
       this.choiceRequested = true;
@@ -6860,8 +6865,38 @@ export class HeavensGateEngine {
     this.rayTargets.push(halo);
     actor.materials.push(haloMaterial);
     this.boss = actor;
+    this.bossPhase = 0;
+    this.bossHalo = haloMaterial;
     this.emitToast('BOSS // FALSE ARCHON', 'Break the halo. Silence the voice.', 'danger');
     this.beginCinematic(actor.group.position.clone());
+  }
+
+  // The Archon escalates instead of sponging — at two-thirds the Choir
+  // answers, at one-third the mask slips: speed, cadence, and the halo all
+  // turn hostile while the fight's fiction says why.
+  private updateBossPhase() {
+    const boss = this.boss;
+    if (!boss || !boss.alive) return;
+    const fraction = boss.health / 520;
+    if (this.bossPhase === 0 && fraction <= 0.66) {
+      this.bossPhase = 1;
+      this.emitToast('The Choir sings', 'Wardens answer the failing voice', 'danger');
+      this.emitSubtitle('False Archon', 'A door does not bleed. A door does not fear.');
+      [[-6, 4], [6, 4]].forEach(([dx, dz], index) => {
+        const add = this.addActor(`archon-choir-${index + 1}`, 'enemy',
+          boss.group.position.x + dx, boss.group.position.z + dz, 0x2c2622, 0xe8a34c, 120);
+        if (add.aiState) add.aiState = { ...add.aiState, suspicion: 1, phase: 'combat' };
+      });
+      this.createShockwave(boss.group.position);
+    } else if (this.bossPhase === 1 && fraction <= 0.33) {
+      this.bossPhase = 2;
+      boss.speed = 5.1;
+      this.bossHalo?.emissive.setHex(0xd63a2a);
+      this.bossHalo?.color.setHex(0x8a2a1e);
+      this.emitToast('THE MASK SLIPS', 'The Archon is done pretending to be merciful', 'danger');
+      this.emitSubtitle('Nia', 'The voice is breaking up — end it, Aurel.');
+      this.createShockwave(boss.group.position);
+    }
   }
 
   private emitMissionBriefing() {
