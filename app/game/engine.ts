@@ -4304,6 +4304,16 @@ export class HeavensGateEngine {
         this.scene.environmentIntensity = inside ? 0.85 : 0.6;
       }
     }
+    if (inside && this.narrative?.relicSeen !== true) {
+      const altarDistance = this.altarDistance();
+      if (altarDistance !== null && altarDistance < 1.9) {
+        const narrative = (this.narrative ??= {});
+        narrative.relicSeen = true;
+        this.audio.whisperBlip?.();
+        this.emitSubtitle('The Arius Relic', 'A saint\'s head, worn to the bone by two hundred years of hands. The stone still remembers being carved.');
+        this.saveCheckpoint();
+      }
+    }
     if (!inside || this.chapelVisited) return;
     this.chapelVisited = true;
     this.emitSubtitle('The Archivist', 'The Unburied Chapel. The Choir burned the records — the candles remember anyway.');

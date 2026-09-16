@@ -105,6 +105,7 @@ export interface SaveState {
     aftermathHeard?: boolean;
     seraphHeard?: boolean;
     chapelWitnessed?: boolean;
+    relicSeen?: boolean;
   };
   updatedAt: number;
 }
