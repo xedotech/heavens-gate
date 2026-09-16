@@ -123,6 +123,10 @@ interface Actor {
   stepAccum?: number;
   prevX?: number;
   prevZ?: number;
+  /** Rounds left in the current magazine — enemies reload, they don't hose. */
+  magAmmo?: number;
+  /** Seconds until the reload finishes and the mag refills. */
+  reloadTimer?: number;
 }
 
 interface CharacterRig {
@@ -4209,6 +4213,9 @@ export class HeavensGateEngine {
         : undefined,
       damagePulse: 0,
       lastDamageAmount: 0,
+      // A working magazine — wardens run dry and duck to reload instead of
+      // hosing forever. Drones are machines; undefined means the cell never empties.
+      magAmmo: kind === 'enemy' || kind === 'boss' ? 12 : undefined,
     };
     this.actors.push(actor);
     return actor;
@@ -6604,6 +6611,10 @@ export class HeavensGateEngine {
       const distance = actor.group.position.distanceTo(playerPosition);
       actor.lod = distance;
       actor.cooldown -= delta;
+      if ((actor.reloadTimer ?? 0) > 0) {
+        actor.reloadTimer = Math.max(0, (actor.reloadTimer ?? 0) - delta);
+        if (actor.reloadTimer === 0) actor.magAmmo = 12;
+      }
       actor.damagePulse = Math.max(0, actor.damagePulse - delta);
       actor.hitReact = Math.max(0, (actor.hitReact ?? 0) - delta * 2.6);
 
@@ -6785,6 +6796,7 @@ export class HeavensGateEngine {
             sourcePosition: { x: playerPosition.x, y: playerPosition.y, z: playerPosition.z },
           } : undefined,
           underFire: actor.damagePulse > 0,
+          needsReload: (actor.reloadTimer ?? 0) > 0,
           coverCandidates: hostile ? this.npcCoverCandidates(actor, playerPosition) : [],
           radioSignals: frameRadio,
         });
@@ -6934,6 +6946,15 @@ export class HeavensGateEngine {
   }
 
   private enemyFire(actor: Actor, damage: number) {
+    // A spent magazine starts the reload — the warden calls it and ducks.
+    if (actor.magAmmo !== undefined && actor.magAmmo <= 0) {
+      if ((actor.reloadTimer ?? 0) <= 0) {
+        actor.reloadTimer = actor.kind === 'boss' ? 1.6 : 2.2;
+        this.audio.radioBark?.(actor.group.position, this.player.position, this.cameraYaw, true);
+      }
+      return;
+    }
+    if (actor.magAmmo !== undefined) actor.magAmmo -= 1;
     const origin = actor.group.position.clone().add(new THREE.Vector3(0, actor.kind === 'drone' ? 0 : 1.6, 0));
     this.audio.enemyShot(origin, this.camera.position, this.cameraYaw, !this.hasLineOfSight(origin, this.camera.position));
     const target = (this.currentVehicle?.group.position ?? this.player.position).clone().add(new THREE.Vector3(0, 1.1, 0));
