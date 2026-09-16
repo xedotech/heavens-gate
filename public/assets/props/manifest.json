@@ -1,167 +1,167 @@
 {
-  "schemaVersion": 1,
-  "props": [
-    {
-      "id": "memorial-obelisk",
-      "file": "memorial-obelisk.glb",
-      "sha256": "57acdf04d066a13471ef9e21cc8abc78b4af139aa43076163def456dc6097d03",
-      "bytes": 3844992,
-      "source": "local photogrammetry pipeline (tools/photogrammetry) \u00e2\u20ac\u201d COLMAP SfM + OpenMVS mesh/texture from a synthetic orbit capture",
-      "provenance": "synthetic self-test reconstruction",
-      "heightMeters": 5.2
-    },
-    {
-      "id": "street_lamp_01",
-      "file": "street_lamp_01-1k.glb",
-      "sha256": "844d27e7dc1b5faff7d9e5c29d27e813793e1619413766ccf07d6e956c5dde69",
-      "bytes": 941028,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from street_lamp_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 3.87
-    },
-    {
-      "id": "painted_wooden_bench",
-      "file": "painted_wooden_bench-1k.glb",
-      "sha256": "69178feb5cfc567c83c49934c488c85be4ab1c9cfff156e04fe4ea40451b6c58",
-      "bytes": 327624,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from painted_wooden_bench-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 0.89
-    },
-    {
-      "id": "water_manhole_cover",
-      "file": "water_manhole_cover-1k.glb",
-      "sha256": "2c189e59cb446b3ac40b4c0bac8f402ec1beff9e59f0e50b66743a99e3a10344",
-      "bytes": 602452,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from water_manhole_cover-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 0.07
-    },
-    {
-      "id": "concrete_road_barrier",
-      "file": "concrete_road_barrier-1k.glb",
-      "sha256": "6ff163eee45d389a5700efaefd903f669e3a07c3247472d0e6be3b5d1604169f",
-      "bytes": 1160260,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from concrete_road_barrier-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
-      "heightMeters": 0.83
-    },
-    {
-      "id": "concrete_road_barrier_02",
-      "file": "concrete_road_barrier_02-1k.glb",
-      "sha256": "a89e9db818ff9643c6fe432a3f75503c30f9b21836604d9e26b8f84caaf31a02",
-      "bytes": 1073376,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from concrete_road_barrier_02-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 1.11
-    },
-    {
-      "id": "modular_chainlink_fence",
-      "file": "modular_chainlink_fence-1k.glb",
-      "sha256": "ab9db4e78d2577a1f1c9f596858a19de7e82707863c5603dddab64b93890ab95",
-      "bytes": 2641252,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from modular_chainlink_fence-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
-      "heightMeters": 2.52
-    },
-    {
-      "id": "fire_hydrant",
-      "file": "fire_hydrant-1k.glb",
-      "sha256": "62b25e84ea6e89a55d5b47bb895bf1c8231da5965af3e07c7a3cc2916968374e",
-      "bytes": 1922004,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from fire_hydrant-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
-      "heightMeters": 0.8
-    },
-    {
-      "id": "Barrel_01",
-      "file": "Barrel_01-1k.glb",
-      "sha256": "2396cae0ddfc89c60626e8e8f3624ffcdc1578a76a38aa47be75008e173567c4",
-      "bytes": 484640,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from Barrel_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 0.88
-    },
-    {
-      "id": "barrel_stove",
-      "file": "barrel_stove-1k.glb",
-      "sha256": "7ad5bca2e2f3ab03cae6d6739abb0516403f2ccccc9aa4cec7747104ec5ecd7b",
-      "bytes": 673344,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from barrel_stove-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 0.86
-    },
-    {
-      "id": "gothic_statue",
-      "file": "gothic_statue-1k.glb",
-      "sha256": "cc425d1a48ab27d08f1aa457340b5d0f2cefb76c6f6329558acd8a7c3ff87b9d",
-      "bytes": 1716172,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from gothic_statue-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 1.74
-    },
-    {
-      "id": "industrial_wall_lamp",
-      "file": "industrial_wall_lamp-1k.glb",
-      "sha256": "f03350c26996924cee8df6add10879d0e7b4d13ba3a2fb5b4edbe3e97dd641b1",
-      "bytes": 635776,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from industrial_wall_lamp-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 0.43
-    },
-    {
-      "id": "modular_industrial_pipes_01",
-      "file": "modular_industrial_pipes_01-1k.glb",
-      "sha256": "e21054f2266dd3d9857dec03486927804e259f5373cbbb762f68a382f6f299a9",
-      "bytes": 1234824,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from modular_industrial_pipes_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 1.95
-    },
-    {
-      "id": "rollershutter_door",
-      "file": "rollershutter_door-1k.glb",
-      "sha256": "a1c27a1a3e5b8b520a9cc841449a23dbf626c9489d23ca1cb9a7cc90423b9bab",
-      "bytes": 366352,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from rollershutter_door-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 2.4
-    },
-    {
-      "id": "large_castle_door",
-      "file": "large_castle_door-1k.glb",
-      "sha256": "d22e0f157523053d22dc4ffd25e06794dad056d442422a3bed8d04ce8cda38f7",
-      "bytes": 1099524,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from large_castle_door-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
-      "heightMeters": 2.96
-    },
-    {
-      "id": "rock_moss_set_01",
-      "file": "rock_moss_set_01-1k.glb",
-      "sha256": "00279c39f1bf2eae0fbb63ebad6fd47218ff1886654453e326aeac5fdc256e47",
-      "bytes": 1469116,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from rock_moss_set_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
-      "heightMeters": 1.77
-    },
-    {
-      "id": "boulder_01",
-      "file": "boulder_01-1k.glb",
-      "sha256": "66bcd6c3090d6883c55061008c9d727941bcd8804c90306e75d665266c297ded",
-      "bytes": 3121408,
-      "source": "Poly Haven CC0 (production-resources intake)",
-      "provenance": "derived from boulder_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
-      "heightMeters": 1
-    },
-    {
-      "id": "arius-relic-head",
-      "file": "arius-relic-head.glb",
-      "sha256": "fe5935a8896d4ccd57a25e4476d47a7fad354505e46baea970c2eefe411a06d9",
-      "bytes": 2520988,
-      "source": "Arius laser-scan reference cloud (James-2012 dataset) \u2014 voxel-density marching-cubes reconstruction via tools/photogrammetry/cloud_to_mesh.py",
-      "provenance": "real laser scan, weathered stone head fragment",
-      "heightMeters": 1.12
-    }
-  ]
+ "schemaVersion": 1,
+ "props": [
+  {
+   "id": "memorial-obelisk",
+   "file": "memorial-obelisk.glb",
+   "sha256": "57acdf04d066a13471ef9e21cc8abc78b4af139aa43076163def456dc6097d03",
+   "bytes": 3844992,
+   "source": "local photogrammetry pipeline (tools/photogrammetry) \u00e2\u20ac\u201d COLMAP SfM + OpenMVS mesh/texture from a synthetic orbit capture",
+   "provenance": "synthetic self-test reconstruction",
+   "heightMeters": 5.2
+  },
+  {
+   "id": "street_lamp_01",
+   "file": "street_lamp_01-1k.glb",
+   "sha256": "844d27e7dc1b5faff7d9e5c29d27e813793e1619413766ccf07d6e956c5dde69",
+   "bytes": 941028,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from street_lamp_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 3.87
+  },
+  {
+   "id": "painted_wooden_bench",
+   "file": "painted_wooden_bench-1k.glb",
+   "sha256": "69178feb5cfc567c83c49934c488c85be4ab1c9cfff156e04fe4ea40451b6c58",
+   "bytes": 327624,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from painted_wooden_bench-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 0.89
+  },
+  {
+   "id": "water_manhole_cover",
+   "file": "water_manhole_cover-1k.glb",
+   "sha256": "2c189e59cb446b3ac40b4c0bac8f402ec1beff9e59f0e50b66743a99e3a10344",
+   "bytes": 602452,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from water_manhole_cover-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 0.07
+  },
+  {
+   "id": "concrete_road_barrier",
+   "file": "concrete_road_barrier-1k.glb",
+   "sha256": "6ff163eee45d389a5700efaefd903f669e3a07c3247472d0e6be3b5d1604169f",
+   "bytes": 1160260,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from concrete_road_barrier-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
+   "heightMeters": 0.83
+  },
+  {
+   "id": "concrete_road_barrier_02",
+   "file": "concrete_road_barrier_02-1k.glb",
+   "sha256": "a89e9db818ff9643c6fe432a3f75503c30f9b21836604d9e26b8f84caaf31a02",
+   "bytes": 1073376,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from concrete_road_barrier_02-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 1.11
+  },
+  {
+   "id": "modular_chainlink_fence",
+   "file": "modular_chainlink_fence-1k.glb",
+   "sha256": "ab9db4e78d2577a1f1c9f596858a19de7e82707863c5603dddab64b93890ab95",
+   "bytes": 2641252,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from modular_chainlink_fence-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
+   "heightMeters": 2.52
+  },
+  {
+   "id": "fire_hydrant",
+   "file": "fire_hydrant-1k.glb",
+   "sha256": "62b25e84ea6e89a55d5b47bb895bf1c8231da5965af3e07c7a3cc2916968374e",
+   "bytes": 1922004,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from fire_hydrant-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
+   "heightMeters": 0.8
+  },
+  {
+   "id": "Barrel_01",
+   "file": "Barrel_01-1k.glb",
+   "sha256": "2396cae0ddfc89c60626e8e8f3624ffcdc1578a76a38aa47be75008e173567c4",
+   "bytes": 484640,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from Barrel_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 0.88
+  },
+  {
+   "id": "barrel_stove",
+   "file": "barrel_stove-1k.glb",
+   "sha256": "7ad5bca2e2f3ab03cae6d6739abb0516403f2ccccc9aa4cec7747104ec5ecd7b",
+   "bytes": 673344,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from barrel_stove-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 0.86
+  },
+  {
+   "id": "gothic_statue",
+   "file": "gothic_statue-1k.glb",
+   "sha256": "cc425d1a48ab27d08f1aa457340b5d0f2cefb76c6f6329558acd8a7c3ff87b9d",
+   "bytes": 1716172,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from gothic_statue-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 1.74
+  },
+  {
+   "id": "industrial_wall_lamp",
+   "file": "industrial_wall_lamp-1k.glb",
+   "sha256": "f03350c26996924cee8df6add10879d0e7b4d13ba3a2fb5b4edbe3e97dd641b1",
+   "bytes": 635776,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from industrial_wall_lamp-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 0.43
+  },
+  {
+   "id": "modular_industrial_pipes_01",
+   "file": "modular_industrial_pipes_01-1k.glb",
+   "sha256": "e21054f2266dd3d9857dec03486927804e259f5373cbbb762f68a382f6f299a9",
+   "bytes": 1234824,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from modular_industrial_pipes_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 1.95
+  },
+  {
+   "id": "rollershutter_door",
+   "file": "rollershutter_door-1k.glb",
+   "sha256": "a1c27a1a3e5b8b520a9cc841449a23dbf626c9489d23ca1cb9a7cc90423b9bab",
+   "bytes": 366352,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from rollershutter_door-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 2.4
+  },
+  {
+   "id": "large_castle_door",
+   "file": "large_castle_door-1k.glb",
+   "sha256": "d22e0f157523053d22dc4ffd25e06794dad056d442422a3bed8d04ce8cda38f7",
+   "bytes": 1099524,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from large_castle_door-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures",
+   "heightMeters": 2.96
+  },
+  {
+   "id": "rock_moss_set_01",
+   "file": "rock_moss_set_01-1k.glb",
+   "sha256": "00279c39f1bf2eae0fbb63ebad6fd47218ff1886654453e326aeac5fdc256e47",
+   "bytes": 1469116,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from rock_moss_set_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
+   "heightMeters": 1.77
+  },
+  {
+   "id": "boulder_01",
+   "file": "boulder_01-1k.glb",
+   "sha256": "66bcd6c3090d6883c55061008c9d727941bcd8804c90306e75d665266c297ded",
+   "bytes": 3121408,
+   "source": "Poly Haven CC0 (production-resources intake)",
+   "provenance": "derived from boulder_01-2k.glb \u00e2\u20ac\u201d dedup/prune/weld, WebP 1024 textures, meshopt simplified 50%",
+   "heightMeters": 1
+  },
+  {
+   "id": "arius-relic-head",
+   "file": "arius-relic-head.glb",
+   "sha256": "5bf862d6f6247c1c36844bbfcf957e41181fa7582c035994834ba6e52460f7e2",
+   "bytes": 810808,
+   "source": "Arius laser-scan reference cloud (James-2012 dataset) \u2014 COLMAP SfM + OpenMVS dense fusion (11.1M pts) + Delaunay reconstruction, quadric-decimated to 45k tris",
+   "provenance": "real laser scan, weathered stone head fragment",
+   "heightMeters": 1.12
+  }
+ ]
 }
