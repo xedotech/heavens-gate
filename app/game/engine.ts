@@ -4698,7 +4698,9 @@ export class HeavensGateEngine {
       prop.rotation.y = Math.PI / 2; // face the aisle
       prop.traverse((node) => {
         if (node instanceof THREE.Mesh) {
-          node.material = new THREE.MeshStandardMaterial({ color: 0x9a917e, roughness: 0.94, metalness: 0.02 });
+          // Vertex colors carry the real scan's albedo — weathered limestone
+          // and lichen tones straight off the 11.1M-point cloud.
+          node.material = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.94, metalness: 0.02 });
           node.castShadow = this.highTier();
           node.receiveShadow = true;
         }
