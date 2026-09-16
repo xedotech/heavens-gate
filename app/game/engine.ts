@@ -463,6 +463,8 @@ export class HeavensGateEngine {
     poles: Array<{ mesh: THREE.InstancedMesh; local: number }>;
   }>();
   private deadLamps = new Set<number>();
+  private windowPaneHits?: Map<THREE.InstancedMesh, Map<number, THREE.Color>>;
+  private readonly windowDeadColor = new THREE.Color(0x11151c);
   private readonly lampDeadColor = new THREE.Color(0x0a0c0e);
   private readonly lampLiveColor = new THREE.Color(1, 1, 1);
   private readonly lampOffScale = new THREE.Matrix4().makeScale(0.001, 0.001, 0.001);
@@ -1518,7 +1520,14 @@ export class HeavensGateEngine {
       if (seeded(i, 38) < 0.16) windowColor.multiplyScalar(0.1);
       windowPlacements.push({ matrix: matrix.clone(), color: windowColor.clone() });
     }
-    this.addInstancedChunks(windowGeometry, windowMaterial, windowPlacements);
+    const windowMeshes = this.addInstancedChunks(windowGeometry, windowMaterial, windowPlacements);
+    // Panes sit 6cm proud of the facade — a shot at a lit window hits glass
+    // first, cracks it, and the pane stays dark until the world resets.
+    windowMeshes.forEach((mesh) => {
+      mesh.userData.windowPane = true;
+      mesh.userData.surfaceKind = 'glass';
+      this.rayTargets.push(mesh);
+    });
     this.createNeonStrips(buildingData);
     this.createStreetlamps();
     this.createBillboards(buildingData);
@@ -5207,6 +5216,12 @@ export class HeavensGateEngine {
     this.nextStreetEventAt = this.elapsed + 18;
     // Shot-out lanterns come back on with the checkpoint.
     this.relightLamps();
+    // Shattered panes reglaze too.
+    this.windowPaneHits?.forEach((originals, paneMesh) => {
+      originals.forEach((color, local) => paneMesh.setColorAt(local, color));
+      if (paneMesh.instanceColor) paneMesh.instanceColor.needsUpdate = true;
+    });
+    this.windowPaneHits?.clear();
     this.echoes.forEach((echo) => {
       echo.activated = this.echoesActivated.has(echo.id);
       echo.group.visible = !echo.activated;
@@ -6903,6 +6918,19 @@ export class HeavensGateEngine {
         ? (hit.object.userData.instanceIds as number[] | undefined)?.[hit.instanceId]
         : undefined;
       if (lampIndex !== undefined && !obstruction) this.killLamp(lampIndex, hit!.point);
+      if (hit && hit.object.userData.windowPane && hit.instanceId !== undefined && !obstruction) {
+        const paneMesh = hit.object as THREE.InstancedMesh;
+        const hitsByMesh = (this.windowPaneHits ??= new Map());
+        let originals = hitsByMesh.get(paneMesh);
+        if (!originals) { originals = new Map(); hitsByMesh.set(paneMesh, originals); }
+        if (!originals.has(hit.instanceId)) {
+          const original = new THREE.Color();
+          paneMesh.getColorAt(hit.instanceId, original);
+          originals.set(hit.instanceId, original);
+          paneMesh.setColorAt(hit.instanceId, this.windowDeadColor);
+          if (paneMesh.instanceColor) paneMesh.instanceColor.needsUpdate = true;
+        }
+      }
       const trafficId = hit?.object.userData.trafficId as number | undefined;
       if (trafficId !== undefined && !obstruction) {
         const car = this.trafficCars[trafficId];
