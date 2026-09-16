@@ -110,6 +110,10 @@ interface Actor {
   hitReactSide?: number;
   lastHitAngle?: number;
   lastHitCritical?: boolean;
+  /** Bulwark plate — frontal shots deflect until Pulse or a flank opens it. */
+  shielded?: boolean;
+  shieldMesh?: THREE.Mesh;
+  shieldDownUntil?: number;
   /** Distance to the player this frame — drives animation LOD. */
   lod?: number;
   /** Accumulated delta between throttled animation steps. */
@@ -3440,10 +3444,18 @@ export class HeavensGateEngine {
       return;
     }
     this.reinforcementSeq += 1;
-    const hunter = this.addActor(`reinforce-${this.reinforcementSeq}`, 'enemy', x, z, 0x2a2f33, 0xe05a3a, 62);
-    hunter.speed = 3.95;
+    // At sustained heat the Choir stops sending hunters and sends a wall:
+    // every fourth dispatch at tier 4+ is a Bulwark, not a hunter.
+    const bulwark = this.heatTierValue() >= 4 && this.reinforcementSeq % 4 === 0;
+    if (bulwark) {
+      this.createBulwark(`reinforce-${this.reinforcementSeq}`, x, z);
+      this.emitToast('Bulwark dispatched', 'Plate armor inbound — flank it or Pulse it open', 'danger');
+    } else {
+      const hunter = this.addActor(`reinforce-${this.reinforcementSeq}`, 'enemy', x, z, 0x2a2f33, 0xe05a3a, 62);
+      hunter.speed = 3.95;
+      this.emitToast('Choir reinforcement', 'A hunter was dispatched to your position', 'danger');
+    }
     this.reinforcementTimer = 14;
-    this.emitToast('Choir reinforcement', 'A hunter was dispatched to your position', 'danger');
   }
 
   private wreckTrafficCar(car: TrafficCar) {
@@ -3987,6 +3999,36 @@ export class HeavensGateEngine {
       lastDamageAmount: 0,
     };
     this.actors.push(actor);
+  }
+
+  // The Bulwark — a Morrow-pattern heavy. Slow, armored, and plated across
+  // the front: shots into the shield arc deflect for a quarter of their
+  // bite. Flanking, Veil-sneak angles, and Pulse staggers all open it.
+  private createBulwark(id: string, x: number, z: number) {
+    const actor = this.addActor(id, 'enemy', x, z, 0x2e3a42, 0xe8a44a, 240);
+    actor.speed = 1.7;
+    actor.shielded = true;
+    actor.group.scale.setScalar(1.12);
+    const plateMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1c2226, roughness: 0.34, metalness: 0.82,
+      emissive: 0xe8a44a, emissiveIntensity: 0.22,
+    });
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.94, 1.5, 0.09), plateMaterial);
+    plate.position.set(0, 1.32, -0.52);
+    plate.name = 'bulwark-shield';
+    plate.userData.actorId = id;
+    actor.group.add(plate);
+    actor.shieldMesh = plate;
+    actor.materials.push(plateMaterial);
+    this.rayTargets.push(plate);
+    // Sloped crown so the plate reads at range — a wall coming at you.
+    const crown = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.14, 0.14), plateMaterial);
+    crown.position.set(0, 2.62, -0.4);
+    crown.rotation.x = 0.5;
+    crown.userData.actorId = id;
+    actor.group.add(crown);
+    this.rayTargets.push(crown);
+    return actor;
   }
 
   private civilianArchetype(x: number, z: number, index: number) {
@@ -4939,6 +4981,16 @@ export class HeavensGateEngine {
     });
     if (contractSpawned.length) this.actors = (this.actors ?? []).filter((actor) => !contractSpawned.includes(actor));
     this.activeContract = null;
+    // Reinforcements ride the heat — the reset zeroes it, so any live
+    // hunters or Bulwarks stand down and dissolve rather than haunting a
+    // quieted city.
+    const reinforcements = (this.actors ?? []).filter((actor) => actor.id.startsWith('reinforce-'));
+    reinforcements.forEach((actor) => {
+      this.rayTargets = withoutSubtree(this.rayTargets ?? [], actor.group);
+      this.scene?.remove(actor.group);
+      this.disposeObject(actor.group);
+    });
+    if (reinforcements.length) this.actors = (this.actors ?? []).filter((actor) => !reinforcements.includes(actor));
     // A street event mid-scene is session dressing — strike it on reset.
     this.despawnStreetEvent();
     this.nextStreetEventAt = this.elapsed + 18;
@@ -6314,6 +6366,12 @@ export class HeavensGateEngine {
         });
         actor.aiState = aiStep.state;
         actor.lastDamageAmount = 0;
+        if (actor.shieldMesh) {
+          // Pulse-staggered plate: dips and flares while the brace is open.
+          const shieldDown = (actor.shieldDownUntil ?? 0) > this.elapsed;
+          actor.shieldMesh.position.y = damp(actor.shieldMesh.position.y, shieldDown ? 0.58 : 1.32, 8, delta);
+          (actor.shieldMesh.material as THREE.MeshStandardMaterial).emissiveIntensity = shieldDown ? 1.5 : 0.22;
+        }
         if (aiStep.emittedRadio) {
           frameRadio.push(aiStep.emittedRadio);
           // The squad net audible: a bark when a warden calls in contact.
@@ -6340,9 +6398,9 @@ export class HeavensGateEngine {
           else this.animateActorLod(actor, 0, delta);
           actor.group.rotation.y = Math.atan2(direction.x, direction.z);
           if (actor.cooldown <= 0 && aiStep.perception.targetSeen && distance < (actor.kind === 'boss' ? 42 : 31)) {
-            this.enemyFire(actor, actor.kind === 'boss' ? 18 : 10);
+            this.enemyFire(actor, actor.kind === 'boss' ? 18 : actor.shielded ? 14 : 10);
             const bossCadence = this.bossPhase >= 2 ? 0.48 : 0.72;
-            actor.cooldown = (actor.kind === 'boss' ? bossCadence : 1.2 + seeded(actorIndex + Math.floor(time), 91) * 0.9) * this.ngFireScale();
+            actor.cooldown = (actor.kind === 'boss' ? bossCadence : actor.shielded ? 2.1 : 1.2 + seeded(actorIndex + Math.floor(time), 91) * 0.9) * this.ngFireScale();
             const shockEvery = this.bossPhase >= 2 ? 2 : this.bossPhase === 1 ? 3 : 4;
             if (actor.kind === 'boss' && Math.floor(time) % shockEvery === 0) this.createShockwave(actor.group.position);
           }
@@ -6665,7 +6723,24 @@ export class HeavensGateEngine {
     // combat) hit while the Veil is open takes a stealth multiplier.
     const unaware = actor.aiState && actor.aiState.phase !== 'combat';
     const sneak = this.veilActive && unaware && actor.kind !== 'civilian';
-    const boosted = coilBoosted * (sneak ? 1.7 : 1);
+    let boosted = coilBoosted * (sneak ? 1.7 : 1);
+    // Directional flinch: which side of the actor the hit came from.
+    const toActor = Math.atan2(
+      actor.group.position.x - this.player.position.x,
+      actor.group.position.z - this.player.position.z,
+    );
+    let rel = toActor - actor.group.rotation.y;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    // Bulwark plate: frontal hits deflect — Pulse staggers, flanks, and
+    // sneak angles are the counters, not raw DPS.
+    const shieldUp = actor.shielded === true && (actor.shieldDownUntil ?? 0) < this.elapsed;
+    const frontal = Math.abs(rel) > 2.05;
+    if (shieldUp && frontal && !sneak) {
+      boosted *= critical ? 0.42 : 0.2;
+      this.audio.surfaceImpact(actor.group.position, this.player.position, this.cameraYaw, false, 'metal');
+      if (this.hitDamageTimer <= 0 && boosted < 4) this.emitToast('Deflected', 'Plate armor — flank it, Veil past it, or Pulse it open', 'info');
+    }
     actor.health -= boosted;
     if (this.hitDamageTimer <= 0) {
       this.hitDamagePool = 0;
@@ -6675,14 +6750,6 @@ export class HeavensGateEngine {
     this.hitDamageTimer = 0.85;
     actor.lastDamageAmount = Math.max(actor.lastDamageAmount, boosted);
     actor.damagePulse = Math.max(actor.damagePulse, critical ? 0.75 : 0.48);
-    // Directional flinch: which side of the actor the hit came from.
-    const toActor = Math.atan2(
-      actor.group.position.x - this.player.position.x,
-      actor.group.position.z - this.player.position.z,
-    );
-    let rel = toActor - actor.group.rotation.y;
-    while (rel > Math.PI) rel -= Math.PI * 2;
-    while (rel < -Math.PI) rel += Math.PI * 2;
     actor.hitReactSide = Math.sin(rel);
     actor.hitReact = Math.max(actor.hitReact ?? 0, critical ? 0.5 : 0.3);
     actor.lastHitAngle = toActor;
@@ -6750,6 +6817,8 @@ export class HeavensGateEngine {
       this.emitToast('Stalker silenced', 'Fast patrol neutralized', 'success');
     } else if (actor.id.startsWith('cordon-')) {
       this.emitToast('Seraph patrol down', 'The cordon has a gap', 'success');
+    } else if (actor.shielded) {
+      this.emitToast('Bulwark down', 'The plate finally gave', 'success');
     } else if (actor.id.startsWith('reinforce-')) {
       this.emitToast('Hunter down', 'Reinforcement destroyed', 'success');
     } else if (actor.kind === 'drone') {
@@ -6758,7 +6827,7 @@ export class HeavensGateEngine {
       this.emitSubtitle('Archon', 'If the door opens… you will miss the cage.');
       this.beginCinematic(actor.group.position.clone());
     }
-    const marks = marksForActor(actor.id, actor.kind);
+    const marks = marksForActor(actor.id, actor.kind) + (actor.shielded ? 10 : 0);
     if (marks > 0) {
       this.shards += marks;
       this.emitToast('Marks claimed', `+${marks} · spend in Pause → Attunements`, 'success');
@@ -6956,6 +7025,11 @@ export class HeavensGateEngine {
       const distance = actor.group.position.distanceTo(origin);
       if (distance < 15) {
         this.damageActor(actor, actor.kind === 'boss' ? 32 : 58);
+        // The wave staggers a Bulwark's brace — the plate drops open.
+        if (actor.shielded) {
+          actor.shieldDownUntil = this.elapsed + 4.5;
+          this.emitToast('Bulwark staggered', 'The plate is open — hit it now', 'success');
+        }
         const knock = actor.group.position.clone().sub(origin).setY(0).normalize();
         actor.group.position.addScaledVector(knock, Math.max(1, 7 - distance * 0.3));
       }
