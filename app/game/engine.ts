@@ -603,6 +603,7 @@ export class HeavensGateEngine {
   private bossPhase = 0;
   private bossHalo: THREE.MeshStandardMaterial | null = null;
   private choiceRequested = false;
+  private missionDeadline: number | null = null;
   private gameOverSent = false;
   private elapsed = 0;
   private worldHours = 3.28;
@@ -4512,6 +4513,7 @@ export class HeavensGateEngine {
     this.lastCombat = this.elapsed - 8;
     this.gameOverSent = false;
     this.choiceRequested = false;
+    this.missionDeadline = null;
     // Scene beats restore from the save: a delivered Sena goes back to tending
     // her lamp — no repeat dialogue, and the bell never tolls twice.
     this.narrative = save?.narrative ? { ...save.narrative } : {};
@@ -6838,8 +6840,22 @@ export class HeavensGateEngine {
       this.completeMission();
     } else if (mission.kind === 'vehicle' && this.currentVehicle) {
       this.completeMission();
-    } else if (mission.kind === 'drive' && mission.target && this.currentVehicle) {
-      if (distance2D(playerPosition.x, playerPosition.z, mission.target[0], mission.target[2]) <= (mission.radius ?? 10)) this.completeMission();
+    } else if (mission.kind === 'drive' && mission.target) {
+      // The fiction promises a closing gate — honor it. 110 seconds of real
+      // pressure, then Meridian seals and the run resets to the checkpoint.
+      if (this.missionDeadline === null) {
+        this.missionDeadline = this.elapsed + 110;
+        this.emitSubtitle('Nia', 'Meridian is ninety seconds from lockdown. Go.');
+      }
+      if (this.currentVehicle
+        && distance2D(playerPosition.x, playerPosition.z, mission.target[0], mission.target[2]) <= (mission.radius ?? 10)) {
+        this.completeMission();
+      } else if (this.elapsed >= this.missionDeadline) {
+        this.missionDeadline = null;
+        this.emitToast('Meridian sealed', 'The gate locked before you arrived', 'danger');
+        this.emitSubtitle('Nia', 'Too late. Back to the mouth of the run — faster this time.');
+        this.retryCheckpoint();
+      }
     } else if (mission.kind === 'echoes' && this.echoesActivated.size >= (mission.count ?? 3)) {
       this.completeMission();
     } else if (mission.kind === 'boss') {
@@ -6862,6 +6878,7 @@ export class HeavensGateEngine {
     this.emitToast(`${completed.title} complete`, completed.completionLine, 'success');
     this.emitSubtitle('Nia', completed.completionLine);
     this.missionIndex = Math.min(this.missionIndex + 1, MISSIONS.length - 1);
+    this.missionDeadline = null;
     if (this.missionIndex === 5) this.spawnBoss();
     this.updateObjectiveMarker();
     this.beginCinematic();
@@ -7608,6 +7625,10 @@ export class HeavensGateEngine {
     } else if (mission.kind === 'boss' && this.boss) {
       progress = 1 - this.boss.health / this.boss.maxHealth;
       objectiveText = 'Defeat the False Archon';
+    } else if (mission.kind === 'drive' && this.missionDeadline !== null) {
+      const remaining = Math.max(0, this.missionDeadline - this.elapsed);
+      progress = clamp(remaining / 110, 0, 1);
+      objectiveText = `Meridian lockdown in ${Math.ceil(remaining)}s`;
     } else if (targetDistance !== null && mission.radius) {
       progress = clamp(1 - targetDistance / 140, 0, 0.98);
     }
