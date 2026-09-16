@@ -570,6 +570,14 @@ export class HeavensGateEngine {
   private chapelZone: THREE.Box3 | null = null;
   private chapelVisited = false;
   private chapelInterior = false;
+  private stationZone: THREE.Box3 | null = null;
+  private stationInterior = false;
+  private interiorActive = false;
+  private readonly groundHoles: THREE.Box3[] = [];
+  private undergateLight: THREE.PointLight | null = null;
+  private undergateVeil: THREE.Mesh | null = null;
+  private undergatePos: THREE.Vector3 | null = null;
+  private lastUndergateAt = -99;
   private lastAltarAt = -99;
   private replays = 0;
   private chapelCandles: THREE.PointLight[] = [];
@@ -886,6 +894,7 @@ export class HeavensGateEngine {
       this.createObjectiveMarker();
       this.createChapel();
       this.createMemorial();
+      this.createStation();
       this.createSigils();
       this.createContactShadows();
       await this.nextFrame();
@@ -4287,7 +4296,183 @@ export class HeavensGateEngine {
     });
   }
 
+  // Saint Orison Station — the second enterable interior. A canopied hall
+  // on the plaza's east edge: departure board, ticket gates, benches — and a
+  // stairwell diving under the north wall into the Undergate vestibule, the
+  // buried door the first mission's briefing only implies.
+  private createStation() {
+    const sx = 17;
+    const sz = -54;
+    const station = new THREE.Group();
+    station.position.set(sx, 0, sz);
+
+    const iron = new THREE.MeshStandardMaterial({ color: 0x2b3138, roughness: 0.58, metalness: 0.72 });
+    const tile = new THREE.MeshStandardMaterial({ color: 0x8c8a80, roughness: 0.66, metalness: 0.08 });
+    const tileDark = new THREE.MeshStandardMaterial({ color: 0x54524c, roughness: 0.8, metalness: 0.05 });
+    const amber = new THREE.MeshStandardMaterial({ color: 0x6a4a22, emissive: 0xffb35a, emissiveIntensity: 1.9, roughness: 0.5 });
+    const gateMat = new THREE.MeshStandardMaterial({ color: 0x1d2438, emissive: 0x7a5fd0, emissiveIntensity: 2.6, roughness: 0.3, transparent: true, opacity: 0.92 });
+    const rock = new THREE.MeshStandardMaterial({ color: 0x24211e, roughness: 0.96, metalness: 0.02 });
+
+    const box = (w: number, h: number, d: number, x: number, y: number, z: number, material: THREE.Material) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = this.highTier();
+      mesh.receiveShadow = true;
+      station.add(mesh);
+      return mesh;
+    };
+    // Solid wall colliders live at street level; underground walls get their
+    // own band so the street never blocks the vestibule.
+    const wall = (x: number, z: number, w: number, d: number, y0 = 0, y1 = 4.8) => {
+      this.collisionBoxes.push(new THREE.Box3(
+        new THREE.Vector3(sx + x - w / 2, y0, sz + z - d / 2),
+        new THREE.Vector3(sx + x + w / 2, y1, sz + z + d / 2),
+      ));
+    };
+
+    // Floor slab (raised 14cm — auto-step) with the stairwell void cut out.
+    box(11.7, 0.14, 11.0, -1.65, 0.07, 0, tile);
+    box(1.1, 0.14, 11.0, 6.95, 0.07, 0, tile);
+    box(2.2, 0.14, 8.9, 5.3, 0.07, 1.05, tile);
+    // Threshold aprons at the two entrances.
+    box(1.4, 0.1, 5.6, -8.2, 0.05, 0, tileDark);
+    box(3.4, 0.1, 1.4, 0, 0.05, 6.2, tileDark);
+
+    // West wall — 5.2m entry arch facing the plaza gate.
+    box(0.6, 4.8, 2.9, -7.5, 2.4, -4.05, tileDark);
+    box(0.6, 4.8, 2.9, -7.5, 2.4, 4.05, tileDark);
+    box(0.6, 1.7, 5.2, -7.5, 3.95, 0, tileDark);
+    wall(-7.5, -4.05, 0.6, 2.9);
+    wall(-7.5, 4.05, 0.6, 2.9);
+    // South wall — 3m side arch.
+    box(15.6, 4.8, 0.6, -0.6, 2.4, 5.5, tileDark);
+    box(3.0, 1.7, 0.6, 0, 3.95, 5.5, tileDark);
+    wall(-3.15, 5.5, 6.3, 0.6);
+    wall(3.15, 5.5, 6.3, 0.6);
+    wall(6.9, 5.5, 1.8, 0.6);
+    // North + east walls solid. The north wall's collider is split at the
+    // stairwell: a raised header lets the stair dive beneath it — at street
+    // level it still blocks; deeper than -1.0m the descent passes under.
+    box(12.4, 4.8, 0.6, -2.2, 2.4, -5.5, tileDark);
+    box(0.6, 4.8, 0.6, 6.9, 2.4, -5.5, tileDark);
+    box(2.6, 3.9, 0.6, 5.3, 2.85, -5.5, tileDark);
+    box(0.6, 4.8, 11.0, 7.5, 2.4, 0, tileDark);
+    wall(-2.2, -5.5, 12.4, 0.6);
+    wall(6.9, -5.5, 0.6, 0.6);
+    wall(5.3, -5.5, 2.6, 0.6, 0.9, 4.8);
+    wall(7.5, 0, 0.6, 11.0);
+
+    // Roof with skylight slots — three pale bands of daylight inside.
+    box(16.4, 0.35, 12.0, 0, 4.95, 0, tileDark);
+    [-3.4, 0, 3.4].forEach((gz) => box(0.9, 0.06, 9.6, -7.2, 4.74, gz, new THREE.MeshStandardMaterial({
+      color: 0x9ab4d8, emissive: 0x5a78a8, emissiveIntensity: 1.1, transparent: true, opacity: 0.6, roughness: 0.2,
+    })));
+
+    // Columns, benches, ticket gates.
+    [[-4, -3], [-4, 3], [2.5, -3], [2.5, 3]].forEach(([px, pz]) => {
+      box(0.5, 4.8, 0.5, px, 2.4, pz, iron);
+      wall(px, pz, 0.5, 0.5);
+    });
+    [[-2.5, -1.6], [-2.5, 1.6]].forEach(([px, pz]) => {
+      box(3.0, 0.46, 0.55, px, 0.37, pz, iron);
+      box(3.0, 0.5, 0.16, px, 0.7, pz + 0.3, iron);
+      wall(px, pz, 3.0, 0.62, 0, 0.72);
+    });
+    [-1.6, 0, 1.6].forEach((px) => {
+      box(0.24, 1.0, 0.9, px + 0.6, 0.5, -4.9, iron);
+      wall(px + 0.6, -4.9, 0.24, 0.9, 0, 1.0);
+    });
+
+    // Departure board — one line still flickering for a train that never came.
+    const board = box(3.6, 0.9, 0.14, 6.9, 3.4, 0, iron);
+    board.rotation.y = -Math.PI / 2;
+    const boardFace = box(3.3, 0.62, 0.04, 6.82, 3.4, 0, new THREE.MeshStandardMaterial({
+      color: 0x101418, emissive: 0xd8a94a, emissiveIntensity: 1.35, roughness: 0.4,
+    }));
+    boardFace.rotation.y = -Math.PI / 2;
+
+    // Hanging lamps — emissive heads + two real lights so the hall reads at night.
+    [[-4.5, 0], [2.5, 0]].forEach(([px, pz]) => {
+      box(0.1, 0.9, 0.1, px, 4.4, pz, iron);
+      box(0.5, 0.16, 0.5, px, 3.92, pz, amber);
+      const lamp = new THREE.PointLight(0xffb35a, 5.5, 11, 1.7);
+      lamp.position.set(px, 3.7, pz);
+      station.add(lamp);
+    });
+
+    // Stairwell — nine steps dive under the north wall into the vestibule.
+    const steps = 9;
+    for (let i = 0; i < steps; i++) {
+      const top = -0.14 - i * 0.36;
+      const zc = -3.65 - i * 0.44;
+      box(2.2, 0.5, 0.46, 5.3, top - 0.25, zc, tileDark);
+      this.collisionBoxes.push(new THREE.Box3(
+        new THREE.Vector3(sx + 4.2, -4.4, sz + zc - 0.23),
+        new THREE.Vector3(sx + 6.4, top, sz + zc + 0.23),
+      ));
+    }
+    // Stair cheek walls keep the descent honest — visible as iron rails.
+    wall(4.05, -5.5, 0.3, 4.6, -3.8, 1.4);
+    wall(6.55, -5.5, 0.3, 4.6, -3.8, 1.4);
+    box(0.12, 1.1, 4.6, 4.05, 0.7, -5.5, iron);
+    box(0.12, 1.1, 4.6, 6.55, 0.7, -5.5, iron);
+    // The shaft removes the implicit street floor so steps actually catch.
+    this.groundHoles.push(new THREE.Box3(
+      new THREE.Vector3(sx + 4.0, -10, sz - 5.7),
+      new THREE.Vector3(sx + 6.6, 10, sz - 3.2),
+    ));
+
+    // The vestibule — rough-cut stone, one low ceiling, the Undergate at its head.
+    // Floor sits 0.4 below the last step — inside the 0.45 climb tolerance so
+    // the player can walk back out.
+    const UY = -3.42;
+    box(5.6, 0.25, 5.6, 5.0, UY - 0.125, -8.9, rock);              // floor
+    this.collisionBoxes.push(new THREE.Box3(
+      new THREE.Vector3(sx + 2.2, UY - 0.3, sz - 11.7),
+      new THREE.Vector3(sx + 7.8, UY, sz - 6.1),
+    ));
+    box(5.6, 0.5, 5.6, 5.0, -0.5, -8.9, rock);                     // ceiling
+    box(0.5, 3.4, 5.6, 2.45, UY + 1.7, -8.9, rock);                // west
+    box(0.5, 3.4, 5.6, 7.55, UY + 1.7, -8.9, rock);                // east
+    box(5.6, 3.4, 0.5, 5.0, UY + 1.7, -11.65, rock);               // north
+    // South wall flanks the stair arrival (gap x 4.2→6.4).
+    box(2.2, 3.4, 0.5, 3.1, UY + 1.7, -6.15, rock);
+    box(1.4, 3.4, 0.5, 7.1, UY + 1.7, -6.15, rock);
+    wall(2.45, -8.9, 0.5, 5.6, -4.2, -0.3);
+    wall(7.55, -8.9, 0.5, 5.6, -4.2, -0.3);
+    wall(5.0, -11.65, 5.6, 0.5, -4.2, -0.3);
+    wall(3.1, -6.15, 2.2, 0.5, -4.2, -0.3);
+    wall(7.1, -6.15, 1.4, 0.5, -4.2, -0.3);
+
+    // The Undergate itself — a sealed arch of lit stone.
+    box(0.4, 2.9, 0.6, 3.6, UY + 1.45, -11.3, rock);
+    box(0.4, 2.9, 0.6, 6.4, UY + 1.45, -11.3, rock);
+    box(3.2, 0.5, 0.6, 5.0, UY + 3.1, -11.3, rock);
+    const undergateVeil = box(2.4, 2.65, 0.12, 5.0, UY + 1.42, -11.3, gateMat);
+    undergateVeil.name = 'undergate-veil';
+    const undergateLight = new THREE.PointLight(0x8a6fe0, 6.5, 9, 1.7);
+    undergateLight.position.set(5.0, UY + 1.6, -10.4);
+    station.add(undergateLight);
+    this.undergateLight = undergateLight;
+    this.undergateVeil = undergateVeil;
+    this.undergatePos = new THREE.Vector3(sx + 5.0, UY + 1.4, sz - 11.3);
+
+    this.scene.add(station);
+    this.stationZone = new THREE.Box3(
+      new THREE.Vector3(sx - 7.5, -4.5, sz - 11.9),
+      new THREE.Vector3(sx + 7.5, 5.2, sz + 5.5),
+    );
+  }
+
   private updateChapel() {
+    // The Undergate breathes — a slow violet pulse under the station.
+    if (this.undergateLight) {
+      this.undergateLight.intensity = 6.5 + Math.sin(this.elapsed * 1.9) * 1.8;
+      const veil = this.undergateVeil;
+      if (veil && veil.material instanceof THREE.MeshStandardMaterial) {
+        veil.material.emissiveIntensity = 2.4 + Math.sin(this.elapsed * 1.9 + 0.7) * 0.7;
+      }
+    }
     // Candle flames breathe even before the player finds the chapel.
     this.chapelCandles?.forEach((flame, index) => {
       flame.intensity = 4.2 + Math.sin(this.elapsed * 7.3 + index * 2.1) * 0.7 + Math.sin(this.elapsed * 13.7 + index * 4.3) * 0.4;
@@ -4295,13 +4480,17 @@ export class HeavensGateEngine {
     if (!this.chapelZone || !this.player) return;
     const position = this.currentVehicle?.group.position ?? this.player.position;
     const inside = this.chapelZone.containsPoint(position);
-    if (inside !== this.chapelInterior) {
-      this.chapelInterior = inside;
-      this.audio.setInterior?.(inside ? 1 : 0);
+    const inStation = this.stationZone?.containsPoint(position) ?? false;
+    this.stationInterior = inStation;
+    const insideAny = inside || inStation;
+    if (inside !== this.chapelInterior) this.chapelInterior = inside;
+    if (insideAny !== this.interiorActive) {
+      this.interiorActive = insideAny;
+      this.audio.setInterior?.(insideAny ? 1 : 0);
       // Interior IBL: the abandoned-church HDRI reads as candlelit stone.
       if (this.streetEnvTexture && this.chapelEnvTexture) {
-        this.scene.environment = inside ? this.chapelEnvTexture : this.streetEnvTexture;
-        this.scene.environmentIntensity = inside ? 0.85 : 0.6;
+        this.scene.environment = insideAny ? this.chapelEnvTexture : this.streetEnvTexture;
+        this.scene.environmentIntensity = insideAny ? 0.85 : 0.6;
       }
     }
     if (inside && this.narrative?.relicSeen !== true) {
@@ -5179,7 +5368,7 @@ export class HeavensGateEngine {
         this.grounded = this.vaultTo.y > 0.2;
         this.playerVelocity.y = this.grounded ? 0 : -1.5;
         this.hurtKick = (this.hurtKick ?? 0) + 0.06;
-        this.audio.footstep(true, this.chapelInterior ? 'stone' : 'street');
+        this.audio.footstep(true, (this.chapelInterior || this.stationInterior) ? 'stone' : 'street');
       }
     } else {
       if (jumpPressed && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0) {
@@ -5200,7 +5389,7 @@ export class HeavensGateEngine {
           const impact = clamp(-this.playerVelocity.y, 0, 24);
           this.landDip = Math.max(this.landDip, impact * 0.011);
           if (impact > 7) {
-            this.audio.footstep(true, this.chapelInterior ? 'stone' : 'street');
+            this.audio.footstep(true, (this.chapelInterior || this.stationInterior) ? 'stone' : 'street');
             this.pulseGamepad(50, clamp(impact * 0.02, 0.1, 0.4), clamp(impact * 0.014, 0.08, 0.3));
           }
           // Hard drops tuck into a recovery roll instead of a flat stomp.
@@ -5294,7 +5483,7 @@ export class HeavensGateEngine {
     });
     this.footstepTimer -= delta;
     if (movement > 1.4 && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0 && this.footstepTimer <= 0) {
-      this.audio.footstep(sprinting, this.veilActive ? 'veil' : this.chapelInterior ? 'stone' : 'street');
+      this.audio.footstep(sprinting, this.veilActive ? 'veil' : (this.chapelInterior || this.stationInterior) ? 'stone' : 'street');
       this.footstepTimer = sprinting ? 0.29 : 0.44;
     }
   }
@@ -5501,15 +5690,24 @@ export class HeavensGateEngine {
 
   // The ground plane under a point: the highest collider top the mover
   // could realistically be standing on (within step reach of currentY).
+  // Stair shafts/undercroft mouths remove the implicit street floor — the
+  // mover falls through them onto the steps below.
+  private inGroundHole(x: number, z: number) {
+    return this.groundHoles.some((b) => x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z);
+  }
+
   private groundHeightAt(x: number, z: number, currentY: number) {
-    let ground = 0;
+    // Below grade (undercroft/vestibule) or inside a registered shaft the
+    // street plane doesn't apply — seed from negative space so sunken
+    // floors can ground the mover.
+    let ground = (currentY < -0.4 || this.inGroundHole(x, z)) ? -Infinity : 0;
     for (const box of this.collisionBoxes) {
       if (x > box.min.x && x < box.max.x && z > box.min.z && z < box.max.z
         && box.max.y <= currentY + 0.45 && box.max.y > ground && box.max.y < 2.2) {
         ground = box.max.y;
       }
     }
-    return ground;
+    return ground === -Infinity ? currentY : ground;
   }
 
   private hasLineOfSight(from: THREE.Vector3, to: THREE.Vector3) {
@@ -6784,6 +6982,26 @@ export class HeavensGateEngine {
       this.enterVehicle(nearbyVehicle);
       return;
     }
+    // The Undergate beneath Saint Orison — a sealed door that answers touch
+    // with resonance. First contact is a beat; after that it hums.
+    if (this.undergatePos && this.elapsed - this.lastUndergateAt > 12) {
+      const gateDistance = this.player.position.distanceTo(this.undergatePos);
+      if (gateDistance < 2.6) {
+        this.lastUndergateAt = this.elapsed;
+        this.resonance = Math.min(100, this.resonance + 40);
+        const narrative = (this.narrative ??= {});
+        const first = narrative.undergateTouched !== true;
+        narrative.undergateTouched = true;
+        this.audio.whisperBlip?.();
+        this.audio.gate();
+        this.emitSubtitle('The Undergate', first
+          ? 'The door beneath the station is older than the door above. It does not open. It listens.'
+          : 'The Undergate hums the note it was named for.');
+        this.emitToast(first ? 'The door below' : 'Resonance drawn', '+40 resonance', 'success');
+        this.saveCheckpoint();
+        return;
+      }
+    }
     // The chapel altar is a resonance shrine — a quiet moment that refills
     // the meter and flares the candles.
     if (this.elapsed - this.lastAltarAt > 12) {
@@ -7026,6 +7244,10 @@ export class HeavensGateEngine {
       if (!prompt && this.quietSeraphInRange()) prompt = { action: interact, label: 'Approach the Seraph' };
       const vehicle = prompt ? undefined : this.vehicles.find((candidate) => candidate.group.position.distanceTo(this.player.position) < 4.8);
       if (vehicle) prompt = { action: interact, label: `Enter ${vehicle.spec.name}` };
+      if (!prompt && this.undergatePos && this.elapsed - this.lastUndergateAt > 12
+        && this.player.position.distanceTo(this.undergatePos) < 2.6) {
+        prompt = { action: interact, label: 'Touch the Undergate' };
+      }
       if (!prompt && this.elapsed - this.lastAltarAt > 12) {
         const altarDistance = this.altarDistance();
         if (altarDistance !== null && altarDistance < 2.8) {

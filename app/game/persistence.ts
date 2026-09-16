@@ -75,6 +75,7 @@ function normalizeNarrative(value: Record<string, unknown>): SaveState['narrativ
   if (typeof value.seraphHeard === 'boolean') narrative.seraphHeard = value.seraphHeard;
   if (typeof value.chapelWitnessed === 'boolean') narrative.chapelWitnessed = value.chapelWitnessed;
   if (typeof value.relicSeen === 'boolean') narrative.relicSeen = value.relicSeen;
+  if (typeof value.undergateTouched === 'boolean') narrative.undergateTouched = value.undergateTouched;
   return Object.keys(narrative).length ? narrative : undefined;
 }
 
