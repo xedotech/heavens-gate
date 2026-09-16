@@ -614,7 +614,7 @@ export default function GameShell() {
       )}
 
       {screen === 'playing' && (
-        <section className={`hud${hud.cinematic ? ' hud-cinematic' : ''}`} aria-label="Game HUD">
+        <section className={`hud${hud.cinematic || hud.photoMode ? ' hud-cinematic' : ''}`} aria-label="Game HUD">
           <div className="mission-panel">
             <p className="eyebrow">Active operation</p>
             <div className="mission-title-line"><h2>{hud.objectiveTitle}</h2>{hud.objectiveDistance !== null && <span>{formatDistance(hud.objectiveDistance)}</span>}</div>

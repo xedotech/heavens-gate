@@ -150,6 +150,7 @@ export interface HUDState {
   damageDirection: number | null;
   bossHealth: number | null;
   cinematic: boolean;
+  photoMode: boolean;
   stats: {
     kills: number;
     shots: number;
@@ -321,6 +322,7 @@ export const INITIAL_HUD: HUDState = {
   damageDirection: null,
   bossHealth: null,
   cinematic: false,
+  photoMode: false,
   stats: { kills: 0, shots: 0, hits: 0, distanceDriven: 0, sigils: 0, sigilsTotal: 8 },
 };
 

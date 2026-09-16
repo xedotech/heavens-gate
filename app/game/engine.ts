@@ -411,6 +411,8 @@ export class HeavensGateEngine {
   private cameraPitch = 0.18;
   private photoMode = false;
   private photoFilterIndex = 0;
+  private photoCamPos = new THREE.Vector3();
+  private photoFov = 55;
   private bonnetCam = false;
   private readonly inspectionCenter = new THREE.Vector3(0, 2.05, 0);
   private inspectionHeight = 3.7;
@@ -740,7 +742,9 @@ export class HeavensGateEngine {
     if (this.pointerFallback && event.target !== this.canvas) return;
     const sensitivity = this.settings.sensitivity * 0.0022;
     this.cameraYaw -= event.movementX * sensitivity;
-    this.cameraPitch = clamp(this.cameraPitch - event.movementY * sensitivity, -0.24, 0.74);
+    this.cameraPitch = this.photoMode
+      ? clamp(this.cameraPitch - event.movementY * sensitivity, -1.45, 1.45)
+      : clamp(this.cameraPitch - event.movementY * sensitivity, -0.24, 0.74);
   };
 
   private readonly onPointerDown = (event: PointerEvent) => {
@@ -786,7 +790,13 @@ export class HeavensGateEngine {
   };
 
   private readonly onWheel = (event: WheelEvent) => {
-    if (this.mode !== 'playing' || this.paused || this.contextLost || (!this.pointerLocked && !this.pointerFallback) || event.deltaY === 0) return;
+    if (this.mode !== 'playing' || this.paused || this.contextLost || event.deltaY === 0) return;
+    if (this.photoMode) {
+      // The wheel is the lens — narrowing FOV is the zoom.
+      this.photoFov = clamp(this.photoFov + (event.deltaY > 0 ? 4 : -4), 18, 95);
+      return;
+    }
+    if (!this.pointerLocked && !this.pointerFallback) return;
     this.cycleWeapon(event.deltaY > 0 ? 1 : -1);
   };
 
@@ -5075,11 +5085,22 @@ export class HeavensGateEngine {
 
   private updateGame(delta: number, time: number) {
     this.elapsed += delta;
-    this.worldHours += delta * 0.013;
     this.pollGamepad(delta);
     if (this.paused) return;
     this.processActions();
     if (this.paused) return;
+    if (this.photoMode) {
+      // Photo mode freezes the world — AI, traffic, missions, clocks — but
+      // keeps the camera alive. Ambient dressing (rain, litter, clouds)
+      // runs in updateAmbientAnimation outside this gate, so a frozen
+      // street still weathers.
+      this.updatePhotoCamera(delta);
+      this.updateHUD(delta);
+      this.input.finishFrame();
+      this.touchPressed.clear();
+      return;
+    }
+    this.worldHours += delta * 0.013;
     if (this.cinematic && (
       this.settings.reducedMotion
       || this.isActionHeld('moveForward') || this.isActionHeld('moveBackward')
@@ -5162,19 +5183,35 @@ export class HeavensGateEngine {
       );
     } else if (this.wasActionPressed('inspect')) {
       this.photoMode = !this.photoMode;
-      if (this.photoMode && document.pointerLockElement) void document.exitPointerLock();
+      if (this.photoMode) {
+        // Seed the free cam where the chase cam is — the world freezes,
+        // the camera doesn't. Re-lock the pointer so mouse-look flies it.
+        this.photoCamPos.copy(this.camera.position);
+        this.photoFov = this.camera.fov;
+        if (!this.pointerLocked && !this.pointerFallback) {
+          const lockRequest = this.canvas?.requestPointerLock?.();
+          if (lockRequest) void lockRequest.catch(() => this.enablePointerFallback());
+        }
+      }
       if (!this.photoMode && this.renderer?.domElement) this.renderer.domElement.style.filter = '';
       this.emitToast(
-        this.photoMode ? 'Character inspection active' : 'Character inspection closed',
-        this.photoMode ? `The camera will orbit Aurel. ${this.bindingLabel('weaponSwap')} cycles color grades. Press ${this.bindingLabel('inspect')} / View again to return.` : 'Third-person camera restored.',
+        this.photoMode ? 'Photo mode' : 'Photo mode closed',
+        this.photoMode
+          ? `World frozen. Move to fly, ${this.bindingLabel('jump')}/${this.bindingLabel('crouch')} for height, sprint is fast. Wheel zooms, ${this.bindingLabel('weaponSwap')} grades. ${this.bindingLabel('inspect')} returns.`
+          : 'Third-person camera restored.',
         'success',
       );
     }
-    if (this.photoMode && this.wasActionPressed('weaponSwap')) {
-      this.photoFilterIndex = ((this.photoFilterIndex ?? 0) + 1) % HeavensGateEngine.PHOTO_FILTERS.length;
-      const grade = HeavensGateEngine.PHOTO_FILTERS[this.photoFilterIndex];
-      if (this.renderer?.domElement) this.renderer.domElement.style.filter = grade.css;
-      this.emitToast(`Photo grade: ${grade.name}`, grade.hint, 'info');
+    if (this.photoMode) {
+      if (this.wasActionPressed('weaponSwap')) {
+        this.photoFilterIndex = ((this.photoFilterIndex ?? 0) + 1) % HeavensGateEngine.PHOTO_FILTERS.length;
+        const grade = HeavensGateEngine.PHOTO_FILTERS[this.photoFilterIndex];
+        if (this.renderer?.domElement) this.renderer.domElement.style.filter = grade.css;
+        this.emitToast(`Photo grade: ${grade.name}`, grade.hint, 'info');
+      }
+      // The frozen world ignores every other action — no reloads, pulses,
+      // or interactions while you're composing the shot.
+      return;
     }
     if (this.wasActionPressed('reload')) this.startReload();
     // While Sena's prompt is up, E/Q answer her instead of interacting/veiling.
@@ -5242,7 +5279,9 @@ export class HeavensGateEngine {
     }
     const look = gamepadLookDelta(this.gamepadAxes, this.settings.sensitivity, delta);
     this.cameraYaw += look.yaw;
-    this.cameraPitch = clamp(this.cameraPitch + look.pitch, -0.24, 0.74);
+    this.cameraPitch = this.photoMode
+      ? clamp(this.cameraPitch + look.pitch, -1.45, 1.45)
+      : clamp(this.cameraPitch + look.pitch, -0.24, 0.74);
     // Aim assist (gamepad only): while holding LT, ease the reticle toward
     // the nearest hostile inside a narrow cone — magnetism, not snapping.
     if (this.settings.aimAssist && this.gamepadAxes.aim > 0.2 && this.actors?.length) {
@@ -5290,7 +5329,9 @@ export class HeavensGateEngine {
     if (this.mode !== 'playing' || this.paused) return;
     const sensitivity = this.settings.sensitivity * 0.0062;
     this.cameraYaw -= deltaX * sensitivity;
-    this.cameraPitch = clamp(this.cameraPitch - deltaY * sensitivity, -0.24, 0.74);
+    this.cameraPitch = this.photoMode
+      ? clamp(this.cameraPitch - deltaY * sensitivity, -1.45, 1.45)
+      : clamp(this.cameraPitch - deltaY * sensitivity, -0.24, 0.74);
   }
 
   setTouchFire(active: boolean) {
@@ -5841,6 +5882,50 @@ export class HeavensGateEngine {
     };
   }
 
+  // Photo mode free cam: the world is frozen upstream in updateGame, so
+  // this owns the camera outright. Move keys fly along the view direction
+  // (pitch included — it's a fly cam, not a walk), jump/crouch ride the
+  // vertical, sprint is the boost, and the wheel narrows the lens.
+  private updatePhotoCamera(delta: number) {
+    const yaw = this.cameraYaw;
+    const pitch = this.cameraPitch;
+    const cosPitch = Math.cos(pitch);
+    const forward = (this.camForward ??= new THREE.Vector3()).set(
+      -Math.sin(yaw) * cosPitch, -Math.sin(pitch), -Math.cos(yaw) * cosPitch,
+    );
+    const right = (this.camRight ??= new THREE.Vector3()).set(Math.cos(yaw), 0, -Math.sin(yaw));
+    let ix = 0;
+    let iz = 0;
+    if (this.isActionHeld('moveForward')) iz += 1;
+    if (this.isActionHeld('moveBackward')) iz -= 1;
+    if (this.isActionHeld('moveRight')) ix += 1;
+    if (this.isActionHeld('moveLeft')) ix -= 1;
+    ix += (this.gamepadAxes?.moveX ?? 0) + (this.touchMove?.x ?? 0);
+    iz -= (this.gamepadAxes?.moveY ?? 0) + (this.touchMove?.y ?? 0);
+    let iy = 0;
+    if (this.isActionHeld('jump')) iy += 1;
+    if (this.isActionHeld('crouch')) iy -= 1;
+    const boost = this.isActionHeld('sprint') ? 3.4 : 1;
+    const speed = 11 * boost;
+    this.photoCamPos.addScaledVector(forward, iz * speed * delta);
+    this.photoCamPos.addScaledVector(right, ix * speed * delta);
+    this.photoCamPos.y += iy * speed * delta;
+    const bound = WORLD_SIZE / 2 - 2;
+    this.photoCamPos.x = clamp(this.photoCamPos.x, -bound, bound);
+    this.photoCamPos.z = clamp(this.photoCamPos.z, -bound, bound);
+    this.photoCamPos.y = clamp(this.photoCamPos.y, -2.5, 70);
+    this.camera.position.copy(this.photoCamPos);
+    const look = (this.camLook ??= new THREE.Vector3()).copy(this.photoCamPos).addScaledVector(forward, 12);
+    this.camera.lookAt(look);
+    this.camera.fov = damp(this.camera.fov, this.photoFov, 8, delta);
+    this.camera.updateProjectionMatrix();
+    if (this.inspectionKey) {
+      this.inspectionKey.position.copy(this.photoCamPos).addScaledVector(forward, 2.2);
+      this.inspectionKey.position.y += 0.6;
+      this.inspectionKey.intensity = damp(this.inspectionKey.intensity, 26, 6, delta);
+    }
+  }
+
   private updateCamera(delta: number) {
     if (this.cinematic) {
       const t = clamp((this.renderTime - this.cinematic.start) / this.cinematic.duration, 0, 1);
@@ -5871,25 +5956,7 @@ export class HeavensGateEngine {
     const targetPosition = this.currentVehicle ? this.currentVehicle.group.position : this.player.position;
     const speed = this.currentVehicle ? Math.abs(this.currentVehicle.speed) : Math.hypot(this.playerVelocity.x, this.playerVelocity.z);
     const stanceOffset = !this.currentVehicle && (this.crouching || this.slideRemaining > 0) ? -0.42 : 0;
-    if (this.photoMode && !this.currentVehicle) {
-      const angle = this.elapsed * 0.22;
-      const focus = targetPosition.clone().add(this.inspectionCenter).add(new THREE.Vector3(0, stanceOffset, 0));
-      const inspectionFov = 48;
-      const distanceToFit = (this.inspectionHeight * 1.08) / (2 * Math.tan(THREE.MathUtils.degToRad(inspectionFov * 0.5)));
-      const distance = Math.max(4.8, distanceToFit);
-      const desiredCamera = focus.clone().add(new THREE.Vector3(Math.sin(angle) * distance, 0.42, Math.cos(angle) * distance));
-      this.camera.position.lerp(desiredCamera, 1 - Math.exp(-7 * delta));
-      this.constrainCamera(focus);
-      this.camera.lookAt(focus);
-      this.camera.fov = damp(this.camera.fov, inspectionFov, 4.5, delta);
-      this.camera.updateProjectionMatrix();
-      if (this.inspectionKey) {
-        const desiredLight = this.camera.position.clone().lerp(focus, 0.16).add(new THREE.Vector3(0, 0.48, 0));
-        this.inspectionKey.position.lerp(desiredLight, 1 - Math.exp(-10 * delta));
-        this.inspectionKey.intensity = damp(this.inspectionKey.intensity, 48, 7, delta);
-      }
-      return;
-    }
+    if (this.photoMode) return;
     // Death cam: a slow rising orbit around the body before the game-over
     // screen takes over.
     if (this.deathCamTimer > 0) {
@@ -6434,7 +6501,7 @@ export class HeavensGateEngine {
   }
 
   private tryShoot() {
-    if (this.shotCooldown > 0 || this.paused) return;
+    if (this.shotCooldown > 0 || this.paused || this.photoMode) return;
     // Reload cancel: pulling the trigger mid-reload with rounds left drops
     // the reload and fires — standard shooter behavior.
     if (this.reloading > 0) {
@@ -8252,6 +8319,7 @@ export class HeavensGateEngine {
       damageDirection: this.damageDirection,
       bossHealth: this.boss?.alive ? clamp(this.boss.health / this.boss.maxHealth, 0, 1) : null,
       cinematic: Boolean(this.cinematic),
+      photoMode: this.photoMode,
     };
     this.callbacks.onHUD(hud, this.createMapSnapshot());
   }
