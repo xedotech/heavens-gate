@@ -83,7 +83,13 @@ function readStick(x: number | undefined, y: number | undefined) {
 
 export function gamepadLookDelta(axes: Pick<GamepadAxes, 'lookX' | 'lookY'>, sensitivity: number, deltaSeconds: number) {
   const speed = finiteClamped(sensitivity, 0, 10) * 2.1 * finiteClamped(deltaSeconds, 0, 0.05);
-  return { yaw: -finiteClamped(axes.lookX, -1, 1) * speed, pitch: -finiteClamped(axes.lookY, -1, 1) * speed };
+  // Response curve: soft around center for fine aim, fast at the rim for
+  // turnarounds — linear sticks read twitchy at every deflection.
+  const curve = (v: number) => {
+    const c = finiteClamped(v, -1, 1);
+    return c * (0.3 + 0.7 * c * c);
+  };
+  return { yaw: -curve(axes.lookX) * speed, pitch: -curve(axes.lookY) * speed };
 }
 
 /* ------------------------------------------------------------------------ */

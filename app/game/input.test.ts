@@ -212,7 +212,9 @@ describe('standard gamepad input', () => {
         pitch += change.pitch;
       }
       expect(yaw).toBeCloseTo(-0.65 * 2.1);
-      expect(pitch).toBeCloseTo(-0.65 * 2.1 * 0.5);
+      // Half-deflection passes through the soft-center response curve:
+      // 0.5 * (0.3 + 0.7 * 0.25) = 0.2375, not a linear 0.5.
+      expect(pitch).toBeCloseTo(-0.65 * 2.1 * 0.2375);
     }
   });
 });
