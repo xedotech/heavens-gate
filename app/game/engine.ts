@@ -440,6 +440,8 @@ export class HeavensGateEngine {
   private radioSignals: SquadRadioSignal[] = [];
   private vehicles: Vehicle[] = [];
   private currentVehicle: Vehicle | null = null;
+  private vehicleEnter: { timer: number; total: number; vehicle: Vehicle; from: THREE.Vector3; to: THREE.Vector3 } | null = null;
+  private tmpUpAxis: THREE.Vector3 | null = null;
   private echoes: MemoryEcho[] = [];
   private gates: GateObject[] = [];
   private phaseMaterials: THREE.MeshStandardMaterial[] = [];
@@ -4936,6 +4938,7 @@ export class HeavensGateEngine {
     this.veilCooldown = 0;
     this.pulseCooldown = 0;
     this.currentVehicle = null;
+    this.vehicleEnter = null;
     this.player.visible = true;
     this.playerVelocity.set(0, 0, 0);
     const spawn = MISSION_SPAWNS[this.missionIndex] ?? MISSION_SPAWNS[0];
@@ -5347,6 +5350,8 @@ export class HeavensGateEngine {
       // or interactions while you're composing the shot.
       return;
     }
+    // Mid door-walk: half a second of scripted root motion owns the body.
+    if (this.vehicleEnter) return;
     if (this.wasActionPressed('reload')) this.startReload();
     // While Sena's prompt is up, E/Q answer her instead of interacting/veiling.
     const senaAnswering = this.senaChoiceOpen === true;
@@ -5573,6 +5578,8 @@ export class HeavensGateEngine {
     this.playerSprinting = sprinting;
     this.stamina = updateStamina(this.stamina, delta, sprinting);
     const desired = desiredDirection.multiplyScalar(movementSpeed({ aiming, crouching: this.crouching, sprinting }) * Math.min(1, inputLength));
+    // During the door-walk blend input is ignored — the script owns the body.
+    if (this.vehicleEnter) desired.set(0, 0, 0);
     if (this.coverFace) {
       // Strip the into-wall/out-of-wall component so cover movement is pure
       // tangent slide; leaving is just walking away while crouched.
@@ -5608,6 +5615,26 @@ export class HeavensGateEngine {
         this.playerVelocity.y = this.grounded ? 0 : -1.5;
         this.hurtKick = (this.hurtKick ?? 0) + 0.06;
         this.audio.footstep(true, (this.chapelInterior || this.stationInterior) ? 'stone' : 'street');
+      }
+    } else if (this.vehicleEnter) {
+      // Door-walk blend: ease toward the door point while the gait machine
+      // sees a door-ward velocity, so the walk clip and footsteps play. On
+      // arrival the seat logic runs.
+      const enter = this.vehicleEnter;
+      enter.timer = Math.max(0, enter.timer - delta);
+      const t = 1 - enter.timer / enter.total;
+      const ease = 1 - Math.pow(1 - t, 3);
+      this.player.position.lerpVectors(enter.from, enter.to, ease);
+      this.player.position.y = this.groundHeightAt(this.player.position.x, this.player.position.z, enter.from.y + 1) ?? enter.from.y;
+      this.playerVelocity.set(enter.to.x - enter.from.x, 0, enter.to.z - enter.from.z).normalize().multiplyScalar(3.1);
+      this.playerHeading = Math.atan2(this.playerVelocity.x, this.playerVelocity.z);
+      if (enter.timer <= 0) {
+        this.vehicleEnter = null;
+        this.playerVelocity.set(0, 0, 0);
+        if (this.health > 0 && !enter.vehicle.wrecked) {
+          this.audio.surfaceImpact(enter.to, this.player.position, this.cameraYaw, false, 'metal');
+          this.seatVehicle(enter.vehicle);
+        }
       }
     } else {
       if (jumpPressed && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0) {
@@ -7327,6 +7354,18 @@ export class HeavensGateEngine {
   }
 
   private enterVehicle(vehicle: Vehicle) {
+    // Walk to the nearest door — a scripted root-motion blend instead of the
+    // teleport-pop. seatVehicle() runs the actual link when the walk lands.
+    const upAxis = (this.tmpUpAxis ??= new THREE.Vector3(0, 1, 0));
+    const doors = [-2.15, 2.15]
+      .map((x) => new THREE.Vector3(x, 0, 0.35).applyAxisAngle(upAxis, vehicle.heading).add(vehicle.group.position))
+      .sort((a, b) => a.distanceToSquared(this.player.position) - b.distanceToSquared(this.player.position));
+    this.vehicleEnter = { timer: 0.5, total: 0.5, vehicle, from: this.player.position.clone(), to: doors[0] };
+    // Cloth-and-click reads as the handle pull; the door thunk lands on seat.
+    this.audio.swap();
+  }
+
+  private seatVehicle(vehicle: Vehicle) {
     this.currentVehicle = vehicle;
     this.aimToggled = false;
     vehicle.occupied = true;
