@@ -838,6 +838,9 @@ export default function GameShell() {
       {screen === 'gameover' && (
         <section className="modal-screen gameover-screen" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
           <Skull aria-hidden="true" /><p className="eyebrow">Signal lost</p><h1 id="gameover-title">Aurel is remembered.</h1><p>Slain by {lastKiller}. The city keeps the last checkpoint. Death is only a route with worse lighting.</p>
+          {hud.stats.shots > 0 && (
+            <p className="gameover-stats">{hud.stats.kills} kills · {Math.round((hud.stats.hits / hud.stats.shots) * 100)}% accuracy · {hud.stats.sigils}/{hud.stats.sigilsTotal} sigils</p>
+          )}
           <div><button className="primary-action" type="button" onClick={() => { engineRef.current?.retryCheckpoint(); setScreen('playing'); void engineRef.current?.resume(); }}><RotateCcw aria-hidden="true" /> Retry checkpoint</button><button className="secondary-button" type="button" onClick={() => { engineRef.current?.returnToTitle(); setScreen('title'); }}>Return to title</button></div>
         </section>
       )}

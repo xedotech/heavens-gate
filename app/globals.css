@@ -2070,6 +2070,14 @@ kbd {
   stroke-width: 1.2;
 }
 
+.gameover-stats {
+  margin: -14px auto 30px;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .modal-screen h1 {
   margin: 0;
   font-size: clamp(48px, 7vw, 98px);
