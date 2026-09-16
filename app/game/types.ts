@@ -121,6 +121,7 @@ export interface HUDState {
   weapon: string;
   resonance: number;
   shards: number;
+  killStreak: number;
   upgrades: string[];
   heat: number;
   heatTier: number;
@@ -293,6 +294,7 @@ export const INITIAL_HUD: HUDState = {
   weapon: 'Morrow / 9mm smart',
   resonance: 100,
   shards: 0,
+  killStreak: 0,
   upgrades: [],
   heat: 0,
   heatTier: 0,

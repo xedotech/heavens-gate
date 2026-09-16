@@ -482,6 +482,8 @@ export class HeavensGateEngine {
   private lightningFlash = 0;
   private reinforcementTimer = 0;
   private reinforcementSeq = 0;
+  private killStreak = 0;
+  private killStreakUntil = 0;
   private arrivalFlashes?: Array<{ group: THREE.Group; beamMat: THREE.MeshBasicMaterial; ringMat: THREE.MeshBasicMaterial; life: number }>;
   private playerSprinting = false;
   private pointerFallback = false;
@@ -5087,6 +5089,8 @@ export class HeavensGateEngine {
     this.slideRemaining = 0;
     this.dodgeRemaining = 0;
     this.dodgeCooldown = 0;
+    this.killStreak = 0;
+    this.killStreakUntil = 0;
     this.heat = 0;
     this.reinforcementTimer = 0;
     this.missionIndex = clamp(save?.missionIndex ?? 0, 0, MISSIONS.length - 1);
@@ -7150,9 +7154,20 @@ export class HeavensGateEngine {
       this.beginCinematic(actor.group.position.clone());
     }
     const marks = marksForActor(actor.id, actor.kind) + (actor.shielded ? 10 : 0);
+    // Kill streak: hostiles downed within 7s of the last kill chain a payout
+    // multiplier — up to 2.25× at a six-streak. Civilians break the chain.
+    if (actor.kind === 'civilian') {
+      this.killStreak = 0;
+    } else {
+      this.killStreak = this.elapsed < this.killStreakUntil ? this.killStreak + 1 : 1;
+      this.killStreakUntil = this.elapsed + 7;
+    }
+    const streakMult = 1 + Math.min(this.killStreak - 1, 5) * 0.25;
     if (marks > 0) {
-      this.shards += marks;
-      this.emitToast('Marks claimed', `+${marks} · spend in Pause → Attunements`, 'success');
+      const payout = Math.round(marks * streakMult);
+      this.shards += payout;
+      const streakNote = this.killStreak >= 2 ? ` · streak ×${this.killStreak}` : '';
+      this.emitToast('Marks claimed', `+${payout}${streakNote} · spend in Pause → Attunements`, 'success');
     }
     // Sneak-kill flourish: a whisper and a doubled mark bounty when the
     // target never reached combat while the Veil was open.
@@ -8837,6 +8852,7 @@ export class HeavensGateEngine {
       weapon: this.activeWeaponSpec().hudLabel,
       resonance: this.resonance,
       shards: this.shards,
+      killStreak: this.elapsed < this.killStreakUntil ? this.killStreak : 0,
       upgrades: [...(this.ownedUpgrades ?? [])],
       heat: this.heat,
       heatTier: this.heatTierValue(),

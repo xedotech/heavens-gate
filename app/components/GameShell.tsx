@@ -666,7 +666,7 @@ export default function GameShell() {
               <div className={hud.veilActive ? 'active' : ''}><Eye aria-hidden="true" /><span><strong>Veil</strong><small>{formatBinding(settings.keybinds.veil)} / LB</small></span><i>{hud.veilActive ? 'OPEN' : hud.veilCooldown > 0 ? `${Math.ceil(hud.veilCooldown)}s` : 'READY'}</i></div>
               <div><Zap aria-hidden="true" /><span><strong>Pulse</strong><small>{formatBinding(settings.keybinds.pulse)} / RB</small></span><i>{hud.pulseCooldown > 0 ? `${Math.ceil(hud.pulseCooldown)}s` : 'READY'}</i></div>
             </div>
-            <div className="resonance-track"><span style={{ width: `${hud.resonance}%` }} /><small>{Math.round(hud.resonance)} resonance · {hud.shards} marks</small></div>
+            <div className="resonance-track"><span style={{ width: `${hud.resonance}%` }} /><small>{Math.round(hud.resonance)} resonance · {hud.shards} marks{hud.killStreak >= 2 ? ` · streak ×${hud.killStreak}` : ''}</small></div>
           </div>
 
           {hud.bossHealth !== null && (
