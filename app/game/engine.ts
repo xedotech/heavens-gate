@@ -136,6 +136,10 @@ interface CharacterRig {
   chest: THREE.Object3D;
   phase: number;
   stride: number;
+  /** Civilian eye meshes — squashed for a blink frame every few seconds. */
+  eyes?: THREE.Object3D[];
+  blinkTimer?: number;
+  blinkPhase?: number;
 }
 
 interface PlayerSkinMaterials {
@@ -4037,6 +4041,7 @@ export class HeavensGateEngine {
     head.castShadow = true;
     group.add(head);
 
+    const eyes: THREE.Object3D[] = [];
     if (isCivilian) {
       const jaw = new THREE.Mesh(new THREE.SphereGeometry(0.245, 16, 12), skinMaterial);
       jaw.scale.set(0.88, 0.7, 0.86);
@@ -4058,6 +4063,7 @@ export class HeavensGateEngine {
         eye.scale.set(1.25, 0.62, 0.34);
         eye.position.set(side * 0.1, 2.33, -0.285);
         eye.name = 'head';
+        eyes.push(eye);
         group.add(eye);
         const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.017, 8, 6), irisMaterial);
         pupil.scale.z = 0.26;
@@ -4168,7 +4174,7 @@ export class HeavensGateEngine {
     group.traverse((child) => {
       child.userData.actorId = id;
     });
-    const rig: CharacterRig = { arms, legs, head: headRig, chest, phase: seeded(variant, 208) * Math.PI * 2, stride: 0 };
+    const rig: CharacterRig = { arms, legs, head: headRig, chest, phase: seeded(variant, 208) * Math.PI * 2, stride: 0, eyes, blinkTimer: 1.5 + seeded(variant, 209) * 3, blinkPhase: 0 };
     if (!isCivilian) {
       const rifleMaterial = new THREE.MeshStandardMaterial({ color: 0x171b1e, roughness: 0.36, metalness: 0.72 });
       const rifleGlow = new THREE.MeshStandardMaterial({ color: visorColor, emissive: visorColor, emissiveIntensity: 1.6 });
@@ -6935,6 +6941,20 @@ export class HeavensGateEngine {
     rig.chest.rotation.y = Math.sin(rig.phase) * amplitude * 0.08;
     rig.chest.rotation.x = -0.08 + Math.sin(this.elapsed * 1.7 + rig.phase * 0.04) * 0.018;
     rig.head.rotation.y = Math.sin(this.elapsed * 0.55 + rig.phase * 0.1) * (actor.kind === 'civilian' ? 0.12 : 0.045);
+    // Civilian blink — a 130ms lid-drop every few seconds. Distant actors
+    // skip it; nobody reads a blink past ~16m.
+    if (rig.eyes?.length && (actor.lod ?? 99) < 16) {
+      rig.blinkTimer = (rig.blinkTimer ?? 2) - delta;
+      if (rig.blinkTimer <= 0 && (rig.blinkPhase ?? 0) <= 0) {
+        rig.blinkPhase = 0.13;
+        rig.blinkTimer = 2.2 + Math.random() * 3.4;
+      }
+      if ((rig.blinkPhase ?? 0) > 0) {
+        rig.blinkPhase = Math.max(0, (rig.blinkPhase ?? 0) - delta);
+        const lid = rig.blinkPhase > 0.065 ? 0.12 : 0.62;
+        rig.eyes.forEach((eye) => { eye.scale.y = lid; });
+      }
+    }
     // Locational hit reaction: chest snaps back and twists away from the
     // shot's side, decaying over a third of a second.
     if (actor.hitReact && actor.hitReact > 0) {
