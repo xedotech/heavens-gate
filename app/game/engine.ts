@@ -6656,6 +6656,34 @@ export class HeavensGateEngine {
 
       if (actor.kind === 'civilian') {
         const posted = actor.posted === true && this.missionIndex === 0;
+        // A body on the sidewalk: a civilian who spots a corpse shrieks and
+        // bolts away from it — the street notices what the player leaves.
+        if (!posted && actor.flee <= 0 && (this.corpses?.length ?? 0) > 0) {
+          for (const body of this.corpses) {
+            if (body.noticedBy.has(actor.id) || !body.group.visible) continue;
+            const dx = body.group.position.x - actor.group.position.x;
+            const dz = body.group.position.z - actor.group.position.z;
+            const distanceToBody = Math.hypot(dx, dz);
+            if (distanceToBody > 8 || distanceToBody < 0.5) continue;
+            const forward = this.tmpActorFwd2.set(Math.sin(actor.group.rotation.y), 0, Math.cos(actor.group.rotation.y));
+            if ((forward.x * dx + forward.z * dz) / distanceToBody < 0.15) continue;
+            if (this.firstWorldObstruction(
+              this.tmpLosFrom.copy(actor.group.position).setY(1.5),
+              this.tmpLosTo.copy(body.group.position).setY(0.6),
+            )) continue;
+            body.noticedBy.add(actor.id);
+            actor.flee = 6;
+            actor.fleeHeading = Math.atan2(-dx, -dz);
+            if (distance < 46) {
+              const occluded = this.firstWorldObstruction(
+                this.tmpLosFrom.copy(actor.group.position).setY(1.5),
+                this.tmpLosTo.copy(playerPosition).setY(1.6),
+              ) !== null;
+              this.audio.civilianScream?.(actor.group.position, playerPosition, this.cameraYaw, occluded);
+            }
+            break;
+          }
+        }
         const threatened = !posted && (actor.flee > 0 || (this.heat > 12 && distance < 22));
         if (threatened) {
           actor.flee = Math.max(actor.flee, 3.5);

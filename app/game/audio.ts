@@ -469,6 +469,39 @@ export class AudioEngine {
     }, { once: true }));
   }
 
+  // A civilian stumbling onto a body: one sharp falling shriek, positional
+  // and occluded — the street noticing what the player left behind.
+  civilianScream(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(source, listener, yaw, occluded);
+    const gain = Math.min(mix.gain * 0.95, 0.085);
+    if (gain < 0.002) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan * 0.8;
+    master.gain.value = gain;
+    filter.type = 'bandpass';
+    filter.frequency.value = Math.min(1500, mix.cutoff);
+    filter.Q.value = 1.3;
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const base = 560 + Math.random() * 260;
+    const voices: AudioScheduledSourceNode[] = [];
+    const lead = this.tone(base, 0.36, 'sawtooth', 0.55, 0, filter, base * 0.4);
+    const sob = this.tone(base * 0.82, 0.24, 'sawtooth', 0.32, 0.34, filter, base * 0.36);
+    if (lead) voices.push(lead);
+    if (sob) voices.push(sob);
+    let remaining = voices.length;
+    const cleanup = () => { filter.disconnect(); pan.disconnect(); master.disconnect(); };
+    if (!remaining) cleanup();
+    voices.forEach((voice) => voice.addEventListener('ended', () => {
+      remaining -= 1;
+      if (remaining === 0) cleanup();
+    }, { once: true }));
+  }
+
   // Supersonic snap of a round passing close by — a short bright crack
   // spatialized to the bullet's closest-approach point. The audio cue that
   // sells incoming fire you never saw.
