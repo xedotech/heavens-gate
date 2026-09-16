@@ -6445,6 +6445,7 @@ export class HeavensGateEngine {
             : this.tmpMove.copy(actor.group.position).sub(playerPosition).setY(0).normalize();
           this.moveActor(actor, away, actor.speed * 2.25, delta);
           actor.flee -= delta;
+          if (actor.flee <= 0) delete actor.fleeHeading;
         } else if (posted) {
           // Tending loop: she faces the lamp — or Aurel while the delivery
           // exchange runs — and one arm keeps a slow wipe against the glass.
@@ -6942,6 +6943,22 @@ export class HeavensGateEngine {
       }
     }
     if (landedHit) this.reticleHit = 1;
+    // A gunshot empties the sidewalk: civilians within earshot scatter away
+    // from the muzzle, and traffic within a block stamps the gas.
+    this.actors?.forEach((actor) => {
+      if (!actor.alive || actor.kind !== 'civilian') return;
+      if (actor.posted === true && this.missionIndex === 0) return;
+      if (actor.group.position.distanceTo(this.player.position) > 26) return;
+      actor.flee = Math.max(actor.flee ?? 0, 6);
+      actor.fleeHeading = Math.atan2(
+        actor.group.position.x - this.player.position.x,
+        actor.group.position.z - this.player.position.z,
+      );
+    });
+    this.trafficCars?.forEach((car) => {
+      if (car.wrecked) return;
+      if (car.group.position.distanceTo(this.player.position) < 30) car.panic = Math.max(car.panic, 4);
+    });
     if (this.ammo === 0 && this.reserveAmmo > 0) this.emitToast('Magazine empty', `Press ${this.bindingLabel('reload')} or X to reload`, 'info');
   }
 
