@@ -237,6 +237,10 @@ export function TouchControls({ engine, onPause }: TouchControlsProps) {
         <TouchButton className="touch-button touch-small" label="SWP" onPress={press('weaponSwap')} onRelease={release('weaponSwap')} />
         <TouchButton className="touch-button touch-small" label="VEIL" onPress={press('veil')} onRelease={release('veil')} />
         <TouchButton className="touch-button touch-small" label="PLS" onPress={press('pulse')} onRelease={release('pulse')} />
+        <TouchButton className="touch-button touch-small" label="MLE" onPress={press('melee')} onRelease={release('melee')} />
+        <TouchButton className="touch-button touch-small" label="CHG" onPress={press('throwCharge')} onRelease={release('throwCharge')} />
+        <TouchButton className="touch-button touch-small" label="CRH" onPress={press('crouch')} onRelease={release('crouch')} />
+        <TouchButton className="touch-button touch-small" label="DDG" onPress={press('dodge')} onRelease={release('dodge')} />
       </div>
     </div>
   );
