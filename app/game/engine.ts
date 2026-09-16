@@ -3070,6 +3070,8 @@ export class HeavensGateEngine {
     sight.position.set(0, 0.098, -0.19);
     morrow.add(sight);
     morrow.userData.muzzle = new THREE.Vector3(0, 0.01, -0.5);
+    // Pistol two-hand wrap: the left palm presses the right grip's side.
+    morrow.userData.foregrip = new THREE.Vector3(-0.1, -0.16, 0.04);
     mount.add(morrow);
 
     const psalm = new THREE.Group();
@@ -3103,6 +3105,8 @@ export class HeavensGateEngine {
     rail.position.set(0, 0.12, -0.36);
     psalm.add(rail);
     psalm.userData.muzzle = new THREE.Vector3(0, 0.03, -1.06);
+    // Support hand rides the rail just ahead of the receiver.
+    psalm.userData.foregrip = new THREE.Vector3(0, -0.07, -0.46);
     mount.add(psalm);
 
     const vesper = new THREE.Group();
@@ -3134,6 +3138,8 @@ export class HeavensGateEngine {
     vesperGrip.rotation.x = -0.26;
     vesper.add(vesperGrip);
     vesper.userData.muzzle = new THREE.Vector3(0, 0.04, -0.83);
+    // The pump *is* the foregrip — the left hand sits right on it.
+    vesper.userData.foregrip = new THREE.Vector3(0, -0.11, -0.44);
     mount.add(vesper);
   }
 

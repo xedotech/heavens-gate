@@ -139,6 +139,10 @@ const LOOPING = new Set<CharacterMotion>(['idle', 'walk', 'run', 'crouch', 'aim'
 // Motions where the feet should plant on real geometry — locomotion and air
 // phases are owned by the authored clips and skip IK entirely.
 const FOOT_IK_MOTIONS = new Set<CharacterMotion>(['idle', 'aim', 'crouch', 'reload', 'fire', 'hit']);
+// Motions where the left hand should ride the weapon's foregrip. Reload and
+// the athletic moves own the arm entirely — the clip moves it to the magwell,
+// across the body, or out for balance.
+const GRIP_IK_MOTIONS = new Set<CharacterMotion>(['idle', 'walk', 'run', 'crouch', 'aim', 'fire', 'hit']);
 const ikVec1 = new THREE.Vector3();
 const ikVec2 = new THREE.Vector3();
 const ikHip = new THREE.Vector3();
@@ -151,6 +155,9 @@ const ikPerp = new THREE.Vector3();
 const ikNewKnee = new THREE.Vector3();
 const ikKneeDir = new THREE.Vector3();
 const ikDelta = new THREE.Quaternion();
+const gripTarget = new THREE.Vector3();
+const gripCurl = new THREE.Quaternion();
+const gripCurlQuat = new THREE.Quaternion();
 const ikLocalDelta = new THREE.Quaternion();
 const ikParentQuat = new THREE.Quaternion();
 const ikIdentity = new THREE.Quaternion();
@@ -304,6 +311,12 @@ export class HeroCharacter {
   private readonly rightHand: THREE.Bone | null;
   private readonly spineBones: THREE.Bone[] = [];
   private readonly rightGripBones: Array<{ bone: THREE.Bone; bind: THREE.Quaternion; curl: number }>;
+  // Two-handed grip — the left arm chain (upperarm → lowerarm → hand) and
+  // left finger bones. When a weapon is held, the hand is IK'd onto the
+  // model's foregrip point so the weapon reads *held*, not glued to one palm.
+  private readonly leftArm: { shoulder: THREE.Bone; elbow: THREE.Bone; hand: THREE.Bone } | null = null;
+  private readonly leftGripBones: Array<{ bone: THREE.Bone; bind: THREE.Quaternion; curl: number }>;
+  private leftGripBlend = 0;
   private aimPitchTarget = 0;
   private aimPitchCurrent = 0;
   private heldObject: THREE.Object3D | null = null;
@@ -335,16 +348,20 @@ export class HeroCharacter {
     let morphs = 0;
     let rightHand: THREE.Bone | null = null;
     const rightGripBones: Array<{ bone: THREE.Bone; bind: THREE.Quaternion; curl: number }> = [];
+    const leftGripBones: Array<{ bone: THREE.Bone; bind: THREE.Quaternion; curl: number }> = [];
+    const armBones: Record<string, THREE.Bone> = {};
 
     const legBones: Record<string, THREE.Bone> = {};
     object.traverse((child) => {
       if (child instanceof THREE.Bone) {
         bones += 1;
-        if (child.name.toLowerCase() === 'hand_r') rightHand = child;
+        const lower = child.name.toLowerCase();
+        if (lower === 'hand_r') rightHand = child;
+        if (/^(upperarm|lowerarm|hand)_l$/i.test(child.name)) armBones[lower] = child;
         if (/^spine_0[23]$/i.test(child.name)) this.spineBones.push(child);
         const leg = child.name.match(/^(thigh|calf|foot)_(l|r)$/i);
         if (leg) legBones[`${leg[1].toLowerCase()}_${leg[2].toLowerCase()}`] = child;
-        const finger = child.name.match(/^(thumb|index|middle|ring|pinky)_0([1-3])_r$/i);
+        const finger = child.name.match(/^(thumb|index|middle|ring|pinky)_0([1-3])_(l|r)$/i);
         if (finger) {
           const segment = Number(finger[2]);
           const isThumb = finger[1].toLowerCase() === 'thumb';
@@ -354,7 +371,10 @@ export class HeroCharacter {
             : isTriggerFinger
             ? [0, 0.12, 0.08, 0.05][segment]
             : [0, 0.42, 0.62, 0.46][segment];
-          rightGripBones.push({ bone: child, bind: child.quaternion.clone(), curl });
+          // Mirrored rig: the left hand's local X runs the opposite way, so
+          // the same physical wrap is the negated curl.
+          const entry = { bone: child, bind: child.quaternion.clone(), curl: finger[3].toLowerCase() === 'l' ? -curl : curl };
+          (finger[3].toLowerCase() === 'l' ? leftGripBones : rightGripBones).push(entry);
         }
       }
       if (!isRenderableMesh(child)) return;
@@ -378,6 +398,10 @@ export class HeroCharacter {
     this.morphCount = morphs;
     this.rightHand = rightHand;
     this.rightGripBones = rightGripBones;
+    this.leftGripBones = leftGripBones;
+    this.leftArm = armBones.upperarm_l && armBones.lowerarm_l && armBones.hand_l
+      ? { shoulder: armBones.upperarm_l, elbow: armBones.lowerarm_l, hand: armBones.hand_l }
+      : null;
     for (const side of ['l', 'r'] as const) {
       const thigh = legBones[`thigh_${side}`];
       const calf = legBones[`calf_${side}`];
@@ -430,6 +454,7 @@ export class HeroCharacter {
     this.speechSeed = 0;
     this.blinkPhase = 0;
     this.nextBlink = 1.2;
+    this.leftGripBlend = 0;
     this.transitionTo('idle', 0, true);
     this.mixer.update(0);
     this.updateFace(0, 0, 0);
@@ -562,6 +587,7 @@ export class HeroCharacter {
     this.mixer.update(delta);
     this.aimPitchTarget = aimPitch;
     this.applyAimPitch(delta);
+    this.applyLeftGripIK(delta);
     if (this.heldObject) this.applyGripPose();
     this.applyFootIK(delta, grounded);
     if (this.oneShotRemaining > 0) {
@@ -621,11 +647,65 @@ export class HeroCharacter {
     this.activeMotion = motion;
   }
 
+  // Two-bone IK pinning the left palm onto the held weapon's foregrip point.
+  // The clip poses the arm roughly; this lands it exactly — so when the
+  // weapon sways, kicks, or pitches with aim, the support hand *tracks* it
+  // instead of floating nearby. Runs after the mixer, before the finger curl.
+  private applyLeftGripIK(delta: number) {
+    const wantsGrip = this.heldObject !== null && this.leftArm !== null
+      && GRIP_IK_MOTIONS.has(this.activeMotion ?? 'idle');
+    this.leftGripBlend = THREE.MathUtils.damp(this.leftGripBlend, wantsGrip ? 1 : 0, 10, delta);
+    if (this.leftGripBlend < 0.02 || !this.leftArm || !this.heldObject) return;
+    const model = this.heldObject.children.find((child) => child.visible);
+    const foregrip = model?.userData.foregrip as THREE.Vector3 | undefined;
+    if (!model || !foregrip) return;
+    this.object.updateMatrixWorld(true);
+    const target = model.localToWorld(gripTarget.copy(foregrip));
+    const { shoulder, elbow, hand } = this.leftArm;
+    const shoulderPos = shoulder.getWorldPosition(ikHip);
+    const elbowPos = elbow.getWorldPosition(ikKnee);
+    const handPos = hand.getWorldPosition(ikAnkle);
+    const a = shoulderPos.distanceTo(elbowPos);
+    const b = elbowPos.distanceTo(handPos);
+    if (a < 1e-5 || b < 1e-5) return;
+    // If the grip would demand a hyper-extended arm (weapon dropped low in a
+    // run cycle), cap the reach — a slightly-short plant reads better than a
+    // dislocated shoulder.
+    const reach = Math.min(shoulderPos.distanceTo(target) * (1 - 0.001), (a + b) * 0.999);
+    const dir = ikDir.copy(target).sub(shoulderPos).normalize();
+    // Keep the elbow's animated hinge plane; the fallback points it down,
+    // the natural carry for a two-handed hold.
+    const elbowVec = ikKneeVec.copy(elbowPos).sub(shoulderPos);
+    const perp = ikPerp.copy(elbowVec).addScaledVector(dir, -elbowVec.dot(dir));
+    if (perp.lengthSq() < 1e-7) perp.set(0, -1, 0); else perp.normalize();
+    const cosA = THREE.MathUtils.clamp((a * a + reach * reach - b * b) / (2 * a * reach), -1, 1);
+    const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+    const newElbow = ikNewKnee.copy(shoulderPos).addScaledVector(dir, a * cosA).addScaledVector(perp, a * sinA);
+    ikDelta.setFromUnitVectors(elbowVec.normalize(), ikKneeDir.copy(newElbow).sub(shoulderPos).normalize());
+    this.applyWorldDelta(shoulder, ikDelta, this.leftGripBlend);
+    shoulder.updateMatrixWorld(true);
+    const elbow2 = elbow.getWorldPosition(ikKnee);
+    const hand2 = hand.getWorldPosition(ikAnkle);
+    ikDelta.setFromUnitVectors(
+      ikKneeVec.copy(hand2).sub(elbow2).normalize(),
+      ikKneeDir.copy(target).sub(elbow2).normalize(),
+    );
+    this.applyWorldDelta(elbow, ikDelta, this.leftGripBlend);
+  }
+
   private applyGripPose() {
     const fingerCurlAxis = new THREE.Vector3(1, 0, 0);
     for (const gripBone of this.rightGripBones) {
       const curl = new THREE.Quaternion().setFromAxisAngle(fingerCurlAxis, gripBone.curl);
       gripBone.bone.quaternion.copy(gripBone.bind).multiply(curl);
+    }
+    // Left fingers wrap the foregrip only while the IK owns the hand — during
+    // reloads and athletic moves they relax back to the animated pose.
+    if (this.leftGripBlend < 0.02) return;
+    for (const gripBone of this.leftGripBones) {
+      const curled = gripCurl.copy(gripBone.bind)
+        .multiply(gripCurlQuat.setFromAxisAngle(fingerCurlAxis, gripBone.curl));
+      gripBone.bone.quaternion.slerp(curled, this.leftGripBlend);
     }
   }
 
