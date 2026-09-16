@@ -118,6 +118,11 @@ interface Actor {
   lod?: number;
   /** Accumulated delta between throttled animation steps. */
   animBudget?: number;
+  /** Stride accumulation for positional footsteps — meters walked since the
+   * last boot-fall. */
+  stepAccum?: number;
+  prevX?: number;
+  prevZ?: number;
 }
 
 interface CharacterRig {
@@ -6584,6 +6589,26 @@ export class HeavensGateEngine {
       actor.cooldown -= delta;
       actor.damagePulse = Math.max(0, actor.damagePulse - delta);
       actor.hitReact = Math.max(0, (actor.hitReact ?? 0) - delta * 2.6);
+
+      // Positional footsteps — a hunter you can hear before you see. Stride
+      // accumulates from real movement so boots match the walk, not a timer.
+      if (actor.kind !== 'drone' && distance < 34) {
+        const moved = actor.prevX === undefined || actor.prevZ === undefined ? 0
+          : Math.hypot(actor.group.position.x - actor.prevX, actor.group.position.z - actor.prevZ);
+        actor.stepAccum = (actor.stepAccum ?? 0) + moved;
+        const running = moved > 3.2 * delta;
+        const stride = running ? 0.92 : 0.78;
+        if (actor.stepAccum > stride) {
+          actor.stepAccum = 0;
+          const occluded = this.firstWorldObstruction(
+            this.tmpLosFrom.copy(actor.group.position).setY(1.2),
+            this.tmpLosTo.copy(playerPosition).setY(1.4),
+          ) !== null;
+          this.audio.npcFootstep?.(actor.group.position, playerPosition, this.cameraYaw, occluded, running);
+        }
+      }
+      actor.prevX = actor.group.position.x;
+      actor.prevZ = actor.group.position.z;
 
       if (actor.kind === 'civilian') {
         const posted = actor.posted === true && this.missionIndex === 0;

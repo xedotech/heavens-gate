@@ -413,6 +413,28 @@ export class AudioEngine {
     clip.onended = () => { clip.disconnect(); filter.disconnect(); pan.disconnect(); master.disconnect(); };
   }
 
+  // A boot on pavement from across the street — hunters you can hear before
+  // you see. Quiet, panned, muffled when a wall sits between.
+  npcFootstep(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false, run = false) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(source, listener, yaw, occluded);
+    const level = Math.min(mix.gain * (run ? 0.5 : 0.3), 0.045);
+    if (level < 0.003) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan;
+    master.gain.value = level;
+    filter.type = 'lowpass';
+    filter.frequency.value = Math.min(mix.cutoff, 1500);
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const voice = this.noise(0.055, 0.5, 620 + Math.random() * 260, filter);
+    if (!voice) { filter.disconnect(); pan.disconnect(); master.disconnect(); return; }
+    voice.addEventListener('ended', () => { filter.disconnect(); pan.disconnect(); master.disconnect(); }, { once: true });
+  }
+
   // Ambient pedestrian chatter — short filtered murmurs spatialized like
   // enemy shots so a conversation reads from the direction it happens in.
   pedestrianBlip(source: SoundPosition, listener: SoundPosition, yaw: number, occluded = false) {
