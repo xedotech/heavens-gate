@@ -1666,6 +1666,53 @@ export class HeavensGateEngine {
       return { matrix: matrix.clone() };
     });
     this.addInstancedChunks(new THREE.BoxGeometry(0.5, 0.02, 7.4), stripeMaterial, stripePlacements);
+    this.createPuddles();
+  }
+
+  // Standing water — the perpetual storm leaves sheets of it along the curb
+  // lines and in the low road seams. Near-zero roughness mirrors catch the
+  // neon and lamp cones as long streaks; without it the wet asphalt reads
+  // uniformly satin instead of rained-on.
+  private createPuddles() {
+    if (!this.scene || this.settings.quality === 'low') return;
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x05090c,
+      roughness: 0.04,
+      metalness: 0.92,
+      envMapIntensity: 2.4,
+      transparent: true,
+      opacity: 0.86,
+      depthWrite: false,
+    });
+    const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+    const yawQuat = new THREE.Quaternion();
+    const final = new THREE.Quaternion();
+    const upAxis = new THREE.Vector3(0, 1, 0);
+    const matrix = new THREE.Matrix4();
+    const count = this.settings.quality === 'ultra' ? 130 : 88;
+    const placements: Array<{ matrix: THREE.Matrix4 }> = [];
+    for (let i = 0; i < count; i += 1) {
+      // Bias toward curb lines: road grid at multiples of 30, puddles hug
+      // the ±4.2..5.2 band where the camber would shed water.
+      const road = Math.floor(seeded(i, 160) * 11 - 5) * 30;
+      const along = (seeded(i, 161) - 0.5) * 288;
+      const curbBand = (3.4 + seeded(i, 162) * 1.9) * (seeded(i, 163) > 0.5 ? 1 : -1);
+      const horizontal = seeded(i, 164) > 0.5;
+      const x = horizontal ? along : road + curbBand;
+      const z = horizontal ? road + curbBand : along;
+      if (this.collides(x, z, 0.3)) continue;
+      const yaw = horizontal ? 0 : Math.PI / 2;
+      yawQuat.setFromAxisAngle(upAxis, yaw + (seeded(i, 165) - 0.5) * 0.5);
+      final.copy(yawQuat).multiply(flat);
+      matrix.compose(
+        new THREE.Vector3(x, 0.028, z),
+        final,
+        new THREE.Vector3(1.1 + seeded(i, 166) * 2.6, 0.62 + seeded(i, 167) * 1.4, 1),
+      );
+      placements.push({ matrix: matrix.clone() });
+    }
+    const puddleMeshes = this.addInstancedChunks(new THREE.CircleGeometry(0.5, 18), material, placements);
+    puddleMeshes.forEach((mesh) => { mesh.renderOrder = 1; });
   }
 
   private districtColor(x: number, z: number) {
