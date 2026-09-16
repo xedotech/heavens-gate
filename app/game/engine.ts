@@ -391,6 +391,7 @@ export class HeavensGateEngine {
   private readonly inspectionCenter = new THREE.Vector3(0, 2.05, 0);
   private inspectionHeight = 3.7;
   private grounded = true;
+  private airTime = 0;
   private crouching = false;
   private stamina: number = MOVEMENT_SPEC.staminaMaximum;
   private slideRemaining = 0;
@@ -5162,13 +5163,17 @@ export class HeavensGateEngine {
             this.pulseGamepad(50, clamp(impact * 0.02, 0.1, 0.4), clamp(impact * 0.014, 0.08, 0.3));
           }
           // Hard drops tuck into a recovery roll instead of a flat stomp.
-          if (impact > 13 && !this.settings?.reducedMotion) {
+          // The airtime gate keeps teleports/edge step-offs from faking a fall.
+          if (impact > 13 && this.airTime > 0.22 && !this.settings?.reducedMotion) {
             this.heroCharacter?.playOnce('slide', 0.05);
             this.hurtKick = Math.min(0.4, this.hurtKick + impact * 0.012);
           }
         }
         this.playerVelocity.y = 0;
         this.grounded = true;
+        this.airTime = 0;
+      } else {
+        this.airTime += delta;
       }
       this.clampWorld(this.player.position);
       const floorY = this.player.position.y;
