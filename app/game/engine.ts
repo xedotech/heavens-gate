@@ -4258,6 +4258,38 @@ export class HeavensGateEngine {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.045, 5, 32), material);
     ring.rotation.x = Math.PI / 2;
     group.add(ring);
+    // Sky-column beacon: a soft additive shaft rising off the objective, so
+    // the "go here" read survives at street level between towers — not just
+    // on the minimap. Shares the marker's see-through-walls contract.
+    const beamCanvas = document.createElement('canvas');
+    beamCanvas.width = 8;
+    beamCanvas.height = 128;
+    const beamCtx = beamCanvas.getContext('2d');
+    if (beamCtx) {
+      const fade = beamCtx.createLinearGradient(0, 0, 0, 128);
+      fade.addColorStop(0, 'rgba(255,255,255,0)');
+      fade.addColorStop(0.55, 'rgba(255,255,255,0.32)');
+      fade.addColorStop(1, 'rgba(255,255,255,0.85)');
+      beamCtx.fillStyle = fade;
+      beamCtx.fillRect(0, 0, 8, 128);
+    }
+    const beamTexture = new THREE.CanvasTexture(beamCanvas);
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.95, 24, 10, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xe8c96f,
+        map: beamTexture,
+        transparent: true,
+        opacity: 0.16,
+        blending: THREE.AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    beam.name = 'objective-beam';
+    beam.position.y = 7.8;
+    group.add(beam);
     group.renderOrder = 20;
     this.scene.add(group);
     this.objectiveMarker = group;
@@ -8567,6 +8599,13 @@ export class HeavensGateEngine {
     if (this.objectiveMarker?.visible) {
       this.objectiveMarker.rotation.y += delta * 0.8;
       this.objectiveMarker.position.y = 4.2 + Math.sin(time * 2.1) * 0.35;
+      // The beam doesn't bob — counter the group's float so the column's
+      // base stays planted, and breathe the opacity instead.
+      const beam = this.objectiveMarker.children.find((child) => child.name === 'objective-beam') as THREE.Mesh | undefined;
+      if (beam) {
+        beam.position.y = 7.8 - (this.objectiveMarker.position.y - 4.2);
+        (beam.material as THREE.MeshBasicMaterial).opacity = 0.13 + Math.sin(time * 1.7) * 0.045;
+      }
     }
     if (this.dust) {
       this.dust.rotation.y += delta * 0.002;
