@@ -59,7 +59,7 @@ import { FrameTimeSampler } from './performance';
 import { createCheckpoint, normalizeSave } from './persistence';
 import { UPGRADES, marksForActor } from './upgrades';
 import { ScannedSurfaceMaterial } from './scanned-materials';
-import { fetchVerifiedAsset, loadVerifiedProp } from './props';
+import { createStreetDetail, fetchVerifiedAsset, loadVerifiedProp } from './props';
 import { visibleInScene, withoutSubtree } from './scene-lifecycle';
 import {
   INITIAL_HUD,
@@ -1582,6 +1582,16 @@ export class HeavensGateEngine {
     const quaternion = new THREE.Quaternion();
     const upAxis = new THREE.Vector3(0, 1, 0);
     curbPieces.forEach((piece, index) => {
+      // Curbs get real collider tops: at 0.14 they never block the capsule,
+      // but grounding and foot IK both read them — stepping onto a curb is a
+      // plant, not a clip.
+      const halfLong = 3.6;
+      const halfShort = 0.5;
+      const alongZ = Math.abs(Math.sin(piece.yaw)) < 0.5;
+      this.collisionBoxes.push(new THREE.Box3(
+        new THREE.Vector3(piece.position.x - (alongZ ? halfShort : halfLong), 0, piece.position.z - (alongZ ? halfLong : halfShort)),
+        new THREE.Vector3(piece.position.x + (alongZ ? halfShort : halfLong), 0.14, piece.position.z + (alongZ ? halfLong : halfShort)),
+      ));
       quaternion.setFromAxisAngle(upAxis, piece.yaw);
       matrix.compose(piece.position, quaternion, new THREE.Vector3(1, 1, 1));
       curbMesh.setMatrixAt(index, matrix);
@@ -2470,6 +2480,20 @@ export class HeavensGateEngine {
       take(x, z, 3.2);
     }
     void this.instancedProp('modular_chainlink_fence', fences, { targetHeight: 2.1, surface: 'metal', collider: { w: 6.2, d: 1.6, h: 2.1 } });
+
+    // Street-detail layer — AC units, drainpipes, junction boxes, awnings,
+    // sign brackets, sidewalk clutter, slack cables. One instanced set per
+    // layer; only newsboxes carry colliders.
+    const detail = createStreetDetail({
+      buildings: buildingData,
+      lamps: this.streetLamps,
+      blocked,
+      blockedWall,
+      claim: take,
+      density: this.settings.quality === 'low' ? 0.45 : this.settings.quality === 'medium' ? 0.75 : 1,
+    }, { metal: this.propMetal, rust: this.propRust });
+    detail.meshes.forEach((mesh) => this.scene.add(mesh));
+    detail.colliders.forEach((box) => this.collisionBoxes.push(box));
   }
 
   // Generated art: the chapel's memory window + memory-office posters on
@@ -2871,6 +2895,9 @@ export class HeavensGateEngine {
       this.heroCharacter = character;
       character.object.scale.setScalar(HERO_CHARACTER_SCALE);
       this.player.add(character.object);
+      // Feet plant on whatever the player is actually standing on — the same
+      // collider-top sampler the grounding code uses.
+      character.setFootIKSampler((x, z) => this.groundHeightAt(x, z, this.player.position.y));
       character.object.updateMatrixWorld(true);
       this.updateInspectionFraming(character.object);
       const weapon = this.player.userData.weapon as THREE.Object3D | undefined;
@@ -5273,7 +5300,7 @@ export class HeavensGateEngine {
     vehicle.group.rotation.y = vehicle.heading;
     this.clampWorld(vehicle.group.position, 5);
     const vehicleSweep = sweepPlanarCollision(previous, vehicle.group.position,
-      (x, z) => this.collides(x, z, 2.25), 0.5);
+      (x, z) => this.collides(x, z, 2.25, vehicle.group.position.y), 0.5);
     if (vehicleSweep.swept) {
       vehicle.group.position.x = vehicleSweep.x;
       vehicle.group.position.z = vehicleSweep.z;
@@ -5473,7 +5500,7 @@ export class HeavensGateEngine {
         position: { x: position.x, y: position.y, z: position.z },
         distanceMeters: actor.group.position.distanceTo(position),
         exposure: clamp(position.distanceTo(target) / 42, 0.12, 0.92),
-        routeCost: this.collides(position.x, position.z, 0.75) ? 1 : 0.18,
+        routeCost: this.collides(position.x, position.z, 0.75, position.y) ? 1 : 0.18,
         flankQuality: index === 2 ? 0.35 : 0.72,
       }))
       .filter((candidate) => candidate.routeCost < 1);
@@ -5929,7 +5956,7 @@ export class HeavensGateEngine {
     const previous = this.tmpPrevPos.copy(actor.group.position);
     actor.group.position.addScaledVector(direction, speed * delta);
     this.clampWorld(actor.group.position, 4);
-    if (actor.kind !== 'drone' && this.collides(actor.group.position.x, actor.group.position.z, 0.62)) {
+    if (actor.kind !== 'drone' && this.collides(actor.group.position.x, actor.group.position.z, 0.62, actor.group.position.y)) {
       actor.group.position.copy(previous);
       actor.wanderAngle += Math.PI * 0.63;
     }
@@ -6577,7 +6604,7 @@ export class HeavensGateEngine {
       charge.mesh.rotation.y += delta * 7;
       const pos = charge.mesh.position;
       const grounded = pos.y <= 0.18;
-      const obstructed = this.collides(pos.x, pos.z, 0.24);
+      const obstructed = this.collides(pos.x, pos.z, 0.24, pos.y);
       const hitActor = this.actors.some((actor) => actor.alive && actor.group.position.distanceToSquared(pos) < 1.1);
       if (grounded || obstructed || hitActor || charge.timer <= 0) {
         charge.active = false;
@@ -7620,7 +7647,12 @@ export class HeavensGateEngine {
   }
 
   private updateAmbientAnimation(delta: number, time: number) {
-    this.heroCharacter?.update(delta, time, clamp(this.heat / 75 + (this.mouseShootHeld ? 0.2 : 0), 0, 1), this.cameraPitch);
+    this.heroCharacter?.update(
+      delta, time,
+      clamp(this.heat / 75 + (this.mouseShootHeld ? 0.2 : 0), 0, 1),
+      this.cameraPitch,
+      this.grounded && !this.currentVehicle && this.vaultTimer <= 0 && this.slideRemaining <= 0,
+    );
     // The one lit barrel stove — a low, uneven flicker on the chapel route.
     if (this.stoveLight) {
       this.stoveLight.intensity = 2.4 * (0.72 + Math.sin(time * 13.1) * 0.14 + Math.sin(time * 5.7 + 1.3) * 0.14);

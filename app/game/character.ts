@@ -135,6 +135,25 @@ async function fetchCharacterBinary(url: string, expectedBytes: number, onProgre
 }
 
 const LOOPING = new Set<CharacterMotion>(['idle', 'walk', 'run', 'crouch', 'aim']);
+
+// Motions where the feet should plant on real geometry — locomotion and air
+// phases are owned by the authored clips and skip IK entirely.
+const FOOT_IK_MOTIONS = new Set<CharacterMotion>(['idle', 'aim', 'crouch', 'reload', 'fire', 'hit']);
+const ikVec1 = new THREE.Vector3();
+const ikVec2 = new THREE.Vector3();
+const ikHip = new THREE.Vector3();
+const ikKnee = new THREE.Vector3();
+const ikAnkle = new THREE.Vector3();
+const ikTarget = new THREE.Vector3();
+const ikDir = new THREE.Vector3();
+const ikKneeVec = new THREE.Vector3();
+const ikPerp = new THREE.Vector3();
+const ikNewKnee = new THREE.Vector3();
+const ikKneeDir = new THREE.Vector3();
+const ikDelta = new THREE.Quaternion();
+const ikLocalDelta = new THREE.Quaternion();
+const ikParentQuat = new THREE.Quaternion();
+const ikIdentity = new THREE.Quaternion();
 const FACIAL_CHANNELS = [
   'eyeBlinkLeft',
   'eyeBlinkRight',
@@ -288,6 +307,13 @@ export class HeroCharacter {
   private aimPitchTarget = 0;
   private aimPitchCurrent = 0;
   private heldObject: THREE.Object3D | null = null;
+  // Foot IK — thigh/calf/foot chains, lazily measured ankle height, and the
+  // engine's ground sampler. Only non-locomotion motions plant the feet;
+  // stride and air phases own them entirely.
+  private readonly legChains: Array<{ thigh: THREE.Bone; calf: THREE.Bone; foot: THREE.Bone; ankleOffset: number }> = [];
+  private footIKSampler: ((x: number, z: number) => number | null) | null = null;
+  private ikMeasured = false;
+  private ikBlend = 0;
   // `null` is intentional: the first call to setMotion('idle') must start the
   // authored idle clip instead of being treated as a no-op against the
   // source rig's rest pose (which is an A-pose).
@@ -310,11 +336,14 @@ export class HeroCharacter {
     let rightHand: THREE.Bone | null = null;
     const rightGripBones: Array<{ bone: THREE.Bone; bind: THREE.Quaternion; curl: number }> = [];
 
+    const legBones: Record<string, THREE.Bone> = {};
     object.traverse((child) => {
       if (child instanceof THREE.Bone) {
         bones += 1;
         if (child.name.toLowerCase() === 'hand_r') rightHand = child;
         if (/^spine_0[23]$/i.test(child.name)) this.spineBones.push(child);
+        const leg = child.name.match(/^(thigh|calf|foot)_(l|r)$/i);
+        if (leg) legBones[`${leg[1].toLowerCase()}_${leg[2].toLowerCase()}`] = child;
         const finger = child.name.match(/^(thumb|index|middle|ring|pinky)_0([1-3])_r$/i);
         if (finger) {
           const segment = Number(finger[2]);
@@ -349,6 +378,12 @@ export class HeroCharacter {
     this.morphCount = morphs;
     this.rightHand = rightHand;
     this.rightGripBones = rightGripBones;
+    for (const side of ['l', 'r'] as const) {
+      const thigh = legBones[`thigh_${side}`];
+      const calf = legBones[`calf_${side}`];
+      const foot = legBones[`foot_${side}`];
+      if (thigh && calf && foot) this.legChains.push({ thigh, calf, foot, ankleOffset: 0.09 });
+    }
     for (const motion of Object.keys(CLIP_NAMES) as CharacterMotion[]) {
       const clip = THREE.AnimationClip.findByName(clips, CLIP_NAMES[motion]);
       if (!clip) continue;
@@ -450,12 +485,85 @@ export class HeroCharacter {
     });
   }
 
-  update(delta: number, elapsed: number, combatIntensity: number, aimPitch = 0) {
+  // Two-bone IK in world space: raise a foot whose animated ankle would clip
+  // into ground geometry (curbs, pews, wrecked panels — anything under ~0.55m
+  // the sampler reports). Blend damps in/out so the plant never pops.
+  private applyFootIK(delta: number, grounded: boolean) {
+    const sampler = this.footIKSampler;
+    const wantsIK = grounded && sampler !== null && this.legChains.length > 0
+      && FOOT_IK_MOTIONS.has(this.activeMotion ?? 'idle');
+    this.ikBlend = THREE.MathUtils.damp(this.ikBlend, wantsIK ? 1 : 0, 12, delta);
+    if (this.ikBlend < 0.02 || !sampler) return;
+    this.object.updateMatrixWorld(true);
+    if (!this.ikMeasured) {
+      // Ankle sits a few cm above the sole at bind — measure it once in world
+      // space so the offset respects the rig's actual scale.
+      this.legChains.forEach((leg) => {
+        leg.ankleOffset = Math.max(0.04, leg.foot.getWorldPosition(ikVec1).y - this.object.getWorldPosition(ikVec2).y);
+      });
+      this.ikMeasured = true;
+    }
+    for (const leg of this.legChains) {
+      const hip = leg.thigh.getWorldPosition(ikHip);
+      const knee = leg.calf.getWorldPosition(ikKnee);
+      const ankle = leg.foot.getWorldPosition(ikAnkle);
+      const ground = sampler(ankle.x, ankle.z);
+      if (ground === null || ground === undefined) continue;
+      const targetY = ground + leg.ankleOffset;
+      const lift = targetY - ankle.y;
+      if (lift <= 0.004 || lift > 0.55) continue;
+      const a = hip.distanceTo(knee);
+      const b = knee.distanceTo(ankle);
+      if (a < 1e-5 || b < 1e-5) continue;
+      const target = ikTarget.copy(ankle);
+      target.y = targetY;
+      const reach = Math.min(hip.distanceTo(target) * (1 - 0.001), (a + b) * 0.999);
+      const dir = ikDir.copy(target).sub(hip).normalize();
+      // Preserve the knee's current plane — project the live thigh→knee
+      // direction off the new hip→target axis.
+      const kneeVec = ikKneeVec.copy(knee).sub(hip);
+      const perp = ikPerp.copy(kneeVec).addScaledVector(dir, -kneeVec.dot(dir));
+      if (perp.lengthSq() < 1e-7) perp.set(0, 0, 1); else perp.normalize();
+      const cosA = THREE.MathUtils.clamp((a * a + reach * reach - b * b) / (2 * a * reach), -1, 1);
+      const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+      const newKnee = ikNewKnee.copy(hip).addScaledVector(dir, a * cosA).addScaledVector(perp, a * sinA);
+      // Rotate the thigh so hip→knee tracks hip→newKnee (world delta).
+      ikDelta.setFromUnitVectors(ikKneeVec.normalize(), ikKneeDir.copy(newKnee).sub(hip).normalize());
+      this.applyWorldDelta(leg.thigh, ikDelta, this.ikBlend);
+      // Re-read the chain — the thigh rotation moved the knee and ankle.
+      leg.thigh.updateMatrixWorld(true);
+      const knee2 = leg.calf.getWorldPosition(ikKnee);
+      const ankle2 = leg.foot.getWorldPosition(ikAnkle);
+      ikDelta.setFromUnitVectors(
+        ikKneeVec.copy(ankle2).sub(knee2).normalize(),
+        ikKneeDir.copy(target).sub(knee2).normalize(),
+      );
+      this.applyWorldDelta(leg.calf, ikDelta, this.ikBlend);
+    }
+  }
+
+  // Apply a world-space rotation delta to a bone's local quaternion —
+  // parentWorld⁻¹ · Δworld · parentWorld, premultiplied onto the current pose.
+  private applyWorldDelta(bone: THREE.Bone, deltaWorld: THREE.Quaternion, weight: number) {
+    const parent = bone.parent;
+    if (!parent) return;
+    parent.getWorldQuaternion(ikParentQuat);
+    ikLocalDelta.copy(ikParentQuat).invert().multiply(deltaWorld).multiply(ikParentQuat);
+    if (weight < 1) ikLocalDelta.slerp(ikIdentity, 1 - weight);
+    bone.quaternion.premultiply(ikLocalDelta);
+  }
+
+  setFootIKSampler(sampler: ((x: number, z: number) => number | null) | null) {
+    this.footIKSampler = sampler;
+  }
+
+  update(delta: number, elapsed: number, combatIntensity: number, aimPitch = 0, grounded = false) {
     if (this.disposed) return;
     this.mixer.update(delta);
     this.aimPitchTarget = aimPitch;
     this.applyAimPitch(delta);
     if (this.heldObject) this.applyGripPose();
+    this.applyFootIK(delta, grounded);
     if (this.oneShotRemaining > 0) {
       this.oneShotRemaining = Math.max(0, this.oneShotRemaining - delta);
       if (this.oneShotRemaining === 0 && this.activeMotion !== 'death') {
