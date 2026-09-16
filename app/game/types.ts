@@ -157,6 +157,7 @@ export interface HUDState {
     kills: number;
     shots: number;
     hits: number;
+    civilians: number;
     distanceDriven: number;
     sigils: number;
     sigilsTotal: number;
@@ -327,7 +328,7 @@ export const INITIAL_HUD: HUDState = {
   bossHealth: null,
   cinematic: false,
   photoMode: false,
-  stats: { kills: 0, shots: 0, hits: 0, distanceDriven: 0, sigils: 0, sigilsTotal: 8 },
+  stats: { kills: 0, shots: 0, hits: 0, civilians: 0, distanceDriven: 0, sigils: 0, sigilsTotal: 8 },
 };
 
 export const MISSIONS: MissionDefinition[] = [

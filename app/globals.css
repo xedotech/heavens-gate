@@ -512,6 +512,15 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.record-stat-grave {
+  border-color: rgba(214, 58, 42, 0.45);
+  background: rgba(214, 58, 42, 0.06);
+}
+
+.record-stat-grave strong {
+  color: #d66a5a;
+}
+
 .attunement kbd {
   font-size: 0.7rem;
   letter-spacing: 0.1em;

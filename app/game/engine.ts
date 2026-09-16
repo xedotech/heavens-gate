@@ -668,6 +668,7 @@ export class HeavensGateEngine {
   private statKills = 0;
   private statShots = 0;
   private statHits = 0;
+  private statCivilians = 0;
   private statDistanceDriven = 0;
   private peekLean = 0;
   private shoulderSide = 1;
@@ -7232,6 +7233,10 @@ export class HeavensGateEngine {
     if (actor.kind !== 'civilian') {
       this.reticleKill = 0.55;
       this.statKills += 1;
+    } else {
+      this.statCivilians += 1;
+      if (this.statCivilians === 1) this.emitSubtitle('Nia', 'Aurel — that was a civilian. The Choir will feed on this.');
+      else if (this.statCivilians === 3) this.emitSubtitle('Nia', 'Stop. Every body you drop is a soul the Gate swallows.');
     }
     if (actor.kind !== 'civilian' && !this.settings.reducedMotion) {
       // Crit kills and the boss get a longer beat — the frame hangs so
@@ -9031,6 +9036,7 @@ export class HeavensGateEngine {
         kills: this.statKills,
         shots: this.statShots,
         hits: this.statHits,
+        civilians: this.statCivilians,
         distanceDriven: Math.round(this.statDistanceDriven),
         sigils: this.sigilsCollected.size,
         sigilsTotal: HeavensGateEngine.SIGIL_SPOTS.length,

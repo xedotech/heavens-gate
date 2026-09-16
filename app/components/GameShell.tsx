@@ -778,6 +778,7 @@ export default function GameShell() {
               <div className="record-stat"><strong>{hud.stats.shots > 0 ? `${Math.round((hud.stats.hits / hud.stats.shots) * 100)}%` : '—'}</strong><small>accuracy · {hud.stats.hits}/{hud.stats.shots}</small></div>
               <div className="record-stat"><strong>{hud.stats.distanceDriven >= 1000 ? `${(hud.stats.distanceDriven / 1000).toFixed(1)} km` : `${hud.stats.distanceDriven} m`}</strong><small>driven</small></div>
               <div className="record-stat"><strong>{hud.stats.sigils}/{hud.stats.sigilsTotal}</strong><small>sigils claimed</small></div>
+              {hud.stats.civilians > 0 && <div className="record-stat record-stat-grave"><strong>{hud.stats.civilians}</strong><small>civilians lost</small></div>}
             </div>
           </div>
         </section>
@@ -839,7 +840,7 @@ export default function GameShell() {
         <section className="modal-screen gameover-screen" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
           <Skull aria-hidden="true" /><p className="eyebrow">Signal lost</p><h1 id="gameover-title">Aurel is remembered.</h1><p>Slain by {lastKiller}. The city keeps the last checkpoint. Death is only a route with worse lighting.</p>
           {hud.stats.shots > 0 && (
-            <p className="gameover-stats">{hud.stats.kills} kills · {Math.round((hud.stats.hits / hud.stats.shots) * 100)}% accuracy · {hud.stats.sigils}/{hud.stats.sigilsTotal} sigils</p>
+            <p className="gameover-stats">{hud.stats.kills} kills · {Math.round((hud.stats.hits / hud.stats.shots) * 100)}% accuracy · {hud.stats.sigils}/{hud.stats.sigilsTotal} sigils{hud.stats.civilians > 0 ? ` · ${hud.stats.civilians} civilians lost` : ''}</p>
           )}
           <div><button className="primary-action" type="button" onClick={() => { engineRef.current?.retryCheckpoint(); setScreen('playing'); void engineRef.current?.resume(); }}><RotateCcw aria-hidden="true" /> Retry checkpoint</button><button className="secondary-button" type="button" onClick={() => { engineRef.current?.returnToTitle(); setScreen('title'); }}>Return to title</button></div>
         </section>
