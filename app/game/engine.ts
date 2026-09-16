@@ -185,6 +185,7 @@ interface TrafficCar {
   honkTimer: number;
   blockedFor: number;
   wrecked: boolean;
+  driverFled?: boolean;
   smoke?: THREE.Group;
   wheels: VehicleWheel[];
   tailMaterial: THREE.MeshStandardMaterial;
@@ -3696,6 +3697,22 @@ export class HeavensGateEngine {
     car.group.add(smoke);
     // The street keeps the scar — a wide scorch under the wreck.
     this.placeDecal(car.group.position, this.tmpMove.set(0, 1, 0), 15);
+    // The driver bails — a ghost car reads wrong, so somebody scrambles out
+    // the door and bolts for the sidewalk.
+    if (!car.driverFled && this.scene && this.actors) {
+      car.driverFled = true;
+      const side = car.direction > 0 ? 1 : -1;
+      const dx = car.axis === 'x' ? 0 : side * 1.9;
+      const dz = car.axis === 'x' ? side * 1.9 : 0;
+      const px = car.group.position.x + dx;
+      const pz = car.group.position.z + dz;
+      if (!this.collides(px, pz, 0.4)) {
+        const driver = this.addActor(`driver-${car.lane}-${Math.floor(this.elapsed * 10)}`, 'civilian', px, pz,
+          [0x4a5560, 0x5d5348, 0x3d4a55, 0x554b5a][car.lane & 3], 0xb8c4d0, 42);
+        driver.flee = 14;
+        driver.fleeHeading = Math.atan2(dx, dz);
+      }
+    }
     this.heat = clamp(this.heat + 8, 0, 100);
     this.emitToast('Vehicle disabled', 'Choir response escalating', 'danger');
     this.audio.explosion();
@@ -5141,6 +5158,7 @@ export class HeavensGateEngine {
       car.panic = 0;
       car.damage = 0;
       car.wrecked = false;
+      car.driverFled = false;
       car.group.rotation.z = 0;
       car.group.position.y = 0;
       if (car.smoke) {
@@ -5262,7 +5280,7 @@ export class HeavensGateEngine {
     // Reinforcements ride the heat — the reset zeroes it, so any live
     // hunters or Bulwarks stand down and dissolve rather than haunting a
     // quieted city.
-    const reinforcements = (this.actors ?? []).filter((actor) => actor.id.startsWith('reinforce-'));
+    const reinforcements = (this.actors ?? []).filter((actor) => actor.id.startsWith('reinforce-') || actor.id.startsWith('driver-'));
     reinforcements.forEach((actor) => {
       this.rayTargets = withoutSubtree(this.rayTargets ?? [], actor.group);
       this.scene?.remove(actor.group);
