@@ -799,6 +799,14 @@ export class AudioEngine {
     this.noise(0.12, 0.05, 2200);
   }
 
+  casingTink() {
+    // Brass hitting pavement — a high ring with a tiny bounce.
+    const pitch = 4200 + Math.random() * 1600;
+    this.tone(pitch, 0.07, 'triangle', 0.028, 0, this.effectsBus, pitch * 0.62);
+    this.tone(pitch * 1.18, 0.05, 'triangle', 0.016, 0.045, this.effectsBus, pitch * 0.7);
+    this.noise(0.025, 0.012, 8200);
+  }
+
   crash(intensity = 1) {
     const amount = clamp(intensity, 0.2, 1);
     // Metal crunch + low thud + glass scatter.

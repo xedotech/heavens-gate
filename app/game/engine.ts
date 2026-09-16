@@ -659,7 +659,7 @@ export class HeavensGateEngine {
   private deathCamTimer = 0;
   private lastKiller = 'the city';
   private whizCooldown = 0;
-  private casings: Array<{ mesh: THREE.Mesh; velocity: THREE.Vector3; spin: number; timer: number; active: boolean }> = [];
+  private casings: Array<{ mesh: THREE.Mesh; velocity: THREE.Vector3; spin: number; timer: number; active: boolean; bounced: boolean }> = [];
   private pulseCooldown = 0;
   private reticleHit = 0;
   private reticleKill = 0;
@@ -7465,7 +7465,7 @@ export class HeavensGateEngine {
         );
         mesh.visible = false;
         this.scene.add(mesh);
-        this.casings.push({ mesh, velocity: new THREE.Vector3(), spin: 0, timer: 0, active: false });
+        this.casings.push({ mesh, velocity: new THREE.Vector3(), spin: 0, timer: 0, active: false, bounced: false });
       }
     }
     const casing = this.casings.find((candidate) => !candidate.active) ?? this.casings[0];
@@ -7481,6 +7481,7 @@ export class HeavensGateEngine {
     );
     casing.spin = 14 + Math.random() * 10;
     casing.timer = 5.5;
+    casing.bounced = false;
     casing.active = true;
     casing.mesh.visible = true;
     casing.mesh.scale.setScalar(1);
@@ -7497,14 +7498,23 @@ export class HeavensGateEngine {
         casing.mesh.visible = false;
         return;
       }
-      const resting = casing.mesh.position.y <= 0.045 && casing.velocity.y <= 0;
+      // Rest height follows the real floor — brass lands on the Undergate's
+      // stone instead of falling through to street level.
+      const restY = (this.collisionBoxes
+        ? this.groundHeightAt(casing.mesh.position.x, casing.mesh.position.z, casing.mesh.position.y)
+        : 0) + 0.045;
+      const resting = casing.mesh.position.y <= restY && casing.velocity.y <= 0;
       if (!resting) {
         casing.velocity.y -= 16 * delta;
         casing.mesh.position.addScaledVector(casing.velocity, delta);
         casing.mesh.rotation.x += casing.spin * delta;
         casing.mesh.rotation.z += casing.spin * 0.7 * delta;
-        if (casing.mesh.position.y <= 0.045) {
-          casing.mesh.position.y = 0.045;
+        if (casing.mesh.position.y <= restY) {
+          casing.mesh.position.y = restY;
+          if (!casing.bounced) {
+            casing.bounced = true;
+            this.audio.casingTink?.();
+          }
           casing.velocity.y *= -0.32;
           casing.velocity.x *= 0.55;
           casing.velocity.z *= 0.55;
