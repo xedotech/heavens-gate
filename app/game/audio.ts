@@ -670,6 +670,41 @@ export class AudioEngine {
     this.tone(920, 0.035, 'square', 0.035);
   }
 
+  // A Warden's dying gasp over the Choir channel — a falling vocal formant
+  // cut by a clipped squelch, panned and occluded like any radio voice.
+  enemyDeath(from: SoundPosition, listener: SoundPosition, listenerYaw: number, occluded = false) {
+    if (!this.context || !this.effectsBus) return;
+    const mix = spatialGunshotMix(from, listener, listenerYaw, occluded);
+    const gain = Math.min(mix.gain * 0.9, 0.05);
+    if (gain < 0.002) return;
+    const pan = this.context.createStereoPanner();
+    const master = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    pan.pan.value = mix.pan * 0.75;
+    master.gain.value = gain;
+    filter.type = 'bandpass';
+    filter.frequency.value = Math.min(1400, mix.cutoff);
+    filter.Q.value = 1.6;
+    filter.connect(pan);
+    pan.connect(master);
+    master.connect(this.effectsBus);
+    const voices: AudioScheduledSourceNode[] = [];
+    const jitter = 0.92 + Math.random() * 0.16;
+    const gasp = this.tone(330 * jitter, 0.24, 'sawtooth', 0.5, 0, filter, 105);
+    if (gasp) voices.push(gasp);
+    const rasp = this.noise(0.14, 0.4, 850 * jitter, filter, 0.01);
+    if (rasp) voices.push(rasp);
+    const squelch = this.tone(2400 * jitter, 0.045, 'square', 0.16, 0.18, filter);
+    if (squelch) voices.push(squelch);
+    let remaining = voices.length;
+    const cleanup = () => { filter.disconnect(); pan.disconnect(); master.disconnect(); };
+    if (!remaining) cleanup();
+    voices.forEach((voice) => voice.addEventListener('ended', () => {
+      remaining -= 1;
+      if (remaining === 0) cleanup();
+    }, { once: true }));
+  }
+
   // The False Archon speaks — one throat carrying many voices: a chord of
   // detuned lows pushed through a formant that drifts upward as it dies.
   archonVoice(intensity = 0.5) {

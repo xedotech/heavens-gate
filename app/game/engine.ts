@@ -7244,7 +7244,8 @@ export class HeavensGateEngine {
 
   private killActor(actor: Actor) {
     actor.alive = false;
-    this.audio.explosion();
+    if (actor.kind === 'drone' || actor.kind === 'boss') this.audio.explosion();
+    else this.audio.enemyDeath?.(actor.group.position, this.player.position, this.cameraYaw);
     if (actor.kind !== 'civilian') {
       this.reticleKill = 0.55;
       this.statKills += 1;
