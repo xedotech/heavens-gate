@@ -155,6 +155,7 @@ interface Vehicle {
   speed: number;
   occupied: boolean;
   damage: number;
+  wrecked: boolean;
   bumpDip: number;
   spec: VehicleSpec;
   smoke?: THREE.Group;
@@ -3166,6 +3167,7 @@ export class HeavensGateEngine {
       speed: 0,
       occupied: false,
       damage: 0,
+      wrecked: false,
       bumpDip: 0,
       spec: this.vehicleSpecFor(id),
       bodyMaterial,
@@ -4537,6 +4539,9 @@ export class HeavensGateEngine {
       vehicle.speed = 0;
       vehicle.occupied = false;
       vehicle.damage = 0;
+      vehicle.wrecked = false;
+      vehicle.group.rotation.z = 0;
+      vehicle.group.position.y = 0;
       if (vehicle.smoke) {
         vehicle.group.remove(vehicle.smoke);
         this.disposeObject(vehicle.smoke);
@@ -5268,7 +5273,8 @@ export class HeavensGateEngine {
     const boost = this.isActionHeld('sprint');
     const handbrake = this.isActionHeld('jump');
     const spec = vehicle.spec ?? HeavensGateEngine.VEHICLE_SPECS.seraph;
-    const maxSpeed = (boost ? spec.boost : spec.top) * (vehicle.damage > 80 ? 0.45 : vehicle.damage > 40 ? 0.8 : 1);
+    const maxSpeed = vehicle.wrecked ? 0
+      : (boost ? spec.boost : spec.top) * (vehicle.damage > 80 ? 0.45 : vehicle.damage > 40 ? 0.8 : 1);
     const targetSpeed = throttle >= 0 ? throttle * maxSpeed : throttle * spec.top * 0.47;
     vehicle.speed = damp(vehicle.speed, targetSpeed, throttle ? spec.accel : 1.8, delta);
     if (handbrake) {
@@ -5369,8 +5375,24 @@ export class HeavensGateEngine {
         ((puff as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.1 + severity * 0.1;
       });
     }
+    // Total loss: the engine dies, the bay catches, the driver is thrown out.
+    if (vehicle.damage >= 110 && !vehicle.wrecked) {
+      vehicle.wrecked = true;
+      vehicle.speed = 0;
+      vehicle.bodyMaterial.emissive.setHex(0x30140c);
+      vehicle.bodyMaterial.emissiveIntensity = 0.9;
+      vehicle.group.rotation.z = 0.05;
+      vehicle.group.position.y -= 0.05;
+      this.placeDecal(vehicle.group.position, this.tmpMove.set(0, 1, 0), 15);
+      this.createShockwave(vehicle.group.position);
+      this.audio.explosion();
+      this.heat = clamp(this.heat + 10, 0, 100);
+      this.emitToast('Seraph destroyed', 'The engine bay gave out — get clear', 'danger');
+      this.takePlayerDamage(24, vehicle.group.position);
+      if (vehicle.occupied) this.exitVehicle();
+    }
     this.player.position.copy(vehicle.group.position);
-    this.audio.setEngine(vehicle.speed, true);
+    this.audio.setEngine(vehicle.wrecked ? 0 : vehicle.speed, true);
   }
 
   private clampWorld(position: THREE.Vector3, margin = 2) {
@@ -6722,7 +6744,7 @@ export class HeavensGateEngine {
       return;
     }
     const nearbyVehicle = this.vehicles
-      .filter((vehicle) => !vehicle.occupied)
+      .filter((vehicle) => !vehicle.occupied && !vehicle.wrecked)
       .sort((a, b) => a.group.position.distanceTo(this.player.position) - b.group.position.distanceTo(this.player.position))[0];
     if (nearbyVehicle && nearbyVehicle.group.position.distanceTo(this.player.position) < 4.8) {
       this.enterVehicle(nearbyVehicle);
