@@ -572,6 +572,7 @@ export class HeavensGateEngine {
   private dynamicObstacles: Array<{ x: number; z: number; radius: number }> = [];
   private cinematic: MissionCinematic | null = null;
   private hitStop = 0;
+  private shakeTrauma = 0;
   private rain: { mesh: THREE.InstancedMesh; drops: Float32Array; count: number } | null = null;
   private rainSplash: { mesh: THREE.InstancedMesh; ages: Float32Array; spots: Float32Array; count: number } | null = null;
   private cloudLayer: { mesh: THREE.Mesh; texture: THREE.CanvasTexture } | null = null;
@@ -5137,6 +5138,7 @@ export class HeavensGateEngine {
     this.applyWeaponVisibility();
     this.cinematic = null;
     this.hitStop = 0;
+    this.shakeTrauma = 0;
     this.corpses?.forEach((corpse) => {
       corpse.group.visible = false;
       corpse.materials.forEach((material) => { material.opacity = 1; material.transparent = false; });
@@ -5918,6 +5920,7 @@ export class HeavensGateEngine {
         if (!this.grounded) {
           const impact = clamp(-this.playerVelocity.y, 0, 24);
           this.landDip = Math.max(this.landDip, impact * 0.011);
+          this.addTrauma(clamp(impact * 0.02, 0, 0.38));
           if (impact > 7) {
             this.audio.footstep(true, (this.chapelInterior || this.stationInterior) ? 'stone' : 'street');
             this.pulseGamepad(50, clamp(impact * 0.02, 0.1, 0.4), clamp(impact * 0.014, 0.08, 0.3));
@@ -6073,6 +6076,7 @@ export class HeavensGateEngine {
       const impact = Math.abs(vehicle.speed);
       if (impact > 8) {
         this.audio.crash?.(clamp(impact / 34, 0.2, 1));
+        this.addTrauma(clamp(impact / 34, 0.15, 0.65));
         vehicle.damage = (vehicle.damage ?? 0) + impact * 1.1 * spec.damageScale;
         vehicle.bumpDip = clamp(impact * 0.008, 0.06, 0.16);
       }
@@ -6439,6 +6443,7 @@ export class HeavensGateEngine {
       const hoodTarget = hoodPos.clone().addScaledVector(forwardHood, 8);
       hoodTarget.y -= Math.sin(this.cameraPitch) * 6;
       this.camera.lookAt(hoodTarget);
+      this.applyCameraShake(delta);
       const hoodFov = clamp(this.settings?.fov ?? 56, 48, 78) + clamp(Math.abs(vehicle.speed) * 0.34, 0, 14);
       this.camera.fov = damp(this.camera.fov, hoodFov, 5, delta);
       this.camera.updateProjectionMatrix();
@@ -6489,6 +6494,7 @@ export class HeavensGateEngine {
       lookTarget.y -= this.hurtKick * 0.4;
     }
     this.camera.lookAt(lookTarget);
+    this.applyCameraShake(delta);
     const baseFov = clamp(this.settings?.fov ?? 56, 48, 78);
     const sprintKick = !this.currentVehicle && !aiming && (this.playerSprinting ?? false) ? 3.2 : 0;
     const targetFov = this.currentVehicle ? baseFov + 2 + clamp(speed * 0.28, 0, 12) : aiming ? baseFov * 0.875 : baseFov + sprintKick;
@@ -6502,6 +6508,23 @@ export class HeavensGateEngine {
     } else if (this.inspectionKey) {
       this.inspectionKey.intensity = damp(this.inspectionKey.intensity, 0, 5, delta);
     }
+  }
+
+  private addTrauma(amount: number) {
+    this.shakeTrauma = clamp(this.shakeTrauma + amount, 0, 1);
+  }
+
+  // Trauma-squared shake after lookAt — damage, blasts, crashes and hard
+  // landings kick the frame. Decays fast, respects reduced motion.
+  private applyCameraShake(delta: number) {
+    if (this.shakeTrauma <= 0) return;
+    this.shakeTrauma = Math.max(0, this.shakeTrauma - delta * 1.6);
+    if (this.settings?.reducedMotion) return;
+    const amp = this.shakeTrauma * this.shakeTrauma;
+    const t = this.elapsed * 31;
+    this.camera.rotation.x += Math.sin(t * 1.13) * amp * 0.017;
+    this.camera.rotation.y += Math.sin(t * 0.91 + 1.7) * amp * 0.017;
+    this.camera.rotation.z += Math.sin(t * 1.29 + 3.4) * amp * 0.022;
   }
 
   private updateWeaponSway(delta: number) {
@@ -6911,6 +6934,7 @@ export class HeavensGateEngine {
   private takePlayerDamage(amount: number, source?: THREE.Vector3) {
     if (this.invulnerability > 0 || this.gameOverSent) return;
     this.invulnerability = 0.16;
+    this.addTrauma(clamp(amount * 0.014, 0.12, 0.45));
     // Cover blocks most fire arriving from beyond the held face. Aiming
     // peeks over/around it — exposed, but not fully.
     if (source && this.coverFace) {
@@ -7526,6 +7550,7 @@ export class HeavensGateEngine {
     });
     if (landed) {
       this.audio.meleeHit();
+      this.addTrauma(0.14);
       if (!this.settings.reducedMotion) this.hitStop = Math.max(this.hitStop, 0.05);
     }
   }
@@ -7712,6 +7737,7 @@ export class HeavensGateEngine {
       if (distance < 7) this.killLamp(index, new THREE.Vector3(lamp.x, 4.7, lamp.z));
     });
     const playerDistance = this.player.position.distanceTo(position);
+    this.addTrauma(clamp(0.62 - playerDistance * 0.032, 0.12, 0.62));
     if (playerDistance < 4 && !this.currentVehicle) this.takePlayerDamage(12 * (1 - playerDistance / 4));
   }
 
@@ -7866,6 +7892,8 @@ export class HeavensGateEngine {
     this.placeDecal(vehicle.group.position, this.tmpMove.set(0, 1, 0), 15);
     this.createShockwave(vehicle.group.position);
     this.audio.explosion();
+    this.addTrauma(vehicle.occupied || this.currentVehicle === vehicle ? 0.8
+      : clamp(0.5 - vehicle.group.position.distanceTo(this.player.position) * 0.03, 0.1, 0.5));
     this.heat = clamp(this.heat + 10, 0, 100);
     this.emitToast(`${vehicle.spec.name} destroyed`, 'The engine bay gave out — get clear', 'danger');
     this.takePlayerDamage(24, vehicle.group.position);
