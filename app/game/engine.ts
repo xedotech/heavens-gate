@@ -202,6 +202,10 @@ interface Corpse {
   life: number;
   total: number;
   tip: number;
+  /** Actors that have already spotted this body — no repeat alarms. */
+  noticedBy: Set<string>;
+  /** Whether the find has been radioed to the squad. */
+  reported: boolean;
 }
 
 interface DropPickup {
@@ -520,6 +524,8 @@ export class HeavensGateEngine {
   private tmpAimTarget = new THREE.Vector3();
   private tmpLosFrom = new THREE.Vector3();
   private tmpLosTo = new THREE.Vector3();
+  private tmpActorFwd2 = new THREE.Vector3();
+  private radioSeq = 1;
   private tmpMove = new THREE.Vector3();
   private tmpPrevPos = new THREE.Vector3();
   private tmpShotSeg = new THREE.Vector3();
@@ -6206,6 +6212,43 @@ export class HeavensGateEngine {
     return this.firstWorldObstruction(from, to) === null;
   }
 
+  // Body discovery: an unaware patrol that gets eyes on a corpse walks the
+  // find like a noise — investigate point at the body, suspicion climbing.
+  // First spotter radios it in; each actor only notices a body once.
+  private corpseStimulus(actor: Actor) {
+    if (!this.corpses?.length) return undefined;
+    const eye = this.tmpLosFrom.copy(actor.group.position).setY(actor.group.position.y + 1.55);
+    for (const body of this.corpses) {
+      if (body.noticedBy.has(actor.id) || !body.group.visible) continue;
+      const dx = body.group.position.x - actor.group.position.x;
+      const dz = body.group.position.z - actor.group.position.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance > 11 || distance < 0.4) continue;
+      const forward = this.tmpActorFwd2.set(Math.sin(actor.group.rotation.y), 0, Math.cos(actor.group.rotation.y));
+      if ((forward.x * dx + forward.z * dz) / distance < 0.1) continue;
+      if (this.firstWorldObstruction(eye, this.tmpLosTo.copy(body.group.position).setY(0.6))) continue;
+      body.noticedBy.add(actor.id);
+      if (!body.reported) {
+        body.reported = true;
+        this.radioSignals.push({
+          squadId: 'choir-wardens',
+          senderId: actor.id,
+          sequence: this.radioSeq++,
+          targetPosition: { x: body.group.position.x, y: body.group.position.y, z: body.group.position.z },
+          confidence: 0.75,
+          threat: 'damage',
+        });
+        this.audio.radioBark?.(actor.group.position, this.player.position, this.cameraYaw, false);
+      }
+      return {
+        position: { x: body.group.position.x, y: body.group.position.y, z: body.group.position.z },
+        distanceMeters: distance,
+        loudness: 0.62,
+      };
+    }
+    return undefined;
+  }
+
   private firstWorldObstruction(from: THREE.Vector3, to: THREE.Vector3, padding = 0) {
     const delta = (this.losDelta ??= new THREE.Vector3()).copy(to).sub(from);
     const distance = delta.length();
@@ -6641,13 +6684,18 @@ export class HeavensGateEngine {
           distanceMeters: distance,
           loudness: 0.9,
         } : undefined;
+        // A body in the patrol's view reads as a stimulus — investigate the
+        // corpse, climb suspicion, first spotter radios the squad.
+        const corpsePing = !sound && actor.aiState.phase !== 'combat'
+          ? this.corpseStimulus(actor)
+          : undefined;
         const aiStep = stepNpcAi(actor.aiState, {
           deltaSeconds: delta,
           position: { x: actorPosition.x, y: actorPosition.y, z: actorPosition.z },
           health: actor.health,
           maxHealth: actor.maxHealth,
           target,
-          sound,
+          sound: sound ?? corpsePing,
           damage: actor.lastDamageAmount > 0 ? {
             amount: actor.lastDamageAmount,
             sourcePosition: { x: playerPosition.x, y: playerPosition.y, z: playerPosition.z },
@@ -7132,6 +7180,8 @@ export class HeavensGateEngine {
         : actor.lastHitAngle !== undefined
           ? (actor.lastHitCritical ? -1 : 1) * Math.PI / 2
           : (Math.PI / 2) * (seeded(actor.id.length, 311) > 0.5 ? 1 : -1),
+      noticedBy: new Set<string>(),
+      reported: false,
     });
     this.spawnDrop(actor);
     if (actor.id.startsWith('warden-')) {
