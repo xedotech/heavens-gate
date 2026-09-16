@@ -670,6 +670,35 @@ export class AudioEngine {
     this.tone(920, 0.035, 'square', 0.035);
   }
 
+  // The False Archon speaks — one throat carrying many voices: a chord of
+  // detuned lows pushed through a formant that drifts upward as it dies.
+  archonVoice(intensity = 0.5) {
+    const ctx = this.context;
+    if (!ctx || !this.effectsBus || this.muted) return;
+    const now = ctx.currentTime;
+    [92, 123.5, 184].forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const formant = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f, now);
+      osc.frequency.linearRampToValueAtTime(f * (0.92 + intensity * 0.14), now + 1.7);
+      formant.type = 'bandpass';
+      formant.Q.value = 3.5;
+      formant.frequency.setValueAtTime(280 + i * 240, now);
+      formant.frequency.linearRampToValueAtTime(660 + i * 280, now + 1.3);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.04 + intensity * 0.05, now + 0.3);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.9);
+      osc.connect(formant);
+      formant.connect(gain);
+      gain.connect(this.effectsBus!);
+      osc.start(now);
+      osc.stop(now + 2);
+      osc.onended = () => { osc.disconnect(); formant.disconnect(); gain.disconnect(); };
+    });
+  }
+
   lowAmmo() {
     // A dry click under the report — the mag's about to quit.
     this.tone(1500, 0.028, 'square', 0.016, 0.012);

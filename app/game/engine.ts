@@ -689,6 +689,7 @@ export class HeavensGateEngine {
   private echoesActivated = new Set<string>();
   private boss: Actor | null = null;
   private bossPhase = 0;
+  private nextBossVoiceAt = 0;
   private bossHalo: THREE.MeshStandardMaterial | null = null;
   private choiceRequested = false;
   private missionDeadline: number | null = null;
@@ -8001,6 +8002,8 @@ export class HeavensGateEngine {
     actor.materials.push(haloMaterial);
     this.boss = actor;
     this.bossPhase = 0;
+    this.nextBossVoiceAt = this.elapsed + 6;
+    this.audio.archonVoice?.(0.4);
     this.bossHalo = haloMaterial;
     this.emitToast('BOSS // FALSE ARCHON', 'Break the halo. Silence the voice.', 'danger');
     this.beginCinematic(actor.group.position.clone());
@@ -8012,11 +8015,16 @@ export class HeavensGateEngine {
   private updateBossPhase() {
     const boss = this.boss;
     if (!boss || !boss.alive) return;
+    if (this.elapsed >= this.nextBossVoiceAt) {
+      this.nextBossVoiceAt = this.elapsed + 9 + Math.random() * 5;
+      this.audio.archonVoice?.(0.35 + this.bossPhase * 0.25);
+    }
     const fraction = boss.health / 520;
     if (this.bossPhase === 0 && fraction <= 0.66) {
       this.bossPhase = 1;
       this.emitToast('The Choir sings', 'Wardens answer the failing voice', 'danger');
       this.emitSubtitle('False Archon', 'A door does not bleed. A door does not fear.');
+      this.audio.archonVoice?.(0.7);
       [[-6, 4], [6, 4]].forEach(([dx, dz], index) => {
         const add = this.addActor(`archon-choir-${index + 1}`, 'enemy',
           boss.group.position.x + dx, boss.group.position.z + dz, 0x2c2622, 0xe8a34c, 120);
@@ -8030,6 +8038,7 @@ export class HeavensGateEngine {
       this.bossHalo?.color.setHex(0x8a2a1e);
       this.emitToast('THE MASK SLIPS', 'The Archon is done pretending to be merciful', 'danger');
       this.emitSubtitle('Nia', 'The voice is breaking up — end it, Aurel.');
+      this.audio.archonVoice?.(1);
       this.createShockwave(boss.group.position);
     }
   }
