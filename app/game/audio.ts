@@ -38,6 +38,7 @@ export class AudioEngine {
   private master: GainNode | null = null;
   private masterFilter: BiquadFilterNode | null = null;
   private interiorSend: GainNode | null = null;
+  private streetSend: GainNode | null = null;
   private veilBed: { source: AudioBufferSourceNode; gain: GainNode; lfo: OscillatorNode; lfoGain: GainNode } | null = null;
   private ambientBus: GainNode | null = null;
   private effectsBus: GainNode | null = null;
@@ -100,6 +101,26 @@ export class AudioEngine {
       echoFilter.connect(echoFeedback);
       echoFeedback.connect(echoDelay);
       echoFilter.connect(this.master);
+
+      // Street slap: the same effects feed a longer, brighter delay — the
+      // report bouncing down the canyon of facades. Always on outdoors,
+      // faded out as the interior tail takes over.
+      const streetDelay = this.context.createDelay(0.6);
+      streetDelay.delayTime.value = 0.19;
+      const streetFilter = this.context.createBiquadFilter();
+      streetFilter.type = 'bandpass';
+      streetFilter.frequency.value = 1500;
+      streetFilter.Q.value = 0.6;
+      const streetFeedback = this.context.createGain();
+      streetFeedback.gain.value = 0.24;
+      this.streetSend = this.context.createGain();
+      this.streetSend.gain.value = 0.3;
+      this.effectsBus.connect(this.streetSend);
+      this.streetSend.connect(streetDelay);
+      streetDelay.connect(streetFilter);
+      streetFilter.connect(streetFeedback);
+      streetFeedback.connect(streetDelay);
+      streetFilter.connect(this.master);
       }
 
       this.startAmbient();
@@ -172,6 +193,7 @@ export class AudioEngine {
     const level = clamp(amount, 0, 1);
     const now = this.context.currentTime;
     this.interiorSend.gain.setTargetAtTime(level * 0.5, now, 0.25);
+    this.streetSend?.gain.setTargetAtTime(0.3 * (1 - level), now, 0.3);
     this.ambientBus.gain.setTargetAtTime(0.42 * (1 - level * 0.72), now, 0.35);
   }
 
@@ -313,10 +335,11 @@ export class AudioEngine {
     return oscillator;
   }
 
-  private noise(duration: number, volume: number, frequency: number, destination: AudioNode | null = this.effectsBus) {
+  private noise(duration: number, volume: number, frequency: number, destination: AudioNode | null = this.effectsBus, delay = 0) {
     if (!this.context || !destination) return;
     const buffer = this.createNoiseBuffer(Math.max(duration, 0.15));
     if (!buffer) return;
+    const start = this.context.currentTime + delay;
     const source = this.context.createBufferSource();
     const filter = this.context.createBiquadFilter();
     const gain = this.context.createGain();
@@ -324,13 +347,13 @@ export class AudioEngine {
     filter.type = 'bandpass';
     filter.frequency.value = frequency;
     filter.Q.value = 0.8;
-    gain.gain.setValueAtTime(volume, this.context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, this.context.currentTime + duration);
+    gain.gain.setValueAtTime(volume, start);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     source.connect(filter);
     filter.connect(gain);
     gain.connect(destination);
-    source.start();
-    source.stop(this.context.currentTime + duration);
+    source.start(start);
+    source.stop(start + duration);
     source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
     return source;
   }
@@ -586,6 +609,8 @@ export class AudioEngine {
       this.tone(210 * jitter, 0.1, 'square', 0.05, 0, this.effectsBus, 72);
       this.tone(64 * jitter, 0.17, 'sine', 0.09, 0, this.effectsBus, 30);
       this.noise(0.34, 0.026, 420);
+      // Capacitor recharge — a falling whine as the coils drink again.
+      this.tone(2600 * jitter, 0.1, 'sine', 0.018, 0.07, this.effectsBus, 820);
       return;
     }
     if (voice === 'vesper') {
@@ -594,6 +619,9 @@ export class AudioEngine {
       this.tone(52 * jitter, 0.34, 'sine', 0.16, 0, this.effectsBus, 24);
       this.tone(96 * jitter, 0.12, 'sawtooth', 0.06, 0.01, this.effectsBus, 40);
       this.noise(0.52, 0.034, 300);
+      // The pump — fore clack then the return, the slowest mechanical tell.
+      this.noise(0.018, 0.045, 1900 * jitter, this.effectsBus, 0.27);
+      this.noise(0.022, 0.04, 1300 * jitter, this.effectsBus, 0.37);
       return;
     }
     this.noise(0.045, 0.2, 2600 * jitter);
@@ -601,6 +629,9 @@ export class AudioEngine {
     this.tone(110 * jitter, 0.11, 'square', 0.06, 0, this.effectsBus, 48);
     this.tone(58 * jitter, 0.18, 'sine', 0.1, 0, this.effectsBus, 28);
     this.noise(0.3, 0.02, 480);
+    // Slide racks back — the bright metal clack ~90ms after the report.
+    this.noise(0.016, 0.04, 5200 * jitter, this.effectsBus, 0.09);
+    this.tone(2350 * jitter, 0.02, 'square', 0.014, 0.09, this.effectsBus, 1600);
   }
 
   swap() {
