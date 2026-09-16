@@ -715,8 +715,15 @@ export class AudioEngine {
     if (critical) this.tone(340, 0.12, 'triangle', 0.045, 0.015, this.effectsBus, 220);
   }
 
-  footstep(run = false, surface: 'street' | 'stone' | 'veil' = 'street') {
+  footstep(run = false, surface: 'street' | 'stone' | 'veil' | 'puddle' = 'street') {
     const jitter = 0.9 + Math.random() * 0.2;
+    if (surface === 'puddle') {
+      // Standing water: a low soak plus a bright scatter of droplets.
+      this.noise(0.09, run ? 0.03 : 0.016, 340 * jitter);
+      this.noise(0.05, run ? 0.014 : 0.008, 3200 * jitter, this.effectsBus, 0.015);
+      this.tone(120 * jitter, 0.05, 'sine', run ? 0.018 : 0.01, 0, this.effectsBus, 70);
+      return;
+    }
     // Recorded foley first — synth layers stay as the pending/failed fallback.
     if (surface === 'street' && this.playSample('footstep-street', run ? 0.5 : 0.3, run ? 1.06 : 0.98)) return;
     if (surface === 'stone' && this.playSample('footstep-stone', run ? 0.5 : 0.3, run ? 1.05 : 0.95)) return;

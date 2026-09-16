@@ -550,6 +550,7 @@ export class HeavensGateEngine {
   private moveRight = new THREE.Vector3();
   private moveDesired = new THREE.Vector3();
   private vehiclePrev = new THREE.Vector3();
+  private puddleSpots: Array<{ x: number; z: number }> = [];
   private contactShadows: THREE.InstancedMesh | null = null;
   private contactShadowMatrix = new THREE.Matrix4();
   private contactShadowPosition = new THREE.Vector3();
@@ -1784,6 +1785,7 @@ export class HeavensGateEngine {
       const x = horizontal ? along : road + curbBand;
       const z = horizontal ? road + curbBand : along;
       if (this.collides(x, z, 0.3)) continue;
+      (this.puddleSpots ??= []).push({ x, z });
       const yaw = horizontal ? 0 : Math.PI / 2;
       yawQuat.setFromAxisAngle(upAxis, yaw + (seeded(i, 165) - 0.5) * 0.5);
       final.copy(yawQuat).multiply(flat);
@@ -2966,6 +2968,19 @@ export class HeavensGateEngine {
     this.scene.add(mesh);
     this.contactShadows = mesh;
     this.contactShadowQuaternion.setFromEuler(this.litterEuler.set(-Math.PI / 2, 0, 0));
+  }
+
+  private footstepSurface(): 'street' | 'stone' | 'veil' | 'puddle' {
+    if (this.veilActive) return 'veil';
+    if (this.chapelInterior || this.stationInterior) return 'stone';
+    if (this.player.position.y < 0.4) {
+      for (const spot of this.puddleSpots ?? []) {
+        const dx = spot.x - this.player.position.x;
+        const dz = spot.z - this.player.position.z;
+        if (dx * dx + dz * dz < 3.2) return 'puddle';
+      }
+    }
+    return 'street';
   }
 
   private updateContactShadows() {
@@ -5887,7 +5902,7 @@ export class HeavensGateEngine {
         this.grounded = this.vaultTo.y > 0.2;
         this.playerVelocity.y = this.grounded ? 0 : -1.5;
         this.hurtKick = (this.hurtKick ?? 0) + 0.06;
-        this.audio.footstep(true, (this.chapelInterior || this.stationInterior) ? 'stone' : 'street');
+        this.audio.footstep(true, this.footstepSurface());
       }
     } else if (this.vehicleEnter) {
       // Door-walk blend: ease toward the door point while the gait machine
@@ -5929,7 +5944,7 @@ export class HeavensGateEngine {
           this.landDip = Math.max(this.landDip, impact * 0.011);
           this.addTrauma(clamp(impact * 0.02, 0, 0.38));
           if (impact > 7) {
-            this.audio.footstep(true, (this.chapelInterior || this.stationInterior) ? 'stone' : 'street');
+            this.audio.footstep(true, this.footstepSurface());
             this.pulseGamepad(50, clamp(impact * 0.02, 0.1, 0.4), clamp(impact * 0.014, 0.08, 0.3));
           }
           // Hard drops tuck into a recovery roll instead of a flat stomp.
@@ -6023,7 +6038,7 @@ export class HeavensGateEngine {
     });
     this.footstepTimer -= delta;
     if (movement > 1.4 && this.grounded && this.slideRemaining <= 0 && this.dodgeRemaining <= 0 && this.footstepTimer <= 0) {
-      this.audio.footstep(sprinting, this.veilActive ? 'veil' : (this.chapelInterior || this.stationInterior) ? 'stone' : 'street');
+      this.audio.footstep(sprinting, this.footstepSurface());
       this.footstepTimer = sprinting ? 0.29 : 0.44;
     }
   }
