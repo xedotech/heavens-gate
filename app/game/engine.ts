@@ -7031,6 +7031,7 @@ export class HeavensGateEngine {
     }
     this.heroCharacter?.playOnce('fire', 0.045);
     this.ammo -= 1;
+    if (this.ammo > 0 && this.ammo <= 3) this.audio.lowAmmo?.();
     this.statShots += spec.pellets;
     this.shotCooldown = shotIntervalSeconds(spec);
     this.weaponRecoil = addShotRecoil(this.weaponRecoil, spec);

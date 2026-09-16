@@ -670,6 +670,11 @@ export class AudioEngine {
     this.tone(920, 0.035, 'square', 0.035);
   }
 
+  lowAmmo() {
+    // A dry click under the report — the mag's about to quit.
+    this.tone(1500, 0.028, 'square', 0.016, 0.012);
+  }
+
   reload() {
     this.tone(290, 0.05, 'square', 0.028);
     this.tone(440, 0.07, 'square', 0.035, 0.34);
