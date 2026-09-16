@@ -1437,6 +1437,43 @@ export class HeavensGateEngine {
         this.rayTargets.push(mesh);
       });
     });
+
+    // Setback crowns — the skyline's second silhouette. Tall towers grow a
+    // stepped upper tier (the tallest a second, slimmer one), slightly darker
+    // like real roof massing. Same bucket → same facade material as the
+    // tower it sits on.
+    const crownBuckets: Array<Array<{ matrix: THREE.Matrix4; color: THREE.Color }>> = [[], [], []];
+    const crownMatrix = new THREE.Matrix4();
+    const crownQuat = new THREE.Quaternion();
+    buildingData.forEach((building, buildingIndex) => {
+      if (building.scale.y < 16 || seeded(buildingIndex, 90) < 0.42) return;
+      const pick = seeded(buildingIndex, 77);
+      const bucket = pick < 0.5 ? 0 : pick < 0.82 ? 1 : 2;
+      const tiers = building.scale.y > 30 && seeded(buildingIndex, 91) > 0.45 ? 2 : 1;
+      const crownColor = building.color.clone().multiplyScalar(0.82);
+      let topY = building.scale.y;
+      for (let tier = 0; tier < tiers; tier += 1) {
+        const shrink = tier === 0 ? 0.62 : 0.4;
+        const tierHeight = 3.2 + seeded(buildingIndex + tier * 97, 92) * 4.6;
+        crownMatrix.compose(
+          new THREE.Vector3(building.position.x, topY + tierHeight / 2, building.position.z),
+          crownQuat,
+          new THREE.Vector3(building.scale.x * shrink, tierHeight, building.scale.z * shrink),
+        );
+        crownBuckets[bucket].push({ matrix: crownMatrix.clone(), color: crownColor });
+        topY += tierHeight;
+      }
+    });
+    const bucketMaterials = [buildingMaterial, buildingMaterialWarm, buildingMaterialCool];
+    crownBuckets.forEach((placements, bucketIndex) => {
+      if (!placements.length) return;
+      this.addInstancedChunks(facadeGeometry, bucketMaterials[bucketIndex], placements).forEach((mesh) => {
+        mesh.castShadow = this.highTier();
+        mesh.receiveShadow = true;
+        mesh.userData.blocksShot = true;
+        this.rayTargets.push(mesh);
+      });
+    });
     this.createBuildingDetails(buildingData);
     this.createStreetMarkings();
 
