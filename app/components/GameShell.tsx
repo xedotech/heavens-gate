@@ -55,6 +55,10 @@ import {
 
 const browserStorage = () => window.localStorage;
 
+// Menu chrome hover sound — the shell registers the engine's blip once it's
+// live; before boot this is null and hovers stay silent.
+let menuHoverSound: (() => void) | null = null;
+
 // First-boot quality guess from hardware signals — the player can always
 // override in Settings; this just stops weak machines from opening on a
 // preset they can't carry.
@@ -248,6 +252,7 @@ function MenuButton({
       type="button"
       className={`menu-button${primary ? ' menu-button-primary' : ''}`}
       onClick={onClick}
+      onMouseEnter={menuHoverSound ?? undefined}
       disabled={disabled}
     >
       <span className="menu-button-icon" aria-hidden="true">{icon}</span>
@@ -261,6 +266,11 @@ export default function GameShell() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<HeavensGateEngine | null>(null);
   const getEngine = useCallback(() => engineRef.current, []);
+  // Register the menu hover blip once the engine exists.
+  useEffect(() => {
+    menuHoverSound = () => engineRef.current?.uiBlip();
+    return () => { menuHoverSound = null; };
+  }, []);
   const settingsRef = useRef<GameSettings>(DEFAULT_SETTINGS);
   const unsavedSettingsRef = useRef(false);
   const latestSaveRef = useRef<SaveState | null>(null);

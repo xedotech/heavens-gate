@@ -5398,6 +5398,11 @@ export class HeavensGateEngine {
     void this.audio.unlock().then(() => this.audio.testMix());
   }
 
+  /** Menu chrome blip — the shell calls this on button clicks. */
+  uiBlip(confirm = false) {
+    this.audio.ui(confirm);
+  }
+
   resolveEnding(ending: 'open' | 'seal') {
     if (this.missionIndex !== 6) return;
     this.choiceRequested = false;
