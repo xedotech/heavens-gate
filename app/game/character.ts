@@ -322,6 +322,9 @@ export class HeroCharacter {
   // Pre-bend spine quaternions — restored before each mixer.update so the
   // aim-lean never accumulates on bones the active clip doesn't keyframe.
   private readonly spinePreBend: THREE.Quaternion[] = [];
+  // Same contract for every IK write — premultiplied deltas would drift on
+  // unkeyed bones exactly the way the spine fold did.
+  private readonly ikPrePose = new Map<THREE.Bone, THREE.Quaternion>();
   private heldObject: THREE.Object3D | null = null;
   // Foot IK — thigh/calf/foot chains, lazily measured ankle height, and the
   // engine's ground sampler. Only non-locomotion motions plant the feet;
@@ -590,10 +593,19 @@ export class HeroCharacter {
   private applyWorldDelta(bone: THREE.Bone, deltaWorld: THREE.Quaternion, weight: number) {
     const parent = bone.parent;
     if (!parent) return;
+    // Record the pre-IK pose — premultiply accumulates on bones the active
+    // clip doesn't keyframe, so update() restores these before each mix.
+    let pre = this.ikPrePose.get(bone);
+    if (!pre) this.ikPrePose.set(bone, pre = new THREE.Quaternion());
+    pre.copy(bone.quaternion);
     parent.getWorldQuaternion(ikParentQuat);
     ikLocalDelta.copy(ikParentQuat).invert().multiply(deltaWorld).multiply(ikParentQuat);
     if (weight < 1) ikLocalDelta.slerp(ikIdentity, 1 - weight);
     bone.quaternion.premultiply(ikLocalDelta);
+  }
+
+  private restoreIkPose() {
+    this.ikPrePose.forEach((pre, bone) => bone.quaternion.copy(pre));
   }
 
   setFootIKSampler(sampler: ((x: number, z: number) => number | null) | null) {
@@ -603,6 +615,7 @@ export class HeroCharacter {
   update(delta: number, elapsed: number, combatIntensity: number, aimPitch = 0, grounded = false) {
     if (this.disposed) return;
     this.restoreSpinePose();
+    this.restoreIkPose();
     this.mixer.update(delta);
     this.aimPitchTarget = aimPitch;
     this.applyAimPitch(delta);
