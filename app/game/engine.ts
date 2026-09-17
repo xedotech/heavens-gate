@@ -1055,6 +1055,8 @@ export class HeavensGateEngine {
       this.createSigils();
       this.createContactShadows();
       await this.nextFrame();
+      this.callbacks.onLoadProgress(0.94, 'Warming the projector');
+      await this.warmupRenderer();
       this.callbacks.onLoadProgress(1, 'The city remembers');
       this.initialized = true;
       this.callbacks.onReady();
@@ -1068,6 +1070,24 @@ export class HeavensGateEngine {
 
   private nextFrame() {
     return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+
+  // Without a warmup the first gameplay frames pay every shader compile and
+  // texture upload at once — a multi-second stall right as the player takes
+  // control. Compile scene materials and run one full composer pass (shadow
+  // map + post chain + uploads) behind the load screen instead.
+  private async warmupRenderer() {
+    if (!this.renderer || !this.player) return;
+    try {
+      this.camera.position.set(this.player.position.x, this.player.position.y + 2.6, this.player.position.z - 4.5);
+      this.camera.lookAt(this.player.position.x, this.player.position.y + 1.5, this.player.position.z);
+      if (this.renderer.compileAsync) await this.renderer.compileAsync(this.scene, this.camera);
+      else this.renderer.compile(this.scene, this.camera);
+      await this.nextFrame();
+      if (this.composer) this.composer.render();
+      else this.renderer.render(this.scene, this.camera);
+      await this.nextFrame();
+    } catch { /* warmup is best-effort — the game still runs without it */ }
   }
 
   // Resolves once the world has finished booting — derived-asset loads wait
