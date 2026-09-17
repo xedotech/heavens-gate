@@ -787,7 +787,8 @@ export class HeavensGateEngine {
 
   private readonly onMouseMove = (event: MouseEvent) => {
     if ((!this.pointerLocked && !this.pointerFallback) || this.mode !== 'playing' || this.paused || this.contextLost) return;
-    if (this.pointerFallback && event.target !== this.canvas) return;
+    if (this.pointerFallback && event.target !== this.canvas
+      && (event.target as HTMLElement | null)?.closest?.('.touch-look, .touch-stick') == null) return;
     const sensitivity = this.settings.sensitivity * 0.0022;
     this.cameraYaw -= event.movementX * sensitivity;
     this.cameraPitch = this.photoMode
@@ -795,9 +796,34 @@ export class HeavensGateEngine {
       : clamp(this.cameraPitch - event.movementY * sensitivity, -0.24, 0.74);
   };
 
-  private readonly onPointerDown = (event: PointerEvent) => {
-    if ((event.button !== 0 && event.button !== 2) || this.mode !== 'playing' || this.paused || this.contextLost || event.target !== this.canvas) return;
+  // Button state edge-detected off the event's `buttons` bitmask instead of
+  // `event.button`: Chrome fires pointerdown only for the FIRST button of a
+  // chord — holding right (aim) then pressing left produces a mousedown with
+  // no pointerdown, so a pointerdown-only listener can never fire while aiming.
+  private pointerButtonsHeld = 0;
+
+  private readonly onButtonEvent = (event: PointerEvent | MouseEvent) => {
+    const down = event.type === 'pointerdown' || event.type === 'mousedown';
+    const prev = this.pointerButtonsHeld;
+    const buttons = event.buttons ?? 0;
+    this.pointerButtonsHeld = buttons;
+    if (!down) {
+      const released = prev & ~buttons;
+      if (released & 1) this.mouseShootHeld = false;
+      if (released & 2 && !this.settings.aimToggle) this.mouseAimHeld = false;
+      return;
+    }
+    const newly = buttons & ~prev;
+    if (!(newly & 3)) return; // duplicate event from the other family, or middle+
+    // Touch-surfaces pass mouse clicks through: on hybrid laptops the touch
+    // layer stays visible after first touch and .touch-look/.touch-stick would
+    // otherwise eat right/left-side mouse clicks (they ignore pointerType
+    // 'mouse' themselves, so nothing would act on them at all).
+    const target = event.target as HTMLElement | null;
+    const onPassThrough = target?.closest?.('.touch-look, .touch-stick') != null;
+    if (this.mode !== 'playing' || this.paused || this.contextLost || (event.target !== this.canvas && !onPassThrough)) return;
     if (!this.pointerLocked && !this.pointerFallback) {
+      // First gesture belongs to the lock request — no shot on entry.
       const lockRequest = this.canvas.requestPointerLock?.();
       if (lockRequest) {
         void lockRequest.catch(() => this.enablePointerFallback());
@@ -817,13 +843,14 @@ export class HeavensGateEngine {
       const retry = this.canvas.requestPointerLock?.();
       if (retry) void retry.catch(() => {});
     }
-    if (event.button === 2) {
+    if (newly & 2) {
       if (this.settings.aimToggle) this.aimToggled = !this.aimToggled;
       else this.mouseAimHeld = true;
-      return;
     }
-    this.mouseShootHeld = true;
-    this.tryShoot();
+    if (newly & 1) {
+      this.mouseShootHeld = true;
+      this.tryShoot();
+    }
   };
 
   private enablePointerFallback() {
@@ -831,11 +858,6 @@ export class HeavensGateEngine {
     this.pointerFallback = true;
     this.emitToast('Pointer lock unavailable', 'Drag-look fallback active — click the canvas, then move the mouse to aim.', 'info');
   }
-
-  private readonly onPointerUp = (event: PointerEvent) => {
-    if (event.button === 0) this.mouseShootHeld = false;
-    if (event.button === 2 && !this.settings.aimToggle) this.mouseAimHeld = false;
-  };
 
   private readonly onWheel = (event: WheelEvent) => {
     if (this.mode !== 'playing' || this.paused || this.contextLost || event.deltaY === 0) return;
@@ -911,10 +933,39 @@ export class HeavensGateEngine {
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('mousemove', this.onMouseMove);
-    window.addEventListener('pointerdown', this.onPointerDown);
-    window.addEventListener('pointerup', this.onPointerUp);
+    // Both families: pointerdown misses chorded second-buttons in Chrome,
+    // mousedown catches them; the buttons-mask edge detect dedupes.
+    window.addEventListener('pointerdown', this.onButtonEvent);
+    window.addEventListener('mousedown', this.onButtonEvent);
+    window.addEventListener('pointerup', this.onButtonEvent);
+    window.addEventListener('mouseup', this.onButtonEvent);
     window.addEventListener('wheel', this.onWheel, { passive: true });
     window.addEventListener('resize', this.onResize);
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')) {
+      // QA handle: `?debug` exposes a read-only probe for heading, mount and
+      // rig state — used by the headless smoke/QA harnesses.
+      (window as unknown as { __hg: unknown }).__hg = {
+        engine: this,
+        probe: () => {
+          const mount = this.player?.userData?.weapon as THREE.Object3D | undefined;
+          const active = mount?.children.find((child) => child.visible);
+          const handWorld = this.heroCharacter?.object?.getObjectByName('hand_r')?.getWorldPosition(new THREE.Vector3());
+          const gunWorld = active?.getWorldPosition(new THREE.Vector3());
+          return {
+            cameraYaw: this.cameraYaw,
+            playerHeading: this.playerHeading,
+            aiming: this.isAiming(),
+            pointerLocked: this.pointerLocked,
+            pointerFallback: this.pointerFallback,
+            weaponParent: active?.parent?.name ?? active?.parent?.type ?? null,
+            hand: handWorld ? [handWorld.x, handWorld.y, handWorld.z].map((v) => +v.toFixed(3)) : null,
+            gun: gunWorld ? [gunWorld.x, gunWorld.y, gunWorld.z].map((v) => +v.toFixed(3)) : null,
+            ammo: this.ammo,
+            mode: this.mode,
+          };
+        },
+      };
+    }
     window.addEventListener('blur', this.onBlur);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     document.addEventListener('visibilitychange', this.onVisibility);
@@ -5700,6 +5751,7 @@ export class HeavensGateEngine {
     this.mouseShootHeld = false;
     this.mouseAimHeld = false;
     this.aimToggled = false;
+    this.pointerButtonsHeld = 0;
     this.clearTouchInput();
   }
 
@@ -9695,8 +9747,10 @@ export class HeavensGateEngine {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('mousemove', this.onMouseMove);
-    window.removeEventListener('pointerdown', this.onPointerDown);
-    window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointerdown', this.onButtonEvent);
+    window.removeEventListener('mousedown', this.onButtonEvent);
+    window.removeEventListener('mouseup', this.onButtonEvent);
+    window.removeEventListener('pointerup', this.onButtonEvent);
     window.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('blur', this.onBlur);

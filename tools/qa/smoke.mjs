@@ -119,9 +119,14 @@ async function openPage(browser) {
 }
 
 // 'full' seeding: force the app to persist its complete normalized settings,
-// patch quality/volume into that object, and reload so the boot sees 'loaded'.
+// patch quality/volume into that object, then open a FRESH tab for the second
+// boot. A same-tab reload hard-stalls on weak iGPUs — the outgoing WebGL
+// context's teardown blocks the new context creation (observed: main thread
+// frozen >4min on an Intel HD 620). A new tab gets a fresh renderer instead.
 async function seedFullSettings(page) {
-  await page.waitForSelector('section.title-screen', { timeout: 120_000 });
+  // Weak-iGPU boots spend most of their budget inside shader compilation
+  // (~118s observed on an Intel HD 620) — keep generous headroom.
+  await page.waitForSelector('section.title-screen', { timeout: 240_000 });
   const stored = await page.evaluate((key) => window.localStorage.getItem(key), SETTINGS_KEY);
   if (!stored) {
     await clickButtonWithText(page, '.title-menu', 'Settings');
@@ -140,8 +145,11 @@ async function seedFullSettings(page) {
     return settings;
   }, SETTINGS_KEY, quality);
   if (!patched) throw new Error('Settings seeding failed: app never wrote settings');
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
-  return patched;
+  // Fresh tab for boot #2 — see the note above on iGPU context teardown.
+  const fresh = await openPage(page.browser());
+  await fresh.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await page.close();
+  return { patched, page: fresh };
 }
 
 async function webglInfo(page) {
@@ -198,7 +206,10 @@ async function main() {
     process.exit(2);
   }
 
-  if (seedSettings === 'full') await seedFullSettings(page);
+  if (seedSettings === 'full') {
+    const seeded = await seedFullSettings(page);
+    page = seeded.page;
+  }
 
   const steps = [];
   const shot = async (label) => {
@@ -215,7 +226,9 @@ async function main() {
   };
 
   // Title screen → begin a new campaign.
-  await page.waitForSelector('section.title-screen', { timeout: 120_000 });
+  // Weak-iGPU boots spend 80s+ inside shader compilation (~118s total on an
+  // Intel HD 620), so this window needs real headroom beyond the first boot.
+  await page.waitForSelector('section.title-screen', { timeout: 240_000 });
   await page.waitForFunction(
     () => [...document.querySelectorAll('.title-menu button')].some((b) => b.textContent.includes('campaign')),
     { timeout: 30_000 },
