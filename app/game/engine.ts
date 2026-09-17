@@ -964,6 +964,13 @@ export class HeavensGateEngine {
             mode: this.mode,
           };
         },
+        // Orbit the follow cam to a world bearing (deg) around the player —
+        // the camera sits at player + (sin b, cos b) * dist, so cameraYaw = b.
+        // pitchDeg drops the camera to hand height for weapon close-ups.
+        orbitCam: (bearingDeg: number, pitchDeg = 0) => {
+          this.cameraYaw = bearingDeg * Math.PI / 180;
+          this.cameraPitch = clamp(pitchDeg * Math.PI / 180, -0.24, 0.74);
+        },
       };
     }
     window.addEventListener('blur', this.onBlur);
@@ -3296,7 +3303,12 @@ export class HeavensGateEngine {
   }
 
   private buildWeaponModels(mount: THREE.Group, materials: { coat: THREE.Material; armor: THREE.Material; gold: THREE.Material }) {
-    const { coat, armor, gold } = materials;
+    const { gold } = materials;
+    // Weapons get their own materials — sharing the hero's coat/armor palette
+    // made the gun the same dark cloth color as the sleeve holding it, so it
+    // vanished dark-on-dark. Blued steel + polymer keeps a readable silhouette.
+    const armor = new THREE.MeshStandardMaterial({ color: 0x4b545e, roughness: 0.33, metalness: 0.85, envMapIntensity: 1.4 });
+    const coat = new THREE.MeshStandardMaterial({ color: 0x2c3136, roughness: 0.6, metalness: 0.28, envMapIntensity: 1.1 });
     const cyanAccent = new THREE.MeshStandardMaterial({ color: 0x9fd6ff, emissive: 0x4fb6e8, emissiveIntensity: 1.6, roughness: 0.3, metalness: 0.5 });
     const emberAccent = new THREE.MeshStandardMaterial({ color: 0xffa35c, emissive: 0xe86a28, emissiveIntensity: 1.7, roughness: 0.3, metalness: 0.5 });
 
