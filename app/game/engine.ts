@@ -1637,6 +1637,7 @@ export class HeavensGateEngine {
     this.createStreetlamps();
     this.createBillboards(buildingData);
     this.createStreetDecals(buildingData);
+    this.createGroundDecals();
     this.createRooftopProps(buildingData);
     this.createSearchlight(buildingData);
     this.createStreetProps();
@@ -2194,7 +2195,7 @@ export class HeavensGateEngine {
     });
   }
 
-  private streetDecalTexture(kind: 'poster' | 'sigil' | 'tag') {
+  private streetDecalTexture(kind: 'poster' | 'sigil' | 'tag' | 'patch' | 'stain') {
     const canvas = document.createElement('canvas');
     canvas.width = 128;
     canvas.height = 128;
@@ -2243,6 +2244,35 @@ export class HeavensGateEngine {
       for (let i = 0; i < 40; i += 1) {
         ctx.fillRect(30 + Math.random() * 68, 30 + Math.random() * 68, 2, 2);
       }
+    } else if (kind === 'patch') {
+      // Tar seam / utility cut — a darker ragged slab, lighter speckle on top.
+      ctx.fillStyle = 'rgba(8,10,12,0.55)';
+      ctx.beginPath();
+      ctx.moveTo(18, 22);
+      ctx.lineTo(110, 16);
+      ctx.lineTo(116, 88);
+      ctx.lineTo(96, 112);
+      ctx.lineTo(22, 106);
+      ctx.lineTo(12, 64);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(8,10,12,0.3)';
+      ctx.lineWidth = 9;
+      ctx.stroke();
+      for (let i = 0; i < 60; i += 1) {
+        ctx.fillStyle = `rgba(190,200,205,${0.04 + Math.random() * 0.08})`;
+        ctx.fillRect(16 + Math.random() * 96, 18 + Math.random() * 92, 2, 2);
+      }
+    } else if (kind === 'stain') {
+      // Leak blot — a radial-fading dark ellipse.
+      const grad = ctx.createRadialGradient(64, 64, 6, 64, 64, 56);
+      grad.addColorStop(0, 'rgba(6,8,10,0.6)');
+      grad.addColorStop(0.7, 'rgba(6,8,10,0.35)');
+      grad.addColorStop(1, 'rgba(6,8,10,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.ellipse(64, 64, 56, 44, 0.3, 0, Math.PI * 2);
+      ctx.fill();
     } else {
       // Spray tag — a fast scrawl with drips.
       ctx.strokeStyle = 'rgba(126,196,216,0.8)';
@@ -2266,6 +2296,48 @@ export class HeavensGateEngine {
     texture.colorSpace = THREE.SRGBColorSpace;
     this.billboardTextures.push(texture);
     return texture;
+  }
+
+  // Road wear: tar seams and oil blots lying flat on the asphalt — the
+  // surface reads repaired and driven-on instead of a clean pour. Two
+  // instanced draws for the whole city.
+  private createGroundDecals() {
+    const variants = [
+      this.streetDecalTexture('patch'),
+      this.streetDecalTexture('stain'),
+    ].filter((texture): texture is THREE.CanvasTexture => Boolean(texture));
+    if (!variants.length) return;
+    const count = this.settings.quality === 'low' ? 26 : 64;
+    const dummy = new THREE.Object3D();
+    variants.forEach((texture, variantIndex) => {
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+      });
+      const placements: Array<{ matrix: THREE.Matrix4 }> = [];
+      for (let i = 0; i < count; i += 1) {
+        const salt = 500 + variantIndex * 31;
+        const horizontal = seeded(i, salt) < 0.5;
+        const line = (Math.floor(seeded(i, salt + 1) * 9) - 4) * 30;
+        const along = (seeded(i, salt + 2) - 0.5) * 250;
+        const lateral = (seeded(i, salt + 3) - 0.5) * 8.5;
+        dummy.position.set(
+          horizontal ? along : line + lateral,
+          0.024 + variantIndex * 0.002,
+          horizontal ? line + lateral : along,
+        );
+        dummy.rotation.set(-Math.PI / 2, 0, seeded(i, salt + 4) * Math.PI * 2);
+        const s = 1.4 + seeded(i, salt + 5) * 3.2;
+        dummy.scale.set(s, s * (0.6 + seeded(i, salt + 6) * 0.7), 1);
+        dummy.updateMatrix();
+        placements.push({ matrix: dummy.matrix.clone() });
+      }
+      this.addInstancedChunks(new THREE.PlaneGeometry(1, 1), material, placements)
+        .forEach((mesh) => { mesh.renderOrder = 1; });
+    });
   }
 
   // Heat cordon: at high heat the tallest tower wakes a sweeping
