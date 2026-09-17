@@ -107,6 +107,11 @@ try {
     return { x: v.group.position.x, z: v.group.position.z };
   });
   check('Seraph interceptor entered', !!seraph, JSON.stringify(seraph));
+  // enterVehicle plays a 0.5s door-walk before seatVehicle sets
+  // currentVehicle — under headless throttle that can take ~1.5s wall-time.
+  await pollUntil(page, () => window.__hg['currentVehicle'] !== null, (v) => v === true, 15000, 300);
+  const seated = await page.evaluate(() => window.__hg['currentVehicle'] !== null);
+  check('door-walk seats the player', seated);
   await skipCinematic();
   const m3 = await missionNow();
   check('M2 vehicle completes → mission 3', m3 === 3, `missionIndex=${m3}`);
