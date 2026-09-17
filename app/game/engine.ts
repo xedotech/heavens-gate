@@ -4776,9 +4776,13 @@ export class HeavensGateEngine {
       const size = new THREE.Vector3();
       bounds.getSize(size);
       prop.scale.setScalar(0.58 / Math.max(size.y, 0.01));
+      // The scan's face sits at ~+60° (atan2(z,x) — confirmed against dense
+      // renders); a +60° yaw brings it to face dead-east down the aisle.
+      prop.rotation.y = Math.PI / 3;
+      // Center AFTER rotation — the bounds must include the yaw or the head
+      // lands off-center on the altar.
       bounds.setFromObject(prop);
       prop.position.set(-4.4 - (bounds.min.x + bounds.max.x) / 2, 1.275 - bounds.min.y, -(bounds.min.z + bounds.max.z) / 2);
-      prop.rotation.y = Math.PI / 2; // face the aisle
       prop.traverse((node) => {
         if (node instanceof THREE.Mesh) {
           // Vertex colors carry the real scan's albedo — weathered limestone
