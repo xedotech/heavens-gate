@@ -5228,6 +5228,10 @@ export class HeavensGateEngine {
   private resetCampaign(save: SaveState | null) {
     save = normalizeSave(save);
     this.heroCharacter?.resetAnimation();
+    if (this.heroCharacter?.object) {
+      this.heroCharacter.object.rotation.x = 0;
+      this.heroCharacter.object.position.y = 0;
+    }
     this.photoMode = false;
     this.lastSave = save;
     this.health = save?.health ?? 100;
@@ -5657,6 +5661,15 @@ export class HeavensGateEngine {
     this.whizCooldown = Math.max(0, (this.whizCooldown ?? 0) - delta);
     if (this.deathCamTimer > 0) {
       this.deathCamTimer -= delta;
+      // The authored death clip is malformed (~4.9e23s duration, no root
+      // translation — the rig can slump but never reaches the ground), so
+      // the collapse is procedural: the rig freezes on its last frame and
+      // the object tips backward, pivoting at the feet, onto his back.
+      if (this.heroCharacter && !this.currentVehicle) {
+        const collapseT = clamp((2.4 - this.deathCamTimer) / 0.9, 0, 1);
+        const ease = collapseT * collapseT * (3 - 2 * collapseT);
+        this.heroCharacter.object.rotation.x = ease * Math.PI * 0.46;
+      }
       if (this.deathCamTimer <= 0) this.callbacks.onGameOver(this.lastKiller);
     }
     this.veilCooldown = Math.max(0, this.veilCooldown - delta);
@@ -6557,7 +6570,17 @@ export class HeavensGateEngine {
         body.z + Math.cos(angle) * radius,
       );
       this.camera.position.lerp(desiredDeath, 1 - Math.exp(-4.5 * delta));
-      this.camera.lookAt(body.x, body.y + 1.1, body.z);
+      // Track the look-at with the collapse — he tips forward, so the
+      // body's midpoint slides ahead of his feet and drops to ground level.
+      const collapseE = this.currentVehicle ? 0 : clamp(t / 0.9, 0, 1);
+      const lookEase = collapseE * collapseE * (3 - 2 * collapseE);
+      const fwdX = -Math.sin(this.player.rotation.y);
+      const fwdZ = -Math.cos(this.player.rotation.y);
+      this.camera.lookAt(
+        body.x + fwdX * 0.85 * lookEase,
+        body.y + (1.1 + (0.3 - 1.1) * lookEase),
+        body.z + fwdZ * 0.85 * lookEase,
+      );
       this.camera.fov = damp(this.camera.fov, 42, 3, delta);
       this.camera.updateProjectionMatrix();
       return;
@@ -7172,7 +7195,8 @@ export class HeavensGateEngine {
     this.armor -= armorAbsorb;
     this.health = Math.max(0, this.health - (amount - armorAbsorb));
     this.damageFlash = 1;
-    this.heroCharacter?.playOnce(this.health <= 0 ? 'death' : 'hit');
+    if (this.health <= 0) this.heroCharacter?.freeze();
+    else this.heroCharacter?.playOnce('hit');
     this.audio.playerDamage();
     this.pulseGamepad(95, 0.62, 0.42);
     if (this.health <= 0 && !this.gameOverSent) {

@@ -449,9 +449,25 @@ export class HeroCharacter {
     this.transitionTo(motion, fade, true);
   }
 
+  /**
+   * Freeze the rig on its current pose. HG_Death's authored data is
+   * malformed (~4.9e23s duration, no root translation — the clip can slump
+   * but never reaches the ground), so the hero's death is driven
+   * procedurally at the object level while the frozen hit-stagger pose
+   * rides it down.
+   */
+  freeze() {
+    if (this.disposed) return;
+    this.mixer.timeScale = 0;
+    this.activeMotion = 'death';
+    this.requestedMotion = 'death';
+    this.oneShotRemaining = 0;
+  }
+
   resetAnimation() {
     if (this.disposed) return;
     this.mixer.stopAllAction();
+    this.mixer.timeScale = 1;
     this.activeAction = null;
     this.activeMotion = null;
     this.requestedMotion = 'idle';
