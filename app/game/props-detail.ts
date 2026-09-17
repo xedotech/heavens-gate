@@ -9,7 +9,7 @@ import { seeded } from './mechanics';
  * engine.ts already uses, so the existing prop passes can call
  * planStreetDetail() and hand the result to buildStreetDetail() in props.ts.
  *
- * Salt discipline: this layer draws from salts 400–479 so its stream never
+ * Salt discipline: this layer draws from salts 400–489 so its stream never
  * correlates with the 1–300 band used by the existing placements.
  */
 
@@ -65,6 +65,10 @@ export interface StreetDetailPlan {
   awnings: DetailSpot[];
   /** Perpendicular hanging signs (arm + panel merged in the builder). */
   signBrackets: DetailSpot[];
+  /** Ground-floor entries: recessed door assembly mounted at floor level. */
+  doorways: DetailSpot[];
+  /** Lit transom bars over a subset of doorways; colored via instanceColor. */
+  doorwayLintels: DetailSpot[];
   /** Every unit-box sidewalk item: newsboxes, pallets, cardboard sheets. */
   clutterBoxes: DetailSpot[];
   /** Squashed dark spheres — trash clusters against walls. */
@@ -131,6 +135,9 @@ const LAMP_HEAD_Y = 4.55;
 const CABLE_MAX = 28;
 
 const AWNING_COLORS = [0x6e2f2a, 0x2a4d4f, 0x6e5a2a, 0x3a3f42, 0x4a3a56] as const;
+// Transom bars: mostly the district's warm amber, with the odd cool or red
+// shop glow breaking the rhythm.
+const LINTEL_COLORS = [0xffc98a, 0xffd9a0, 0xffb874, 0x9ac4d8, 0xd8785a] as const;
 const NEWSBOX_COLORS = [0x7a2020, 0x20507a, 0x8a7a20, 0x3a3f44] as const;
 const CARDBOARD_COLORS = [0x8a765a, 0x7d6a50, 0x94805f] as const;
 const PALLET_COLORS = [0x6b5a42, 0x5d5040, 0x74644a] as const;
@@ -220,6 +227,37 @@ function planFacadeClutter(
     // Lateral range that keeps mounted props off the corner edges.
     const inset = Math.max(0, faceLength * 0.5 - 0.9);
     if (faceLength < 3.4) return;
+
+    // Doorways — ground-floor entries give street-facing walls a human-scale
+    // rhythm. Claimed first so awnings/signs yield the band; about half carry
+    // a lit transom bar over the recess.
+    if (rand(index, 480) < 0.55 * density) {
+      const doors = faceLength > 7.5 && rand(index, 481) < 0.4 ? 2 : 1;
+      for (let k = 0; k < doors; k += 1) {
+        const slot = index * 7 + k;
+        const lateral = (rand(slot, 482) - 0.5) * 2 * Math.max(0, inset - 1.0);
+        const spot = wallPoint(building, face, 0.09, lateral, 0);
+        if (wallTaken(spot.x, spot.z, 1.0, 0, 2.7) || blockedWall(spot.x, spot.z, 0.9)) continue;
+        plan.doorways.push({
+          x: spot.x,
+          y: 0,
+          z: spot.z,
+          yaw: spot.yaw,
+          scale: { x: 0.9 + rand(slot, 483) * 0.25, y: 1, z: 1 },
+        });
+        claimWall(spot.x, spot.z, 1.0, 0, 2.7);
+        if (rand(slot, 484) < 0.58) {
+          const lintel = wallPoint(building, face, 0.24, lateral, 2.44);
+          plan.doorwayLintels.push({
+            x: lintel.x,
+            y: 2.44,
+            z: lintel.z,
+            yaw: lintel.yaw,
+            color: LINTEL_COLORS[Math.floor(rand(slot, 485) * LINTEL_COLORS.length)],
+          });
+        }
+      }
+    }
 
     // AC units — upper floors of taller stock, fan grille facing the street.
     if (building.scale.y > 8.5 && rand(index, 401) < 0.5 * density) {
@@ -526,6 +564,8 @@ export function planStreetDetail(input: StreetDetailInput): StreetDetailPlan {
     junctionBoxes: [],
     awnings: [],
     signBrackets: [],
+    doorways: [],
+    doorwayLintels: [],
     clutterBoxes: [],
     trashBags: [],
     cables: [],

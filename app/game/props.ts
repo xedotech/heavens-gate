@@ -229,6 +229,32 @@ function signBracketGeometry(): THREE.BufferGeometry {
   return mergeGeometries([arm, brace, hanger, panel]) ?? arm;
 }
 
+/**
+ * Ground-floor entry: threshold step, dark door leaf with a kick plate,
+ * jambs and a header. Origin at floor center; local -Z into the wall, so
+ * the shallow assembly reads as a recessed opening against the facade.
+ */
+function doorwayGeometry(): THREE.BufferGeometry {
+  const step = new THREE.BoxGeometry(1.56, 0.1, 0.52);
+  step.translate(0, 0.05, 0.2);
+  const door = new THREE.BoxGeometry(1.14, 2.28, 0.1);
+  door.translate(0, 1.22, 0.02);
+  const kick = new THREE.BoxGeometry(1.14, 0.26, 0.05);
+  kick.translate(0, 0.24, 0.08);
+  const jambA = new THREE.BoxGeometry(0.1, 2.52, 0.2);
+  jambA.translate(-0.66, 1.3, 0.04);
+  const jambB = jambA.clone();
+  jambB.translate(1.32, 0, 0);
+  const header = new THREE.BoxGeometry(1.44, 0.16, 0.2);
+  header.translate(0, 2.56, 0.04);
+  return mergeGeometries([step, door, kick, jambA, jambB, header]) ?? door;
+}
+
+/** Lit transom bar over a doorway — one thin box, colored per instance. */
+function doorwayLintelGeometry(): THREE.BufferGeometry {
+  return new THREE.BoxGeometry(1.3, 0.09, 0.05);
+}
+
 /** Unit cable segment along +X — instances are aimed and stretched per span. */
 function cableSegmentGeometry(): THREE.BufferGeometry {
   const segment = new THREE.CylinderGeometry(0.018, 0.018, 1, 4);
@@ -342,8 +368,8 @@ function fillCables(
  * Turns a StreetDetailPlan into the instanced sets. Geometries are created
  * per call (matching the engine's per-build prop passes) and empty layers
  * are skipped rather than instanced at count 1, so the layer adds at most
- * eight draw calls: acUnits, drainpipes, junctionBoxes, awnings,
- * signBrackets, clutterBoxes, trashBags, cables.
+ * ten draw calls: acUnits, drainpipes, junctionBoxes, awnings,
+ * signBrackets, doorways, doorwayLintels, clutterBoxes, trashBags, cables.
  */
 export function buildStreetDetail(
   plan: StreetDetailPlan,
@@ -374,6 +400,10 @@ export function buildStreetDetail(
   push(fillSpots(plan.junctionBoxes, junctionBoxGeometry(), metal, colliders, 'metal'));
   push(fillSpots(plan.awnings, awningGeometry(), fabric, colliders));
   push(fillSpots(plan.signBrackets, signBracketGeometry(), dark, colliders, 'metal'));
+  const entry = new THREE.MeshStandardMaterial({ color: 0x101317, roughness: 0.86, metalness: 0.14 });
+  push(fillSpots(plan.doorways, doorwayGeometry(), entry, colliders, 'metal'));
+  const lintelGlow = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  push(fillSpots(plan.doorwayLintels, doorwayLintelGeometry(), lintelGlow, colliders));
   push(fillSpots(plan.clutterBoxes, new THREE.BoxGeometry(1, 1, 1), clutter, colliders));
   push(fillSpots(plan.trashBags, new THREE.SphereGeometry(0.36, 7, 6), bagMaterial, colliders));
   push(fillCables(plan.cables, cableSegmentGeometry(), dark));
