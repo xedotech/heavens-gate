@@ -9679,7 +9679,7 @@ export class HeavensGateEngine {
       for (let i = 0; i < 6; i += 1) {
         const flash = new THREE.Group();
         const flare = new THREE.Mesh(flareGeometry, new THREE.MeshBasicMaterial({ color: 0xffd07a, transparent: true, opacity: 0.95 }));
-        const light = new THREE.PointLight(0xffa84d, 30, 3.4, 2);
+        const light = new THREE.PointLight(0xffa84d, 9, 3.4, 2);
         flash.add(flare, light);
         flash.visible = false;
         this.scene.add(flash);
@@ -9693,7 +9693,7 @@ export class HeavensGateEngine {
     (flash.children[0] as THREE.Mesh).scale.setScalar(0.85 + Math.random() * 0.5);
     ((flash.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.95;
     flash.visible = true;
-    this.pushEffect({ object: flash, life: 0.055, total: 0.055, mode: 'fade', pooled: true });
+    this.pushEffect({ object: flash, life: 0.075, total: 0.075, mode: 'fade', pooled: true });
   }
 
   private createImpact(position: THREE.Vector3, hostile: boolean) {
