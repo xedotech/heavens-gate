@@ -3497,22 +3497,107 @@ export class HeavensGateEngine {
     const group = new THREE.Group();
     const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.22, metalness: 0.76 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x090d0f, roughness: 0.24, metalness: 0.7 });
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0x0a0f14, roughness: 0.08, metalness: 0.9,
+      envMapIntensity: 1.6, transparent: true, opacity: 0.92,
+    });
     const headlightMaterial = new THREE.MeshStandardMaterial({ color: 0xe5c774, emissive: 0xe5a932, emissiveIntensity: 2.2 });
     const tailMaterial = new THREE.MeshStandardMaterial({ color: 0x5a1018, emissive: 0xd92632, emissiveIntensity: 0.9 });
     // Archetype silhouettes: morrow is tall and slab-sided, choir is low and long.
     const hauler = archetype === 'morrow';
     const interceptor = archetype === 'choir';
-    const body = new THREE.Mesh(new THREE.BoxGeometry(3.7, hauler ? 1.05 : 0.72, interceptor ? 7.9 : 7.1), bodyMaterial);
-    body.position.y = hauler ? 0.95 : 0.82;
+    // Side profile extruded across the width — a real wedge silhouette
+    // instead of stacked boxes. Shape +X is the tail; after rotateY(-π/2)
+    // the nose points down -Z like the rest of the assembly expects.
+    const L = interceptor ? 3.95 : 3.55;           // half-length
+    const belt = hauler ? 1.55 : interceptor ? 0.92 : 1.02;  // beltline
+    const roof = hauler ? 2.3 : interceptor ? 1.34 : 1.45;   // roofline
+    const profile = new THREE.Shape();
+    profile.moveTo(L - 0.05, 0.2);          // tail bumper bottom
+    profile.lineTo(L + 0.05, belt - 0.25);  // tail face
+    profile.lineTo(L - 0.12, belt);         // deck lip
+    profile.lineTo(L * 0.48, belt + 0.02);  // deck
+    profile.lineTo(-L * 0.32, belt - 0.02); // beltline forward
+    profile.lineTo(-L * 0.8, belt - (hauler ? 0.16 : 0.24));   // hood slope
+    profile.lineTo(-L - 0.05, belt - (hauler ? 0.5 : 0.52));   // nose tip
+    profile.lineTo(-L, 0.2);                // nose bottom
+    profile.closePath();
+    const bodyGeo = new THREE.ExtrudeGeometry(profile, {
+      depth: 3.4, bevelEnabled: true, bevelThickness: 0.1, bevelSize: 0.09, bevelSegments: 3,
+    });
+    bodyGeo.translate(0, 0, -1.7);
+    bodyGeo.rotateY(-Math.PI / 2);
+    const body = new THREE.Mesh(bodyGeo, bodyMaterial);
     body.castShadow = true;
     group.add(body);
-    const hood = new THREE.Mesh(new THREE.BoxGeometry(3.25, hauler ? 0.62 : 0.42, 2.3), bodyMaterial);
-    hood.position.set(0, hauler ? 1.55 : 1.25, interceptor ? -2.6 : -2.15);
-    hood.rotation.x = interceptor ? -0.14 : -0.08;
-    group.add(hood);
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.8, hauler ? 1.35 : interceptor ? 0.7 : 0.92, hauler ? 3.1 : 2.55), dark);
-    cabin.position.set(0, hauler ? 2.1 : interceptor ? 1.32 : 1.47, 0.55);
-    group.add(cabin);
+    // Glass canopy — a narrower extrude rising off the beltline.
+    const canopy = new THREE.Shape();
+    const cabRear = hauler ? L * 0.72 : L * 0.42;
+    const cabFront = hauler ? -L * 0.1 : -L * 0.28;
+    canopy.moveTo(cabRear, belt - 0.02);
+    canopy.lineTo(cabRear - (hauler ? 0.35 : 0.95), roof);
+    canopy.lineTo(cabFront + 0.55, roof);
+    canopy.lineTo(cabFront - (hauler ? 0.28 : 0.7), belt - 0.02);
+    canopy.closePath();
+    const canopyGeo = new THREE.ExtrudeGeometry(canopy, {
+      depth: hauler ? 2.6 : 2.3, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.06, bevelSegments: 2,
+    });
+    canopyGeo.translate(0, 0, (hauler ? 2.6 : 2.3) / -2);
+    canopyGeo.rotateY(-Math.PI / 2);
+    const cabinGlass = new THREE.Mesh(canopyGeo, glass);
+    group.add(cabinGlass);
+    // Rocker skirts + front splitter + rear diffuser close the underside.
+    const skirtGeo = new THREE.BoxGeometry(0.18, 0.22, L * 1.24);
+    for (const side of [-1, 1]) {
+      const skirt = new THREE.Mesh(skirtGeo, dark);
+      skirt.position.set(side * 1.72, 0.3, 0);
+      group.add(skirt);
+    }
+    const splitter = new THREE.Mesh(new THREE.BoxGeometry(3.3, 0.14, 0.7), dark);
+    splitter.position.set(0, 0.16, -L - 0.02);
+    group.add(splitter);
+    const diffuser = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.22, 0.6), dark);
+    diffuser.position.set(0, 0.2, L + 0.02);
+    group.add(diffuser);
+    // Wheel-arch flares — a half-torus arc over each wheel.
+    const flareGeo = new THREE.TorusGeometry(0.64, 0.11, 8, 14, Math.PI);
+    for (const side of [-1, 1]) {
+      for (const front of [-1, 1]) {
+        const flare = new THREE.Mesh(flareGeo, dark);
+        flare.rotation.y = Math.PI / 2;
+        flare.position.set(side * 1.8, 0.62, front * 2.2);
+        group.add(flare);
+      }
+    }
+    // Wing mirrors on thin stalks at the canopy's front corners.
+    for (const side of [-1, 1]) {
+      const stalk = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.3), dark);
+      stalk.position.set(side * 1.55, belt + 0.32, cabFront - 0.5);
+      group.add(stalk);
+      const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.16, 0.22), bodyMaterial);
+      mirror.position.set(side * 1.66, belt + 0.34, cabFront - 0.55);
+      group.add(mirror);
+    }
+    if (interceptor) {
+      // Pursuit wing on the deck — the interceptor's signature.
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.06, 0.5), dark);
+      wing.position.set(0, roof - 0.18, L - 0.45);
+      wing.rotation.x = -0.12;
+      group.add(wing);
+      for (const side of [-1, 1]) {
+        const strut = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.3, 0.08), dark);
+        strut.position.set(side * 1.05, roof - 0.36, L - 0.45);
+        group.add(strut);
+      }
+    } else if (hauler) {
+      // Roof rails — the hauler's silhouette is a cargo rig.
+      const rail = new THREE.BoxGeometry(0.08, 0.08, L * 0.9);
+      for (const side of [-1, 1]) {
+        const r = new THREE.Mesh(rail, dark);
+        r.position.set(side * 1.15, roof + 0.1, 0.3);
+        group.add(r);
+      }
+    }
     const wheels: VehicleWheel[] = [];
     for (const side of [-1, 1]) {
       for (const front of [-1, 1]) {
@@ -3527,10 +3612,10 @@ export class HeavensGateEngine {
         wheels.push({ pivot, front: front === -1 });
       }
       const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.22, 0.12), headlightMaterial);
-      headlight.position.set(side * 1.12, 0.92, -3.58);
+      headlight.position.set(side * 1.12, belt - 0.12, -L - 0.02);
       group.add(headlight);
       const taillight = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.16, 0.1), tailMaterial);
-      taillight.position.set(side * 1.12, 0.98, 3.58);
+      taillight.position.set(side * 1.12, belt - 0.06, L + 0.02);
       group.add(taillight);
     }
     const beamMaterial = new THREE.MeshBasicMaterial({
