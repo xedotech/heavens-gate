@@ -319,6 +319,9 @@ export class HeroCharacter {
   private leftGripBlend = 0;
   private aimPitchTarget = 0;
   private aimPitchCurrent = 0;
+  // Pre-bend spine quaternions — restored before each mixer.update so the
+  // aim-lean never accumulates on bones the active clip doesn't keyframe.
+  private readonly spinePreBend: THREE.Quaternion[] = [];
   private heldObject: THREE.Object3D | null = null;
   // Foot IK — thigh/calf/foot chains, lazily measured ankle height, and the
   // engine's ground sampler. Only non-locomotion motions plant the feet;
@@ -506,7 +509,22 @@ export class HeroCharacter {
     // X on the spine chain, per the rig's rotation convention.
     const weights = [0.35, 0.45];
     this.spineBones.forEach((bone, index) => {
+      if (!this.spinePreBend[index]) this.spinePreBend[index] = new THREE.Quaternion();
+      this.spinePreBend[index].copy(bone.quaternion);
       bone.rotation.x += -this.aimPitchCurrent * (weights[index] ?? 0.3);
+    });
+  }
+
+  // The bend above writes bone.rotation.x += every frame. On spine bones the
+  // active clip doesn't keyframe, nothing resets that value — the bend would
+  // accumulate into a runaway fold. Restoring the pre-bend quaternion before
+  // the mixer runs is safe for keyed bones too: the mixer overwrites them
+  // with the clip pose anyway.
+  private restoreSpinePose() {
+    if (!this.spinePreBend?.length) return;
+    this.spineBones.forEach((bone, index) => {
+      const pre = this.spinePreBend[index];
+      if (pre) bone.quaternion.copy(pre);
     });
   }
 
@@ -584,6 +602,7 @@ export class HeroCharacter {
 
   update(delta: number, elapsed: number, combatIntensity: number, aimPitch = 0, grounded = false) {
     if (this.disposed) return;
+    this.restoreSpinePose();
     this.mixer.update(delta);
     this.aimPitchTarget = aimPitch;
     this.applyAimPitch(delta);
