@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "wood-planks",
+  "label": "wood planks",
+  "author": "Poly Haven",
+  "source": "Poly Haven CC0 (production-resources intake)",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "2k": {
+      "albedo": {
+        "file": "wood-planks-albedo-2k-19aa42ec5c38.webp",
+        "sha256": "19aa42ec5c384be0dd2437c8d6df94559f75262c5d7c52790e6dac3a7ca4f599",
+        "bytes": 431836,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "wood-planks-normal-2k-5bfafd3a0a75.webp",
+        "sha256": "5bfafd3a0a7511e9327ae4b5b8493b2d5adc1b02099158aea44e49504cb2901e",
+        "bytes": 5506250,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "wood-planks-arm-2k-7a5ec0bbf9d7.webp",
+        "sha256": "7a5ec0bbf9d79f17c56fd16208133eac5d45952e48ab0bb2a57a4709e1999b5f",
+        "bytes": 2273328,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    },
+    "1k": {
+      "albedo": {
+        "file": "wood-planks-albedo-1k-21073e99339b.webp",
+        "sha256": "21073e99339be7d114df5984d49064132832133132e142bec248fb4996a8d49a",
+        "bytes": 107504,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "wood-planks-normal-1k-586af9ff3195.webp",
+        "sha256": "586af9ff319575e350cfc7c4c2b8e02356ef417a6dcae73cb8d192e95b050760",
+        "bytes": 1277492,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "wood-planks-arm-1k-ead7ba9b3c82.webp",
+        "sha256": "ead7ba9b3c82bde13be99a24730df8048d745b3c1e8750cb0ffe63a089f6e296",
+        "bytes": 563488,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "blue-plaster-weathered",
+  "label": "blue plaster weathered",
+  "author": "Poly Haven",
+  "source": "Poly Haven CC0 (production-resources intake)",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "2k": {
+      "albedo": {
+        "file": "blue-plaster-weathered-albedo-2k-4b7b1dc0b6c9.webp",
+        "sha256": "4b7b1dc0b6c99fddf637a4e6348884f9796225fa0c830ec89d22c8525a5f0df1",
+        "bytes": 556302,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "blue-plaster-weathered-normal-2k-3e2dc90c43c6.webp",
+        "sha256": "3e2dc90c43c629f7ddb21261efb78ae72d747bbaf61b52652512e575bbdeb826",
+        "bytes": 5979118,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "blue-plaster-weathered-arm-2k-9312ccafcb8d.webp",
+        "sha256": "9312ccafcb8da7a76e68aa3c943e97a6d48fe9b4bd8068dc2f752b115762eeee",
+        "bytes": 2538958,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    },
+    "1k": {
+      "albedo": {
+        "file": "blue-plaster-weathered-albedo-1k-5e7f0bba8a62.webp",
+        "sha256": "5e7f0bba8a62144c9b41e83c0643f90f15e8679969bdca70c8e740a2ce4ed25e",
+        "bytes": 149694,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "blue-plaster-weathered-normal-1k-f2ba0e5f7d87.webp",
+        "sha256": "f2ba0e5f7d87a51284dcf0db247508cba7d26e42723108d266f87a0470038ef7",
+        "bytes": 1369974,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "blue-plaster-weathered-arm-1k-a02af45f358b.webp",
+        "sha256": "a02af45f358b2cc27f1cda4ccd0d6f35a6e18aca1ab5aa4f2ffd737f1d0a5ab5",
+        "bytes": 632892,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    }
+  }
+}

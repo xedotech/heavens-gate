@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "church-bricks-03",
+  "label": "church bricks 03",
+  "author": "Poly Haven",
+  "source": "Poly Haven CC0 (production-resources intake)",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "2k": {
+      "albedo": {
+        "file": "church-bricks-03-albedo-2k-861206159213.webp",
+        "sha256": "8612061592137002548f3d764e7abb61d935672b6fd2cff2944c775f05c79183",
+        "bytes": 1543012,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "church-bricks-03-normal-2k-168140bffb23.webp",
+        "sha256": "168140bffb23de695fa7e8078155aad54eb81971562ab1a0851667b3df35bf7c",
+        "bytes": 7964906,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "church-bricks-03-arm-2k-cbaa2e987c2e.webp",
+        "sha256": "cbaa2e987c2e82fb40210864a517c578247d79bd86c88d9963172f462d432ef6",
+        "bytes": 4471550,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    },
+    "1k": {
+      "albedo": {
+        "file": "church-bricks-03-albedo-1k-8763af6771d0.webp",
+        "sha256": "8763af6771d012cc4aa23261aeb94acd57780734d1c3f05f3ddd5f9eef137c34",
+        "bytes": 421454,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "church-bricks-03-normal-1k-be9594cc0139.webp",
+        "sha256": "be9594cc01395a54862728ce12acabc3ea4f8367b0c01fff741db12d0a054ddc",
+        "bytes": 2010202,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "church-bricks-03-arm-1k-6b1e10d61baa.webp",
+        "sha256": "6b1e10d61baa3281cefabd286cb8fcb9d3ec16d9d37cf8efaecb6661e4408e35",
+        "bytes": 1156296,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    }
+  }
+}

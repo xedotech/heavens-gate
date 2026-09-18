@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "concrete-floor-02",
+  "label": "concrete floor 02",
+  "author": "Poly Haven",
+  "source": "Poly Haven CC0 (production-resources intake)",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "tileMeters": 2,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "2k": {
+      "albedo": {
+        "file": "concrete-floor-02-albedo-2k-d619e79626ed.webp",
+        "sha256": "d619e79626ed20064c945d9f7be9353148a6a868bcd7805a62bf072931f04269",
+        "bytes": 1950320,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "concrete-floor-02-normal-2k-c8fccd722a52.webp",
+        "sha256": "c8fccd722a5269f67733931306b966ab78eaf5c20810bc614168d287ecd80401",
+        "bytes": 7105504,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "concrete-floor-02-arm-2k-4702069c0309.webp",
+        "sha256": "4702069c0309bff1283821f70382f3c660ff4d7437123a65529639e4bfefcdff",
+        "bytes": 5157920,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    },
+    "1k": {
+      "albedo": {
+        "file": "concrete-floor-02-albedo-1k-b1cedb9e602c.webp",
+        "sha256": "b1cedb9e602ceb3c85b1357d6be0ba7182b0c78e55d69eb782b0b69b626298fb",
+        "bytes": 456050,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "compression": {
+          "quality": 88
+        }
+      },
+      "normal": {
+        "file": "concrete-floor-02-normal-1k-22528fe1fdf5.webp",
+        "sha256": "22528fe1fdf54856bd8ef61ac62e160f6728e2f6d4dbf99fef423c6330267f88",
+        "bytes": 1643220,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      },
+      "arm": {
+        "file": "concrete-floor-02-arm-1k-594fc72baea4.webp",
+        "sha256": "594fc72baea4d95099968db09413ad3dcc86f3ae607665b280480dfa67cc60b5",
+        "bytes": 1247292,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "compression": {
+          "lossless": true
+        }
+      }
+    }
+  }
+}

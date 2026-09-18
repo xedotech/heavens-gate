@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "art": [
+    {
+      "id": "chapel-memory-window",
+      "file": "chapel-memory-window.webp",
+      "sha256": "b2abe18d0331f0bbdfe4b2e5758858fa7cc90e5d3f6041de1d8b7c229e597c20",
+      "bytes": 485046,
+      "width": 1024,
+      "height": 1536,
+      "source": "generated art (production-resources intake)"
+    },
+    {
+      "id": "memory-office-poster",
+      "file": "memory-office-poster.webp",
+      "sha256": "ac91f7f3fbcb0f2414d019affb5e3554264825b6526c6959057334ae84fcf7f6",
+      "bytes": 348128,
+      "width": 1024,
+      "height": 1536,
+      "source": "generated art (production-resources intake)"
+    }
+  ]
+}

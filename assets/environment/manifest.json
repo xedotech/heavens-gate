@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "concrete-pavement-03",
+  "label": "Concrete Pavement 03",
+  "author": "Charlotte Baglioni",
+  "source": "https://polyhaven.com/a/concrete_pavement_03",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "sourceStandard": "https://docs.polyhaven.com/en/technical-standards/textures",
+  "acquisition": "Photo-based PBR material. Provider uses photogrammetry or photometric stereo; asset-specific capture method is not stated.",
+  "tileMeters": 2.1,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "1k": {
+      "albedo": {
+        "file": "concrete-pavement-03-albedo-1k-b8458780c9eb.webp",
+        "sha256": "b8458780c9eb4b716d88107c62202ac256a8cbfca14737d087e801f7fd14363c",
+        "bytes": 289274,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavement_03/concrete_pavement_03_diff_1k.jpg",
+        "sourceMd5": "e2d4ca4fabe39cd510f78bda929bba53",
+        "sourceSha256": "0c23759579103fc334bb9211c71fd026322b44fceb9cdeba8f2d7e0b17fefc8e"
+      },
+      "normal": {
+        "file": "concrete-pavement-03-normal-1k-acf0e0b12d02.webp",
+        "sha256": "acf0e0b12d02e6948ca98ec78d62940bff89e384261cd62a128492120c9464e1",
+        "bytes": 1769550,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavement_03/concrete_pavement_03_nor_gl_1k.jpg",
+        "sourceMd5": "87a68a3d2bf1131749ce6fe87670e580",
+        "sourceSha256": "b3d20510e5f6625c264a6491c343d025cfff8ab525d08363a42f21afb0e1d5e0"
+      },
+      "arm": {
+        "file": "concrete-pavement-03-arm-1k-53044ccb9371.webp",
+        "sha256": "53044ccb937124020a312fb1470313fbdc2caacbe894d107bb9e17822af193fb",
+        "bytes": 1171180,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavement_03/concrete_pavement_03_arm_1k.jpg",
+        "sourceMd5": "1aad16a71cccc9303fd52cb331a50d93",
+        "sourceSha256": "665418743ba9b3b334742aaec5ea937b9be7a825e85a1e8517629898707533e1"
+      }
+    },
+    "2k": {
+      "albedo": {
+        "file": "concrete-pavement-03-albedo-2k-e5ce37b44fa8.webp",
+        "sha256": "e5ce37b44fa8b522e802fa5d4b768a9d0c5a97754f0f1ea00dffadec0821063e",
+        "bytes": 1488554,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_pavement_03/concrete_pavement_03_diff_2k.jpg",
+        "sourceMd5": "7c9ada62d87b7cf410a432b146a142c3",
+        "sourceSha256": "6f0ed226b4104d7065f22567addc762944365a67e764df3d0faf2ea7baf15370"
+      },
+      "normal": {
+        "file": "concrete-pavement-03-normal-2k-3a31ceaca54d.webp",
+        "sha256": "3a31ceaca54d0e02b783164d5e802d0255c599f0f298b4e7eb1f2ce11330eecf",
+        "bytes": 8070630,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_pavement_03/concrete_pavement_03_nor_gl_2k.jpg",
+        "sourceMd5": "75bf54955ee3fadd912846e9086442fa",
+        "sourceSha256": "5d090a97b798fa0392a80af63543e162247175a384cfa7b411d7b1dae9d4b2dd"
+      },
+      "arm": {
+        "file": "concrete-pavement-03-arm-2k-d72bfff284e8.webp",
+        "sha256": "d72bfff284e85ddd8721934fae9d1bde51f5d43fcf6dd7f90a96bbef0b60519b",
+        "bytes": 5147490,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_pavement_03/concrete_pavement_03_arm_2k.jpg",
+        "sourceMd5": "8be60f85cc0153fa9779b2baf5dcee19",
+        "sourceSha256": "c2f2554cb8d07b4b74993f4de2307b98be8e862695a711752a6e0ef57c1909e2"
+      }
+    }
+  }
+}

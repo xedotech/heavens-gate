@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "metal-plate",
+  "label": "Metal Plate",
+  "author": "Poly Haven",
+  "source": "https://polyhaven.com/a/metal_plate",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "sourceStandard": "https://docs.polyhaven.com/en/technical-standards/textures",
+  "acquisition": "Photo-based PBR material. Provider uses photogrammetry or photometric stereo; asset-specific capture method is not stated.",
+  "intendedUse": "Painted metal — HVAC units, kiosk bodies, bollards, benches",
+  "tileMeters": 1,
+  "normalConvention": "OpenGL",
+  "packedChannels": {
+    "r": "occlusion",
+    "g": "roughness",
+    "b": "metalness"
+  },
+  "maps": {
+    "1k": {
+      "albedo": {
+        "file": "metal-plate-albedo-1k-3e270c157a2f.webp",
+        "sha256": "3e270c157a2f0dae3c2d897fa3501894da04e70e2c4affbc2a0bf0e18f8315f5",
+        "bytes": 141942,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/metal_plate/metal_plate_diff_1k.jpg",
+        "sourceMd5": "bd9daf4c04046ca392a38b8df955ed26",
+        "sourceSha256": "c6b6739eac2c75ccc898e753d7833df24eafbdb9aa92fb6eabfb92abd1a680a5"
+      },
+      "normal": {
+        "file": "metal-plate-normal-1k-5cdd344abdf9.webp",
+        "sha256": "5cdd344abdf9ba218bc4832952005a3f845981b70c857843b28409031791eaff",
+        "bytes": 1323230,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/metal_plate/metal_plate_nor_gl_1k.jpg",
+        "sourceMd5": "d379e66130ad6ccff217ac9b13de935d",
+        "sourceSha256": "994f851a84d52b51e97906021a1b7070ee6eac9a789fef041132268de47d8e6b"
+      },
+      "arm": {
+        "file": "metal-plate-arm-1k-845e353c6ffd.webp",
+        "sha256": "845e353c6ffd43e2ea8cbc58465e5131baab44a51a9c6269cef5cf353ce30959",
+        "bytes": 1627566,
+        "width": 1024,
+        "height": 1024,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/metal_plate/metal_plate_arm_1k.jpg",
+        "sourceMd5": "13f064ffa4863a4170d902f675eb022e",
+        "sourceSha256": "fc4708b6700a2cc387654b693091dd0ac0cd1797ae803d75c894e62554fbef07"
+      }
+    },
+    "2k": {
+      "albedo": {
+        "file": "metal-plate-albedo-2k-fe21b9258c0a.webp",
+        "sha256": "fe21b9258c0a2def34045d1dbd769e67d2d139e4a5a49c12551e9224b6ff204f",
+        "bytes": 567184,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "srgb",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/metal_plate/metal_plate_diff_2k.jpg",
+        "sourceMd5": "91b841e7e619e55588f0183a703fb644",
+        "sourceSha256": "864c9a653acd1f5034c9bbe7f955b18cc9687a81bbdfa805e7a2319939676910"
+      },
+      "normal": {
+        "file": "metal-plate-normal-2k-33922a61c23a.webp",
+        "sha256": "33922a61c23a0b8f37958e64be3ec6da80845b73dd388e14f02550ba10aa8451",
+        "bytes": 4586058,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/metal_plate/metal_plate_nor_gl_2k.jpg",
+        "sourceMd5": "797c3f3de91da0c03f44f493576e158e",
+        "sourceSha256": "146f8c00874a584bcc4a184643e72f160da2a7568d469198e02b26c9ff93cf43"
+      },
+      "arm": {
+        "file": "metal-plate-arm-2k-1e7f5e9d703d.webp",
+        "sha256": "1e7f5e9d703dfaa2ce785258267805eaf9000c0b3306d2981fdd6e58497c496f",
+        "bytes": 6397912,
+        "width": 2048,
+        "height": 2048,
+        "colorSpace": "linear",
+        "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/metal_plate/metal_plate_arm_2k.jpg",
+        "sourceMd5": "4f7da15e97f3e8306743dff5084c8a46",
+        "sourceSha256": "3b944444e12815f96c6850b385ba0e8f2f805338d8ad9e750907474b494f1ebe"
+      }
+    }
+  }
+}
