@@ -107,9 +107,9 @@ export async function fetchVerifiedAsset(
 
 /** Loads a prop GLB from the self-hosted manifest with size + SHA-256 pinned. */
 export async function loadVerifiedProp(id: string): Promise<THREE.Group> {
-  const { entry, bytes } = await fetchVerifiedAsset('/assets/props/manifest.json', 'props', id, '/assets/props/');
+  const { entry, bytes } = await fetchVerifiedAsset('assets/props/manifest.json', 'props', id, 'assets/props/');
   const gltf = await new Promise<{ scene: THREE.Group }>((resolve, reject) => {
-    new GLTFLoader().parse(bytes, '/assets/props/', resolve, reject);
+    new GLTFLoader().parse(bytes, 'assets/props/', resolve, reject);
   });
   if (entry.heightMeters) gltf.scene.userData.heightMeters = entry.heightMeters;
   return gltf.scene;

@@ -24,7 +24,7 @@ const CLIP_NAMES: Record<CharacterMotion, string> = {
   death: 'HG_Death',
 };
 
-const CHARACTER_MANIFEST_URL = '/assets/characters/manifest.json';
+const CHARACTER_MANIFEST_URL = 'assets/characters/manifest.json';
 const CHARACTER_ASSET_TIMEOUT_MS = 20_000;
 const CHARACTER_ASSET_RETRIES = 2;
 
@@ -809,12 +809,12 @@ export async function loadHeroCharacter(
   const manifest = await loadCharacterManifest();
   const entry = manifest.characters.find((candidate) => candidate.id === skin);
   if (!entry) throw new Error(`No published hero asset exists for skin ${skin}`);
-  const url = `/assets/characters/${entry.file}?v=${entry.sha256.slice(0, 12)}`;
+  const url = `assets/characters/${entry.file}?v=${entry.sha256.slice(0, 12)}`;
   const bytes = await fetchCharacterBinary(url, entry.bytes, onProgress);
   const checksum = await sha256Hex(bytes);
   if (checksum && checksum !== entry.sha256) throw new Error(`SHA-256 mismatch for ${entry.file}`);
   const gltf = await new Promise<Awaited<ReturnType<GLTFLoader['loadAsync']>>>((resolve, reject) => {
-    loader.parse(bytes, '/assets/characters/', resolve, reject);
+    loader.parse(bytes, 'assets/characters/', resolve, reject);
   });
   gltf.scene.name = `Aurel ${skin}`;
   const character = new HeroCharacter(gltf.scene, gltf.animations, anisotropy);

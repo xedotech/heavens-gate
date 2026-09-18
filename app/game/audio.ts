@@ -140,7 +140,7 @@ export class AudioEngine {
       await acquireAssetStream();
       let manifest: { clips?: VerifiedAssetEntry[] };
       try {
-        const manifestResponse = await fetch('/assets/audio/manifest.json', { cache: 'no-store' });
+        const manifestResponse = await fetch('assets/audio/manifest.json', { cache: 'no-store' });
         if (!manifestResponse.ok) return;
         manifest = (await manifestResponse.json()) as { clips?: VerifiedAssetEntry[] };
       } finally {
@@ -152,7 +152,7 @@ export class AudioEngine {
           const clip = manifest.clips?.find((candidate) => candidate.id === id);
           if (!assetEntryIsSafe(clip)) continue;
           try {
-            const bytes = await fetchVerifiedBytes('/assets/audio/', clip);
+            const bytes = await fetchVerifiedBytes('assets/audio/', clip);
             if (this.context !== context) return; // context was rebuilt mid-load
             buffers.push(await context.decodeAudioData(bytes));
           } catch { /* a bad clip only loses its variant */ }

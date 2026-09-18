@@ -1246,7 +1246,7 @@ export class HeavensGateEngine {
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     try {
       const load = async (file: string) => {
-        const { bytes } = await fetchVerifiedAsset('/assets/environment/hdri/manifest.json', 'files', file, '/assets/environment/hdri/');
+        const { bytes } = await fetchVerifiedAsset('assets/environment/hdri/manifest.json', 'files', file, 'assets/environment/hdri/');
         // Blob URL keeps RGBE parsing inside the loader (correct flipY/type).
         const url = URL.createObjectURL(new Blob([bytes]));
         try {
@@ -1286,9 +1286,9 @@ export class HeavensGateEngine {
     const surfaceFallback = (label: string) => () => {
       this.emitToast(`${label} detail unavailable`, 'The last working material is retained. You can keep playing.', 'info');
     };
-    this.scannedGround = new ScannedSurfaceMaterial('/assets/environment/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Ground'));
+    this.scannedGround = new ScannedSurfaceMaterial('assets/environment/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Ground'));
     // Photo-scanned asphalt on the roads; albedo kept dark for the wet-noir look.
-    const scannedRoad = new ScannedSurfaceMaterial('/assets/environment/asphalt-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Road'), {
+    const scannedRoad = new ScannedSurfaceMaterial('assets/environment/asphalt-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Road'), {
       repeat: [WORLD_SIZE / 2, 4.2],
       apply: { metalnessMap: false },
       tint: 0x585c60,
@@ -1330,7 +1330,7 @@ export class HeavensGateEngine {
     this.phaseMaterials.push(buildingMaterial, buildingMaterialWarm, buildingMaterialCool);
     // Concrete-wall relief on the tower facades — normal only; the procedural
     // canvas albedo already carries the lit-window grid.
-    const scannedFacade = new ScannedSurfaceMaterial('/assets/environment/concrete-wall-008/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
+    const scannedFacade = new ScannedSurfaceMaterial('assets/environment/concrete-wall-008/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
       repeat: [3, 3],
       apply: { albedo: false, arm: false },
       normalScale: 1.1,
@@ -1340,7 +1340,7 @@ export class HeavensGateEngine {
         buildingMaterial.needsUpdate = true;
       },
     });
-    const chippedFacade = new ScannedSurfaceMaterial('/assets/environment/chipped-concrete/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
+    const chippedFacade = new ScannedSurfaceMaterial('assets/environment/chipped-concrete/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
       repeat: [3, 3],
       apply: { albedo: false, arm: false },
       normalScale: 1.0,
@@ -1350,7 +1350,7 @@ export class HeavensGateEngine {
         buildingMaterialWarm.needsUpdate = true;
       },
     });
-    const plasterFacade = new ScannedSurfaceMaterial('/assets/environment/blue-plaster-weathered/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
+    const plasterFacade = new ScannedSurfaceMaterial('assets/environment/blue-plaster-weathered/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
       repeat: [3, 3],
       apply: { albedo: false, arm: false },
       normalScale: 0.9,
@@ -1363,7 +1363,7 @@ export class HeavensGateEngine {
     // The cool bucket also gets a real brick albedo — the only facade group
     // whose windows live purely on the instanced overlay, so a scanned map
     // can't misalign them.
-    const brickFacade = new ScannedSurfaceMaterial('/assets/environment/brick-wall-001/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
+    const brickFacade = new ScannedSurfaceMaterial('assets/environment/brick-wall-001/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Facade'), {
       repeat: [3, 3],
       apply: { normal: false, arm: false },
       onApplied: (material) => {
@@ -1371,26 +1371,26 @@ export class HeavensGateEngine {
         buildingMaterialCool.needsUpdate = true;
       },
     });
-    const chapelFloor = new ScannedSurfaceMaterial('/assets/environment/stone-tiles-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Stone'), {
+    const chapelFloor = new ScannedSurfaceMaterial('assets/environment/stone-tiles-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Stone'), {
       repeat: [8, 7],
       tint: 0x6a6763,
       aoIntensity: 0.8,
       fallback: { color: 0x232120, roughness: 0.94 },
     });
-    const chapelBrick = new ScannedSurfaceMaterial('/assets/environment/church-bricks-03/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Brick'), {
+    const chapelBrick = new ScannedSurfaceMaterial('assets/environment/church-bricks-03/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Brick'), {
       repeat: [5, 3],
       tint: 0x8a8178,
       aoIntensity: 0.8,
       fallback: { color: 0x2e2c2a, roughness: 0.9, metalness: 0.05 },
     });
-    const pewWood = new ScannedSurfaceMaterial('/assets/environment/wood-planks/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Wood'), {
+    const pewWood = new ScannedSurfaceMaterial('assets/environment/wood-planks/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Wood'), {
       repeat: [1.4, 1.4],
       tint: 0x6b523a,
       aoIntensity: 0.7,
       fallback: { color: 0x3d2f22, roughness: 0.82 },
     });
     // Paved plaza + chapel court — real scanned floors over the ground plane.
-    const plazaConcrete = new ScannedSurfaceMaterial('/assets/environment/concrete-floor-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Plaza'), {
+    const plazaConcrete = new ScannedSurfaceMaterial('assets/environment/concrete-floor-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Plaza'), {
       repeat: [14, 14],
       apply: { metalnessMap: false },
       tint: 0x8b8d8f,
@@ -1398,20 +1398,20 @@ export class HeavensGateEngine {
       aoIntensity: 0.7,
       fallback: { color: 0x232629, roughness: 0.82 },
     });
-    const chapelCobble = new ScannedSurfaceMaterial('/assets/environment/cobblestone-floor-001/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Cobble'), {
+    const chapelCobble = new ScannedSurfaceMaterial('assets/environment/cobblestone-floor-001/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Cobble'), {
       repeat: [12, 12],
       apply: { metalnessMap: false },
       tint: 0x77787c,
       aoIntensity: 0.8,
       fallback: { color: 0x242524, roughness: 0.9 },
     });
-    const propMetalLoader = new ScannedSurfaceMaterial('/assets/environment/metal-plate/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Metal'), {
+    const propMetalLoader = new ScannedSurfaceMaterial('assets/environment/metal-plate/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Metal'), {
       repeat: [1.6, 1.6],
       tint: 0x8a9198,
       aoIntensity: 0.55,
       fallback: { color: 0x39424a, roughness: 0.46, metalness: 0.5 },
     });
-    const propRustLoader = new ScannedSurfaceMaterial('/assets/environment/rusty-metal-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Rust'), {
+    const propRustLoader = new ScannedSurfaceMaterial('assets/environment/rusty-metal-02/manifest.json', WORLD_SIZE, anisotropy, surfaceFallback('Rust'), {
       repeat: [1.8, 1.8],
       apply: { metalnessMap: false },
       tint: 0x8a6a52,
@@ -2949,7 +2949,7 @@ export class HeavensGateEngine {
   private createArtDecals(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
     const loadArt = (name: string) =>
       this.whenReady()
-        .then(() => fetchVerifiedAsset('/assets/art/manifest.json', 'art', name, '/assets/art/'))
+        .then(() => fetchVerifiedAsset('assets/art/manifest.json', 'art', name, 'assets/art/'))
         .then(({ bytes }) => {
           if (this.disposed) return null;
           const url = URL.createObjectURL(new Blob([bytes], { type: 'image/webp' }));
