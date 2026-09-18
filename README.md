@@ -8,6 +8,8 @@ This is an in-progress independent prototype, not a production-ready AAA release
 
 ## Play
 
+**Live build (GitHub Pages): [xedotech.github.io](https://xedotech.github.io/)** — boots straight to the title menu, no install.
+
 Owner-only hosted build: [heavens-gate-aethel.xedos.chatgpt.site](https://heavens-gate-aethel.xedos.chatgpt.site)
 
 Run the development build:
