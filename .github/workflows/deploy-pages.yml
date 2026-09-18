@@ -1,0 +1,65 @@
+name: Deploy the webgame
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Production build (static export)
+        run: npm run build
+      - name: Make asset URLs host-relative
+        run: node tools/deploy/relativize.mjs dist/client
+      - name: Upload the webgame
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/client
+      - name: Mirror build to the user-site repo
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${DEPLOY_TOKEN}@github.com/xedotech/xedotech.github.io.git" userpage
+          cd userpage
+          git rm -rq .
+          cp -r ../dist/client/. .
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Deploy heavens-gate@$(git -C .. rev-parse --short HEAD)"
+            git push origin main
+          else
+            echo "No deployable changes"
+          fi
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

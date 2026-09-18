@@ -1,0 +1,37 @@
+name: Heaven's Gate quality gates
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Lint
+        run: npm run lint
+      - name: Validate character delivery contract
+        run: npm run validate:characters
+      - name: Validate self-hosted environment maps
+        run: npm run validate:environment
+      - name: Validate release metadata
+        run: npm run validate:release
+      - name: Production build
+        run: npm run build
