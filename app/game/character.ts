@@ -158,6 +158,7 @@ const ikDelta = new THREE.Quaternion();
 const gripTarget = new THREE.Vector3();
 const gripCurl = new THREE.Quaternion();
 const gripCurlQuat = new THREE.Quaternion();
+const fingerCurlAxis = new THREE.Vector3(1, 0, 0);
 const ikLocalDelta = new THREE.Quaternion();
 const ikParentQuat = new THREE.Quaternion();
 const ikIdentity = new THREE.Quaternion();
@@ -742,9 +743,8 @@ export class HeroCharacter {
   }
 
   private applyGripPose() {
-    const fingerCurlAxis = new THREE.Vector3(1, 0, 0);
     for (const gripBone of this.rightGripBones) {
-      const curl = new THREE.Quaternion().setFromAxisAngle(fingerCurlAxis, gripBone.curl);
+      const curl = gripCurlQuat.setFromAxisAngle(fingerCurlAxis, gripBone.curl);
       gripBone.bone.quaternion.copy(gripBone.bind).multiply(curl);
     }
     // Left fingers wrap the foregrip only while the IK owns the hand — during

@@ -20,6 +20,25 @@ function fixture() {
 }
 
 describe('hero runtime animation transitions', () => {
+  it('keeps independent finger curls and bind poses stable across repeated grip updates', () => {
+    const rightGripBones = [0.2, 0.7, -0.3].map((curl, i) => ({
+      bone: new THREE.Bone(),
+      bind: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.15),
+      curl,
+    }));
+    const binds = rightGripBones.map(({ bind }) => bind.clone());
+    const expected = rightGripBones.map(({ bind, curl }) => bind.clone().multiply(
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), curl),
+    ));
+    const hero = Object.assign(Object.create(HeroCharacter.prototype), {
+      rightGripBones, leftGripBones: [], leftGripBlend: 0,
+    }) as { applyGripPose(): void };
+    for (let frame = 0; frame < 120; frame++) hero.applyGripPose();
+    rightGripBones.forEach(({ bone, bind }, i) => {
+      expect(bone.quaternion.angleTo(expected[i])).toBeLessThan(1e-7);
+      expect(bind.equals(binds[i])).toBe(true);
+    });
+  });
   it('preserves normalized gait phase when switching between walk and run', () => {
     const { hero, advance } = fixture();
     const actions = (hero as unknown as { actions: Map<string, THREE.AnimationAction> }).actions;

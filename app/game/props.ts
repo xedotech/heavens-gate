@@ -40,20 +40,24 @@ let assetStreams = 0;
 const assetStreamQueue: Array<() => void> = [];
 
 export async function acquireAssetStream(parent?: AbortSignal) {
+  if (parent?.aborted) throw new Error('Asset fetch aborted');
   if (assetStreams >= MAX_ASSET_STREAMS) {
     await new Promise<void>((resolve) => assetStreamQueue.push(resolve));
+    // releaseAssetStream transfers its reserved slot directly to this waiter.
+  } else {
+    assetStreams += 1;
   }
   if (parent?.aborted) {
     // Hand the freed slot on — the queue must not stall behind an abort.
-    assetStreamQueue.shift()?.();
+    releaseAssetStream();
     throw new Error('Asset fetch aborted');
   }
-  assetStreams += 1;
 }
 
 export function releaseAssetStream() {
-  assetStreams -= 1;
-  assetStreamQueue.shift()?.();
+  const next = assetStreamQueue.shift();
+  if (next) next();
+  else assetStreams -= 1;
 }
 
 export function assetEntryIsSafe(entry: VerifiedAssetEntry | undefined): entry is VerifiedAssetEntry {

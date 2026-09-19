@@ -28,6 +28,20 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      # A separate push-triggered quality workflow does not gate this job.
+      # Fail here before either Pages upload or the user-site mirror can run.
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Lint
+        run: npm run lint
+      - name: Validate character delivery contract
+        run: npm run validate:characters
+      - name: Validate self-hosted environment maps
+        run: npm run validate:environment
+      - name: Validate release metadata
+        run: npm run validate:release
       - name: Production build (static export)
         run: npm run build
       - name: Make asset URLs host-relative

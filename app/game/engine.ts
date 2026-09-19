@@ -6,6 +6,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   createNpcAiState,
   npcAccuracyScale,
@@ -77,6 +78,23 @@ import {
   type WeaponId,
 } from './types';
 
+// Capsule with the bottom end narrowed — limbs read as limbs, not pills.
+// taperBottom is the radius scale at the -Y end (1 = uniform capsule).
+function taperedCapsule(radius: number, length: number, taperBottom: number) {
+  const geometry = new THREE.CapsuleGeometry(radius, length, 5, 9);
+  const pos = geometry.attributes.position as THREE.BufferAttribute;
+  const half = length / 2 + radius;
+  for (let i = 0; i < pos.count; i++) {
+    const t = clamp((pos.getY(i) + half) / (half * 2), 0, 1);
+    const s = taperBottom + (1 - taperBottom) * t;
+    pos.setX(i, pos.getX(i) * s);
+    pos.setZ(i, pos.getZ(i) * s);
+  }
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 type ActorKind = 'enemy' | 'civilian' | 'drone' | 'boss';
 
 interface Actor {
@@ -140,6 +158,8 @@ interface CharacterRig {
   eyes?: THREE.Object3D[];
   blinkTimer?: number;
   blinkPhase?: number;
+  /** Close-range submeshes (face detail, small accessories) hidden at LOD distance. */
+  detail?: THREE.Object3D[];
 }
 
 interface PlayerSkinMaterials {
@@ -760,7 +780,14 @@ export class HeavensGateEngine {
   private hudTimer = 0;
   private fpsTimer = 0;
   private fpsFrames = 0;
+  private slowFrameWindows = 0;
+  private fastFrameWindows = 0;
   private fps = 60;
+  /** Tier actually applied — can step below the user's pick when the GPU
+   * can't hold frame rate at minimum resolution. Their choice is the ceiling. */
+  private activeQuality: GameSettings['quality'] | null = null;
+  private tierCooldown = 0;
+  private fastTierWindows = 0;
   private readonly frameTimeSampler = new FrameTimeSampler(600);
   private dynamicPixelRatio = 1;
   private lastInteraction = '';
@@ -929,6 +956,12 @@ export class HeavensGateEngine {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.16;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Profiling showed getProgramInfoLog at ~75% of all CPU — three queries
+    // link status after every program compile, a synchronous pipeline stall
+    // on older GL drivers that turns every lazily-compiled material into a
+    // hitch. Ship builds skip the check; bad shaders would still surface in
+    // development where the flag can be re-enabled.
+    this.renderer.debug.checkShaderErrors = false;
 
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
@@ -1251,18 +1284,32 @@ export class HeavensGateEngine {
         const url = URL.createObjectURL(new Blob([bytes]));
         try {
           const hdr = await new HDRLoader().setDataType(THREE.HalfFloatType).loadAsync(url);
-          hdr.mapping = THREE.EquirectangularReflectionMapping;
-          const texture = pmrem.fromEquirectangular(hdr).texture;
-          hdr.dispose();
-          return texture;
+          try {
+            if (this.disposed) throw new Error('Environment load completed after engine disposal');
+            hdr.mapping = THREE.EquirectangularReflectionMapping;
+            return pmrem.fromEquirectangular(hdr).texture;
+          } finally {
+            hdr.dispose();
+          }
         } finally {
           URL.revokeObjectURL(url);
         }
       };
-      const [street, chapel] = await Promise.all([
+      // Wait for both users of the shared PMREM generator before disposing it.
+      // Promise.all rejects early and loses any successfully created sibling.
+      const environments = await Promise.allSettled([
         load('cobblestone_street_night_1k.hdr'),
         load('abandoned_church_1k.hdr'),
       ]);
+      const [streetResult, chapelResult] = environments;
+      if (streetResult.status === 'rejected' || chapelResult.status === 'rejected') {
+        for (const result of environments) {
+          if (result.status === 'fulfilled') result.value.dispose();
+        }
+        return;
+      }
+      const street = streetResult.value;
+      const chapel = chapelResult.value;
       if (this.disposed) {
         street.dispose();
         chapel.dispose();
@@ -1682,6 +1729,33 @@ export class HeavensGateEngine {
     return texture;
   }
 
+  // Tar-membrane roof texture: dark bitumen base, gravel speckle, and the
+  // welded seam grid of a rolled roof. Generated once — reads at aerial
+  // distance and holds up in photo-mode close-ups.
+  private createRoofTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#191c1e';
+    ctx.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 2600; i++) {
+      const v = 18 + Math.floor(seeded(i, 61) * 30);
+      ctx.fillStyle = `rgb(${v},${v + 2},${v + 3})`;
+      ctx.fillRect(seeded(i, 62) * 256, seeded(i, 63) * 256, 1.4, 1.4);
+    }
+    ctx.fillStyle = '#101314';
+    for (let s = 0; s <= 256; s += 42) ctx.fillRect(s, 0, 2, 256);
+    for (let s = 21; s <= 256; s += 84) ctx.fillRect(0, s, 256, 2);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(2, 2);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
   private createBuildingDetails(buildingData: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }>) {
     const crowns: Array<{ position: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color }> = [];
     const parapets: Array<{ position: THREE.Vector3; scale: THREE.Vector3 }> = [];
@@ -1726,6 +1800,60 @@ export class HeavensGateEngine {
       ...this.addInstancedChunks(boxGeo, parapetMaterial, parapetPlacements),
     ].forEach((mesh) => {
       mesh.castShadow = this.highTier();
+      mesh.receiveShadow = true;
+      mesh.userData.blocksShot = true;
+      this.rayTargets.push(mesh);
+    });
+
+    // Roofscape — the parapet rings the edge but the top face itself was one
+    // stretched strip of facade texture: a bare slab from above. Membrane cap
+    // plus instanced HVAC/vent/bulkhead clutter so aerials read as a city.
+    const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x181b1d, roughness: 0.96, metalness: 0.03, map: this.createRoofTexture() });
+    const hvacMaterial = new THREE.MeshStandardMaterial({ color: 0x2b3236, roughness: 0.48, metalness: 0.62 });
+    const bulkheadMaterial = new THREE.MeshStandardMaterial({ color: 0x1d2327, roughness: 0.72, metalness: 0.28 });
+    const ventMaterial = new THREE.MeshStandardMaterial({ color: 0x232a2d, roughness: 0.6, metalness: 0.5 });
+    const roofCaps: Array<{ position: THREE.Vector3; scale: THREE.Vector3 }> = [];
+    const hvacs: Array<{ position: THREE.Vector3; scale: THREE.Vector3; yaw: number }> = [];
+    const bulkheads: Array<{ position: THREE.Vector3; scale: THREE.Vector3; yaw: number }> = [];
+    const vents: Array<{ position: THREE.Vector3; scale: THREE.Vector3 }> = [];
+    buildingData.forEach((building, index) => {
+      const { x: bx, z: bz } = building.position;
+      const { x: rx, y: ry, z: rz } = building.scale;
+      roofCaps.push({
+        position: new THREE.Vector3(bx, ry + 0.04, bz),
+        scale: new THREE.Vector3(rx * 0.985, 0.09, rz * 0.985),
+      });
+      const area = rx * rz;
+      if (area < 55) return;
+      const units = Math.min(6, Math.floor(area / 60) + (seeded(index, 71) > 0.45 ? 1 : 0));
+      for (let u = 0; u < units; u++) {
+        const ux = bx + (seeded(index * 31 + u, 72) - 0.5) * Math.max(0, rx - 4.5);
+        const uz = bz + (seeded(index * 31 + u, 73) - 0.5) * Math.max(0, rz - 4.5);
+        const kind = seeded(index * 31 + u, 74);
+        const yaw = seeded(index * 31 + u, 75) * Math.PI;
+        if (kind < 0.42) {
+          const s = 1 + seeded(index * 31 + u, 76) * 1.1;
+          hvacs.push({ position: new THREE.Vector3(ux, ry + 0.55, uz), scale: new THREE.Vector3(1.5 * s, 0.9, 1.1 * s), yaw });
+        } else if (kind < 0.72) {
+          const h = 0.8 + seeded(index * 31 + u, 77) * 1.4;
+          vents.push({ position: new THREE.Vector3(ux, ry + h * 0.5 + 0.1, uz), scale: new THREE.Vector3(0.34, h, 0.34) });
+        } else {
+          bulkheads.push({ position: new THREE.Vector3(ux, ry + 1.15, uz), scale: new THREE.Vector3(2.3, 2.3, 2.9), yaw });
+        }
+      }
+    });
+    const ventGeo = new THREE.CylinderGeometry(0.5, 0.62, 1, 8);
+    const compose = (p: { position: THREE.Vector3; scale: THREE.Vector3; yaw?: number }) => {
+      const q = new THREE.Quaternion();
+      if (p.yaw) q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.yaw);
+      return { matrix: new THREE.Matrix4().compose(p.position, q, p.scale) };
+    };
+    [
+      ...this.addInstancedChunks(boxGeo, roofMaterial, roofCaps.map(compose)),
+      ...this.addInstancedChunks(boxGeo, hvacMaterial, hvacs.map(compose)),
+      ...this.addInstancedChunks(boxGeo, bulkheadMaterial, bulkheads.map(compose)),
+      ...this.addInstancedChunks(ventGeo, ventMaterial, vents.map(compose)),
+    ].forEach((mesh) => {
       mesh.receiveShadow = true;
       mesh.userData.blocksShot = true;
       this.rayTargets.push(mesh);
@@ -4238,19 +4366,93 @@ export class HeavensGateEngine {
     this.createVehicle('choir-02', 8, 106, 0, 0x54452e);
   }
 
+  // ~30 primitive meshes per humanoid was the single biggest draw-call
+  // source in the city (civilians alone were ~1000 meshes in scene). Merge
+  // every same-material sibling inside each pivot into one baked mesh, then
+  // tag the close-range face/accessory parts so distance LOD can hide them.
+  private condenseHumanoid(group: THREE.Group, detail: THREE.Object3D[]) {
+    const parents: THREE.Object3D[] = [];
+    group.traverse((node) => { if (node === group || (node as THREE.Group).isGroup) parents.push(node); });
+    for (const parent of parents) {
+      const buckets = new Map<string, { material: THREE.Material; meshes: THREE.Mesh[] }>();
+      for (const child of parent.children.slice()) {
+        if (!(child instanceof THREE.Mesh) || child.userData.noMerge) continue;
+        const material = child.material as THREE.Material;
+        const key = `${material.uuid}|${child.userData.detail === true ? 1 : 0}`;
+        const bucket = buckets.get(key) ?? { material, meshes: [] };
+        if (!buckets.has(key)) buckets.set(key, bucket);
+        bucket.meshes.push(child);
+      }
+      buckets.forEach(({ material, meshes }) => {
+        if (meshes.length < 2) return;
+        const geoms = meshes.map((mesh) => {
+          mesh.updateMatrix();
+          return mesh.geometry.clone().applyMatrix4(mesh.matrix);
+        });
+        const merged = mergeGeometries(geoms, false);
+        geoms.forEach((geom) => geom.dispose());
+        if (!merged) return;
+        const mesh = new THREE.Mesh(merged, material);
+        const src = meshes[0];
+        mesh.name = src.name;
+        mesh.userData = { ...src.userData };
+        mesh.castShadow = meshes.some((m) => m.castShadow);
+        mesh.receiveShadow = meshes.some((m) => m.receiveShadow);
+        meshes.forEach((m) => { parent.remove(m); m.geometry.dispose(); });
+        parent.add(mesh);
+      });
+    }
+    group.traverse((node) => {
+      if (node.userData?.detail === true && (node as THREE.Mesh).isMesh) detail.push(node);
+    });
+  }
+
+  // ~50 actors × ~6 unique material instances each was hundreds of material
+  // binds per frame. The pool shares one instance per (role, palette) key —
+  // ~30 total — so state changes between draw calls collapse.
+  private actorMaterialPool = new Map<string, THREE.MeshStandardMaterial>();
+  private pooledMaterialSet = new Set<THREE.Material>();
+
+  private pooledActorMaterial(key: string, params: THREE.MeshStandardMaterialParameters) {
+    let material = this.actorMaterialPool.get(key);
+    if (!material) {
+      material = new THREE.MeshStandardMaterial(params);
+      this.actorMaterialPool.set(key, material);
+      this.pooledMaterialSet.add(material);
+    }
+    return material;
+  }
+
+  // Shared materials can't carry per-actor state — a damage flash or ghost
+  // fade would leak onto every actor from the same bucket. Clone-on-write:
+  // swap private copies in only where mutation is about to happen.
+  private privatizeMaterials(group: THREE.Object3D, materials: THREE.MeshStandardMaterial[]) {
+    const swaps = new Map<THREE.MeshStandardMaterial, THREE.MeshStandardMaterial>();
+    const owned = new Set<THREE.Material>(materials);
+    group.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      const source = node.material;
+      if (Array.isArray(source) || !(source instanceof THREE.MeshStandardMaterial) || !owned.has(source)) return;
+      let clone = swaps.get(source);
+      if (!clone) { clone = source.clone(); swaps.set(source, clone); }
+      node.material = clone;
+    });
+    for (let i = 0; i < materials.length; i += 1) materials[i] = swaps.get(materials[i]) ?? materials[i];
+  }
+
   private humanoid(id: string, color: number, visorColor: number) {
     const group = new THREE.Group();
     const variant = [...id].reduce((sum, character) => sum + character.charCodeAt(0), 0);
     const isCivilian = id.startsWith('citizen');
     const skinTones = [0x43251f, 0x63382b, 0x85503c, 0xa66d51, 0xc38b68, 0xe0b28e];
     const hairTones = [0x0d0b0a, 0x211611, 0x3a2519, 0x5a3a25, 0x8a6b4b, 0x312d2c];
-    const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: isCivilian ? 0.83 : 0.42, metalness: isCivilian ? 0.05 : 0.5 });
-    const skinMaterial = new THREE.MeshStandardMaterial({ color: skinTones[variant % skinTones.length], roughness: 0.9, metalness: 0, envMapIntensity: 0.3 });
-    const hairMaterial = new THREE.MeshStandardMaterial({ color: hairTones[(variant * 3) % hairTones.length], roughness: 0.94, metalness: 0 });
-    const leatherMaterial = new THREE.MeshStandardMaterial({ color: isCivilian ? 0x171819 : 0x101416, roughness: 0.54, metalness: 0.26 });
-    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0xe7dfd1, roughness: 0.38 });
-    const irisMaterial = new THREE.MeshStandardMaterial({ color: [0x4d6d72, 0x70553e, 0x33483d, 0x77715c][variant % 4], roughness: 0.22 });
-    const visorMaterial = new THREE.MeshStandardMaterial({
+    const bodyMaterial = this.pooledActorMaterial(`body-${isCivilian ? 'c' : 'e'}-${color}`, { color, roughness: isCivilian ? 0.83 : 0.58, metalness: isCivilian ? 0.05 : 0.3 });
+    const skinMaterial = this.pooledActorMaterial(`skin-${variant % skinTones.length}`, { color: skinTones[variant % skinTones.length], roughness: 0.9, metalness: 0, envMapIntensity: 0.3 });
+    const hairMaterial = this.pooledActorMaterial(`hair-${(variant * 3) % hairTones.length}`, { color: hairTones[(variant * 3) % hairTones.length], roughness: 0.94, metalness: 0 });
+    const leatherMaterial = this.pooledActorMaterial(`leather-${isCivilian ? 'c' : 'e'}`, { color: isCivilian ? 0x171819 : 0x101416, roughness: 0.54, metalness: 0.26 });
+    const eyeMaterial = this.pooledActorMaterial('eye', { color: 0xe7dfd1, roughness: 0.38 });
+    const irisMaterial = this.pooledActorMaterial(`iris-${variant % 4}`, { color: [0x4d6d72, 0x70553e, 0x33483d, 0x77715c][variant % 4], roughness: 0.22 });
+    const visorMaterial = this.pooledActorMaterial(`visor-${isCivilian ? 'c' : 'e'}-${visorColor}`, {
       color: visorColor,
       emissive: visorColor,
       emissiveIntensity: isCivilian ? 0.12 : 1.4,
@@ -4270,6 +4472,19 @@ export class HeavensGateEngine {
     chest.position.set(0, 1.55, -0.34);
     chest.rotation.x = -0.08;
     group.add(chest);
+    if (!isCivilian) {
+      const backPlate = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.5, 0.1, 2, 2, 1), leatherMaterial);
+      backPlate.position.set(0, 1.52, 0.3);
+      backPlate.rotation.x = 0.1;
+      group.add(backPlate);
+      const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.35, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), leatherMaterial);
+      helmet.scale.set(0.94, 1.02, 0.98);
+      helmet.position.y = 2.26;
+      helmet.rotation.x = -0.22;
+      helmet.name = 'head';
+      helmet.castShadow = true;
+      group.add(helmet);
+    }
 
     const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 0.22, 12), isCivilian ? skinMaterial : leatherMaterial);
     neck.position.y = 2.03;
@@ -4287,33 +4502,40 @@ export class HeavensGateEngine {
       jaw.scale.set(0.88, 0.7, 0.86);
       jaw.position.set(0, 2.16, -0.018);
       jaw.name = 'head';
+      jaw.userData.detail = true;
       group.add(jaw);
       const nose = new THREE.Mesh(new THREE.ConeGeometry(0.041, 0.13, 8), skinMaterial);
       nose.position.set(0, 2.29, -0.294);
       nose.rotation.x = -Math.PI / 2;
       nose.name = 'head';
+      nose.userData.detail = true;
       group.add(nose);
       for (const side of [-1, 1]) {
         const ear = new THREE.Mesh(new THREE.SphereGeometry(0.057, 10, 7), skinMaterial);
         ear.scale.set(0.54, 1, 0.62);
         ear.position.set(side * 0.278, 2.28, 0);
         ear.name = 'head';
+        ear.userData.detail = true;
         group.add(ear);
         const eye = new THREE.Mesh(new THREE.SphereGeometry(0.037, 10, 7), eyeMaterial);
         eye.scale.set(1.25, 0.62, 0.34);
         eye.position.set(side * 0.1, 2.33, -0.285);
         eye.name = 'head';
+        eye.userData.detail = true;
+        eye.userData.noMerge = true;
         eyes.push(eye);
         group.add(eye);
         const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.017, 8, 6), irisMaterial);
         pupil.scale.z = 0.26;
         pupil.position.set(side * 0.1, 2.33, -0.315);
         pupil.name = 'head';
+        pupil.userData.detail = true;
         group.add(pupil);
         const brow = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.018, 0.02), hairMaterial);
         brow.position.set(side * 0.1, 2.41, -0.293);
         brow.rotation.z = side * ((variant % 3) - 1) * 0.035;
         brow.name = 'head';
+        brow.userData.detail = true;
         group.add(brow);
       }
       const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.325, 18, 12, 0, Math.PI * 2, 0, Math.PI * (0.48 + (variant % 2) * 0.08)), hairMaterial);
@@ -4325,6 +4547,7 @@ export class HeavensGateEngine {
         const bun = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 9), hairMaterial);
         bun.position.set(0, 2.58, 0.16);
         bun.name = 'head';
+        bun.userData.detail = true;
         group.add(bun);
       } else if (variant % 4 === 2) {
         for (const side of [-1, 1]) {
@@ -4332,12 +4555,14 @@ export class HeavensGateEngine {
           braid.position.set(side * 0.24, 2.15, 0.08);
           braid.rotation.z = side * 0.08;
           braid.name = 'head';
+          braid.userData.detail = true;
           group.add(braid);
         }
       }
       const scarf = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.052, 8, 20), visorMaterial);
       scarf.position.y = 2.02;
       scarf.rotation.x = Math.PI / 2;
+      scarf.userData.detail = true;
       group.add(scarf);
     } else {
       const mask = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.34, 0.14, 3, 2, 1), leatherMaterial);
@@ -4352,6 +4577,7 @@ export class HeavensGateEngine {
         const temple = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.28, 0.28), bodyMaterial);
         temple.position.set(side * 0.27, 2.29, -0.01);
         temple.name = 'head';
+        temple.userData.detail = true;
         group.add(temple);
       }
     }
@@ -4361,10 +4587,10 @@ export class HeavensGateEngine {
     for (const side of [-1, 1]) {
       const legPivot = new THREE.Group();
       legPivot.position.set(side * 0.19, 0.82, 0);
-      const upperLeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.34, 5, 9), bodyMaterial);
+      const upperLeg = new THREE.Mesh(taperedCapsule(0.13, 0.34, 0.8), bodyMaterial);
       upperLeg.position.y = -0.25;
       legPivot.add(upperLeg);
-      const lowerLeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.115, 0.35, 5, 9), leatherMaterial);
+      const lowerLeg = new THREE.Mesh(taperedCapsule(0.115, 0.35, 0.7), leatherMaterial);
       lowerLeg.position.set(0, -0.66, -0.02);
       legPivot.add(lowerLeg);
       const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.15, 0.38), leatherMaterial);
@@ -4373,13 +4599,20 @@ export class HeavensGateEngine {
       group.add(legPivot);
       legs.push(legPivot);
 
+      // Deltoid cap on the torso (not the arm pivot) so the shoulder line
+      // holds when the limb swings — merges into the body bucket for free.
+      const deltoid = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), bodyMaterial);
+      deltoid.scale.set(1, 0.85, 0.9);
+      deltoid.position.set(side * 0.45, 1.76, 0);
+      group.add(deltoid);
+
       const armPivot = new THREE.Group();
       armPivot.position.set(side * 0.47, 1.73, 0);
       armPivot.rotation.z = side * 0.1;
-      const upperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, 0.3, 5, 9), bodyMaterial);
+      const upperArm = new THREE.Mesh(taperedCapsule(0.105, 0.3, 0.82), bodyMaterial);
       upperArm.position.y = -0.22;
       armPivot.add(upperArm);
-      const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.29, 5, 9), isCivilian ? skinMaterial : leatherMaterial);
+      const forearm = new THREE.Mesh(taperedCapsule(0.09, 0.29, 0.72), isCivilian ? skinMaterial : leatherMaterial);
       forearm.position.set(0, -0.57, -0.015);
       armPivot.add(forearm);
       const hand = new THREE.Mesh(new THREE.SphereGeometry(0.095, 10, 8), isCivilian ? skinMaterial : leatherMaterial);
@@ -4393,15 +4626,32 @@ export class HeavensGateEngine {
     legs.forEach((leg) => leg.traverse((child) => { if (child instanceof THREE.Mesh) child.name = 'limb'; }));
     arms.forEach((arm) => arm.traverse((child) => { if (child instanceof THREE.Mesh) child.name = 'limb'; }));
 
-    if (isCivilian && variant % 3 === 0) {
-      const satchel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.43, 0.16), leatherMaterial);
-      satchel.position.set(0.34, 1.15, 0.32);
-      satchel.rotation.z = -0.08;
-      group.add(satchel);
-      const strap = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.025, 6, 22, Math.PI * 1.2), leatherMaterial);
-      strap.position.set(0.1, 1.55, 0.05);
-      strap.rotation.set(Math.PI / 2, 0, -0.48);
-      group.add(strap);
+    if (isCivilian) {
+      // Clothing edges — collar + belt keep the smooth torso capsule reading
+      // as a coat instead of bare skin at a glance.
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.19, 0.1, 14), bodyMaterial);
+      collar.position.y = 1.94;
+      group.add(collar);
+      const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.42, 0.08, 16), leatherMaterial);
+      belt.scale.set(1, 1, 0.72);
+      belt.position.y = 1.1;
+      group.add(belt);
+      // Coat closure — a dark seam strip down the abdomen reads as clothing,
+      // not skin, even on pale district palettes.
+      const placket = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.5, 0.03), leatherMaterial);
+      placket.position.set(0, 1.18, -0.3);
+      placket.rotation.x = -0.06;
+      group.add(placket);
+      if (variant % 3 === 0) {
+        const satchel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.43, 0.16), leatherMaterial);
+        satchel.position.set(0.34, 1.15, 0.32);
+        satchel.rotation.z = -0.08;
+        group.add(satchel);
+        const strap = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.92, 0.035), leatherMaterial);
+        strap.position.set(0.02, 1.52, -0.3);
+        strap.rotation.set(-0.1, 0, 0.52);
+        group.add(strap);
+      }
     }
 
     const scale = 0.94 + (variant % 7) * 0.018;
@@ -4411,13 +4661,15 @@ export class HeavensGateEngine {
     group.add(headRig);
     group.updateMatrixWorld(true);
     group.children.filter((child) => child.name === 'head').forEach((child) => headRig.attach(child));
+    const detail: THREE.Object3D[] = [];
+    this.condenseHumanoid(group, detail);
     group.traverse((child) => {
       child.userData.actorId = id;
     });
-    const rig: CharacterRig = { arms, legs, head: headRig, chest, phase: seeded(variant, 208) * Math.PI * 2, stride: 0, eyes, blinkTimer: 1.5 + seeded(variant, 209) * 3, blinkPhase: 0 };
+    const rig: CharacterRig = { arms, legs, head: headRig, chest, phase: seeded(variant, 208) * Math.PI * 2, stride: 0, eyes, blinkTimer: 1.5 + seeded(variant, 209) * 3, blinkPhase: 0, detail };
     if (!isCivilian) {
-      const rifleMaterial = new THREE.MeshStandardMaterial({ color: 0x171b1e, roughness: 0.36, metalness: 0.72 });
-      const rifleGlow = new THREE.MeshStandardMaterial({ color: visorColor, emissive: visorColor, emissiveIntensity: 1.6 });
+      const rifleMaterial = this.pooledActorMaterial('rifle', { color: 0x171b1e, roughness: 0.36, metalness: 0.72 });
+      const rifleGlow = this.pooledActorMaterial(`rifle-glow-${visorColor}`, { color: visorColor, emissive: visorColor, emissiveIntensity: 1.6 });
       const rifle = new THREE.Group();
       const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.13, 0.62), rifleMaterial);
       rifle.add(receiver);
@@ -4598,7 +4850,8 @@ export class HeavensGateEngine {
     wardens.forEach(([x, z], index) => this.addActor(`warden-${index + 1}`, 'enemy', x, z, 0x302c2c, 0xd65b43, 78));
 
     const citizens: Actor[] = [];
-    for (let i = 0; i < 34; i += 1) {
+    const citizenTarget = this.settings.quality === 'low' ? 18 : this.settings.quality === 'medium' ? 26 : 34;
+    for (let i = 0; i < citizenTarget; i += 1) {
       const road = Math.floor(seeded(i, 70) * 9 - 4) * 30;
       const along = (seeded(i, 71) - 0.5) * 250;
       const horizontal = seeded(i, 72) > 0.5;
@@ -5301,24 +5554,31 @@ export class HeavensGateEngine {
     this.audio.ui(true);
   }
 
+  private effectiveQuality(): GameSettings['quality'] {
+    return this.activeQuality ?? this.settings?.quality ?? 'high';
+  }
+
   private highTier() {
-    return this.settings.quality === 'high' || this.settings.quality === 'ultra';
+    const q = this.effectiveQuality();
+    return q === 'high' || q === 'ultra';
   }
 
   private targetPixelRatio() {
     const dpr = window.devicePixelRatio;
-    if (this.settings.quality === 'ultra') return Math.min(2, dpr * 1.5);
-    if (this.settings.quality === 'medium') return Math.min(dpr, 1.3);
-    if (this.settings.quality === 'low') return Math.min(dpr, 1);
+    const q = this.effectiveQuality();
+    if (q === 'ultra') return Math.min(2, dpr * 1.5);
+    if (q === 'medium') return Math.min(dpr, 1.3);
+    if (q === 'low') return Math.min(dpr, 1);
     return Math.min(dpr, 1.6);
   }
 
   private applyQuality() {
+    const q = this.effectiveQuality();
     this.dynamicPixelRatio = this.targetPixelRatio();
     this.renderer.setPixelRatio(this.dynamicPixelRatio);
-    this.renderer.shadowMap.enabled = this.settings.quality !== 'low';
+    this.renderer.shadowMap.enabled = q !== 'low';
     if (this.sun) {
-      const shadowSize = this.settings.quality === 'ultra' ? 4096 : 2048;
+      const shadowSize = q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024;
       if (this.sun.shadow.mapSize.x !== shadowSize) {
         this.sun.shadow.mapSize.set(shadowSize, shadowSize);
         // Drop the render target so the shadow map rebuilds at the new size.
@@ -5329,7 +5589,7 @@ export class HeavensGateEngine {
     const gtao = this.highTier() && Boolean(this.gtaoPass);
     if (this.gtaoPass) {
       this.gtaoPass.enabled = gtao;
-      this.gtaoPass.updateGtaoMaterial({ samples: this.settings.quality === 'ultra' ? 24 : 16 });
+      this.gtaoPass.updateGtaoMaterial({ samples: q === 'ultra' ? 24 : 16 });
     }
     // GTAO only renders normals/depth and multiplies AO over the beauty the
     // RenderPass already produced — the RenderPass must stay on beneath it.
@@ -5340,10 +5600,10 @@ export class HeavensGateEngine {
       this.bloomPass.radius = 0.55;
       this.bloomPass.threshold = 0.82;
     }
-    if (this.rain) this.rain.mesh.visible = this.settings.quality !== 'low';
-    if (this.rainSplash) this.rainSplash.mesh.visible = this.settings.quality !== 'low';
-    this.audio.setRainBed(this.settings.quality !== 'low');
-    this.scannedSurfaces.forEach((surface) => surface.setQuality(this.settings.quality));
+    if (this.rain) this.rain.mesh.visible = q !== 'low';
+    if (this.rainSplash) this.rainSplash.mesh.visible = q !== 'low';
+    this.audio.setRainBed(q !== 'low');
+    this.scannedSurfaces.forEach((surface) => surface.setQuality(q));
     this.resize();
   }
 
@@ -5352,6 +5612,9 @@ export class HeavensGateEngine {
     const skinChanged = settings.characterSkin !== this.settings.characterSkin;
     if (settings.keybinds !== this.settings.keybinds) this.clearInput();
     this.settings = settings;
+    this.activeQuality = settings.quality;
+    this.tierCooldown = 0;
+    this.fastTierWindows = 0;
     this.audio.setVolume(settings.volume);
     if (qualityChanged) this.applyQuality();
     if (skinChanged) {
@@ -5742,6 +6005,13 @@ export class HeavensGateEngine {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
     const now = performance.now();
+    // Hidden tabs must not keep submitting the city's GPU passes. Keep the
+    // clock current so returning to the game cannot advance simulation time.
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.lastFrameTime = now;
+      this.updatePerformance(0);
+      return;
+    }
     const frameMilliseconds = Math.max(0, now - this.lastFrameTime);
     let delta = Math.min(frameMilliseconds / 1000, 0.05);
     if (this.hitStop > 0) {
@@ -5762,11 +6032,20 @@ export class HeavensGateEngine {
     }
     this.updateAmbientAnimation(delta, time);
     if (!this.contextLost) {
-      if (this.composer && this.settings.quality !== 'low') this.composer.render();
-      else this.renderer.render(this.scene, this.camera);
+      this.renderFrame();
       this.updatePerformance(frameMilliseconds / 1000);
     }
   };
+
+  private renderFrame() {
+    // Three resets counters per render call by default. A composed frame has
+    // several calls, so that would report only the final fullscreen pass.
+    this.renderer.info.autoReset = false;
+    this.renderer.info.reset();
+    const q = this.effectiveQuality();
+    if (this.composer && (q === 'high' || q === 'ultra')) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
+  }
 
   private updateAttract(time: number, delta: number) {
     if (this.settings.reducedMotion) {
@@ -6896,6 +7175,13 @@ export class HeavensGateEngine {
       if (!actor.alive || !actor.group.visible) return;
       const distance = actor.group.position.distanceTo(playerPosition);
       actor.lod = distance;
+      // Face/accessory detail only exists to be seen up close — past ~15m a
+      // warden is silhouette + visor, and the engine keeps the draw calls.
+      const rigDetail = actor.rig?.detail;
+      if (rigDetail?.length) {
+        const near = distance < 15;
+        for (const part of rigDetail) part.visible = near;
+      }
       actor.cooldown -= delta;
       if ((actor.reloadTimer ?? 0) > 0) {
         actor.reloadTimer = Math.max(0, (actor.reloadTimer ?? 0) - delta);
@@ -7579,6 +7865,7 @@ export class HeavensGateEngine {
     actor.hitReact = Math.max(actor.hitReact ?? 0, critical ? 0.5 : 0.3);
     actor.lastHitAngle = toActor;
     actor.lastHitCritical = critical;
+    this.privatizeMaterials(actor.group, actor.materials);
     actor.materials.forEach((material) => {
       const original = material.emissive.clone();
       material.emissive.setHex(critical ? 0xffd98a : 0xa9382d);
@@ -7628,6 +7915,7 @@ export class HeavensGateEngine {
       this.hitStop = Math.max(this.hitStop, beat);
     }
     const total = actor.kind === 'boss' ? 2.6 : actor.kind === 'drone' ? 1.15 : 1.6;
+    this.privatizeMaterials(actor.group, actor.materials);
     actor.materials.forEach((material) => { material.transparent = true; });
     // Directional fall: align the body so the Z-tip carries it along the
     // incoming shot. Headshots snap back toward the shooter; body hits fall away.
@@ -8654,6 +8942,7 @@ export class HeavensGateEngine {
       const echo = this.humanoid(`citizen-bell-echo-${index}`, 0x0a0d12, 0x0a0d12);
       echo.group.position.set(x, 0, z);
       echo.group.rotation.y = seeded(index, 380) * Math.PI * 2;
+      this.privatizeMaterials(echo.group, echo.materials);
       echo.materials.forEach((material) => {
         material.transparent = true;
         material.opacity = 0.58;
@@ -9101,6 +9390,7 @@ export class HeavensGateEngine {
     const { group, materials } = this.humanoid('chapel-witness', 0x2b3b52, 0xa8c4e8);
     group.position.set(WITNESS_POS.x, 0, WITNESS_POS.z);
     group.rotation.y = -Math.PI / 2;
+    this.privatizeMaterials(group, materials);
     materials.forEach((material) => {
       material.transparent = true;
       material.opacity = 0.32;
@@ -9828,6 +10118,13 @@ export class HeavensGateEngine {
   }
 
   private updatePerformance(delta: number) {
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.fpsTimer = 0;
+      this.fpsFrames = 0;
+      this.slowFrameWindows = 0;
+      this.fastFrameWindows = 0;
+      return;
+    }
     this.fpsTimer += delta;
     this.fpsFrames += 1;
     if (this.fpsTimer >= 1) {
@@ -9835,14 +10132,48 @@ export class HeavensGateEngine {
       this.fpsTimer = 0;
       this.fpsFrames = 0;
       const target = this.targetPixelRatio();
-      if (this.fps < 42 && this.dynamicPixelRatio > 0.6) {
+      this.slowFrameWindows = this.fps < 42 ? this.slowFrameWindows + 1 : 0;
+      this.fastFrameWindows = this.fps > 58 ? this.fastFrameWindows + 1 : 0;
+      // Avoid allocating render targets on every transient FPS swing. Recover
+      // cautiously so a higher resolution does not immediately cause another drop.
+      if (this.slowFrameWindows >= 2 && this.dynamicPixelRatio > 0.6) {
+        this.slowFrameWindows = 0;
+        this.fastFrameWindows = 0;
         this.dynamicPixelRatio = Math.max(0.6, this.dynamicPixelRatio - 0.12);
         this.renderer.setPixelRatio(this.dynamicPixelRatio);
-        this.resize();
-      } else if (this.fps > 56 && this.dynamicPixelRatio < target) {
+        // Pixel-ratio setters already resize their backing targets. Logical
+        // viewport dimensions and camera aspect have not changed here.
+        this.composer?.setPixelRatio(this.dynamicPixelRatio);
+      } else if (this.fastFrameWindows >= 8 && this.dynamicPixelRatio < target) {
+        this.slowFrameWindows = 0;
+        this.fastFrameWindows = 0;
         this.dynamicPixelRatio = Math.min(target, this.dynamicPixelRatio + 0.08);
         this.renderer.setPixelRatio(this.dynamicPixelRatio);
-        this.resize();
+        this.composer?.setPixelRatio(this.dynamicPixelRatio);
+      }
+      // Resolution only falls to 0.6 — if the game is still slow at the floor,
+      // the tier itself steps down. The user's pick stays the ceiling; a
+      // sustained fast streak earns the way back up to it.
+      const order: GameSettings['quality'][] = ['low', 'medium', 'high', 'ultra'];
+      const activeIdx = order.indexOf(this.effectiveQuality());
+      const ceilingIdx = order.indexOf(this.settings?.quality ?? 'high');
+      this.tierCooldown = Math.max(0, this.tierCooldown - 1);
+      if (this.fps < 30 && this.dynamicPixelRatio <= 0.61 && activeIdx > 0 && this.tierCooldown === 0) {
+        this.activeQuality = order[activeIdx - 1];
+        this.tierCooldown = 5;
+        this.fastTierWindows = 0;
+        this.applyQuality();
+        this.emitToast('Quality adjusted', `Switched to ${this.activeQuality} to hold frame rate.`, 'info');
+      } else if (this.fps > 56 && activeIdx < ceilingIdx && this.tierCooldown === 0) {
+        this.fastTierWindows += 1;
+        if (this.fastTierWindows >= 6) {
+          this.fastTierWindows = 0;
+          this.activeQuality = order[activeIdx + 1];
+          this.tierCooldown = 8;
+          this.applyQuality();
+        }
+      } else {
+        this.fastTierWindows = 0;
       }
     }
   }
@@ -9854,6 +10185,7 @@ export class HeavensGateEngine {
       fps: this.fps,
       pixelRatio: this.dynamicPixelRatio,
       quality: this.settings.quality,
+      activeQuality: this.effectiveQuality(),
       mode: this.mode,
       paused: this.paused,
       viewportWidth: this.renderer.domElement.clientWidth,
@@ -9949,7 +10281,7 @@ export class HeavensGateEngine {
       if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points) {
         if (child.geometry) geometries.add(child.geometry);
         const ownedMaterials = Array.isArray(child.material) ? child.material : [child.material];
-        ownedMaterials.forEach((material) => { if (material) materials.add(material); });
+        ownedMaterials.forEach((material) => { if (material && !this.pooledMaterialSet?.has(material)) materials.add(material); });
       }
     });
     geometries.forEach((geometry) => geometry.dispose());
